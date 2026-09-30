@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -24,7 +25,8 @@ from comfyfleet.errors import FleetError
 from comfyfleet.gpu import detect_gpus
 from comfyfleet.http_api import DEFAULT_BIND_HOST, DEFAULT_BIND_PORT, serve
 from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
-from comfyfleet.ports import tcp_port_in_use
+from comfyfleet.ports import effective_port_in_use
+from comfyfleet.public_host import PUBLIC_HOST_ENV, open_host
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -138,7 +140,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
         image=args.image,
         start=args.start,
         force=args.force,
-        port_in_use=tcp_port_in_use,
+        port_in_use=effective_port_in_use,
         use_env_limit=True,
     )
     _print_warning(result.warning)
@@ -147,7 +149,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
     print(f"{state}: {instance.name}")
     print(f"  workflow: {instance.workflow_host_path}")
     print(f"  port:     {instance.port}")
-    print(f"  url:      http://0.0.0.0:{instance.port}")
+    print(f"  url:      {_open_url(instance.port)}")
     print(f"  gpus:     {','.join(str(index) for index in instance.gpus)}")
     print(f"  image:    {instance.image}")
     if not result.started:
@@ -162,14 +164,14 @@ def _cmd_start(args: argparse.Namespace) -> int:
         layout=FleetLayout(),
         docker=DockerCLI(),
         gpus=gpus,
-        port_in_use=tcp_port_in_use,
+        port_in_use=effective_port_in_use,
         use_env_limit=True,
     )
     _print_warning(result.warning)
     instance = result.instance
     print(f"started: {instance.name}")
     print(f"  port:  {instance.port}")
-    print(f"  url:   http://0.0.0.0:{instance.port}")
+    print(f"  url:   {_open_url(instance.port)}")
     print(f"  gpus:  {','.join(str(index) for index in instance.gpus)}")
     return 0
 
@@ -187,7 +189,7 @@ def _cmd_restart(args: argparse.Namespace) -> int:
         layout=FleetLayout(),
         docker=DockerCLI(),
         gpus=gpus,
-        port_in_use=tcp_port_in_use,
+        port_in_use=effective_port_in_use,
         use_env_limit=True,
     )
     _print_warning(result.warning)
@@ -204,6 +206,13 @@ def _cmd_list(_args: argparse.Namespace) -> int:
 def _cmd_ui(args: argparse.Namespace) -> int:
     serve(host=args.host, port=args.port, ui_dir=args.ui_dir)
     return 0
+
+
+def _open_url(port: int) -> str:
+    raw = os.environ.get(PUBLIC_HOST_ENV, "").strip()
+    if not raw:
+        return f"http://0.0.0.0:{port}"
+    return f"http://{open_host(None, '0.0.0.0', public_host=raw)}:{port}"
 
 
 def _print_warning(warning: str | None) -> None:

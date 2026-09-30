@@ -91,6 +91,7 @@ def create_instance(
     use_env_limit: bool = False,
 ) -> ActionResult:
     authorize("create")
+    image = resolve_instance_image(image)
     source = Path(workflow)
     load_operator_workflow(source)
     name = instance_name_from_workflow(source)
@@ -264,6 +265,7 @@ def list_instances(layout: FleetLayout, docker: DockerCLI) -> list[tuple[Instanc
 
 def format_list(rows: list[tuple[Instance, str]]) -> str:
     header = ("NAME", "STATUS", "PORT", "URL", "GPUS", "WORKFLOW")
+    host = list_url_host()
     body = []
     for instance, status in rows:
         body.append(
@@ -271,7 +273,7 @@ def format_list(rows: list[tuple[Instance, str]]) -> str:
                 instance.name,
                 status,
                 str(instance.port),
-                f"http://0.0.0.0:{instance.port}",
+                f"http://{host}:{instance.port}",
                 ",".join(str(index) for index in instance.gpus),
                 instance.workflow_host_path,
             )
@@ -287,6 +289,28 @@ def format_list(rows: list[tuple[Instance, str]]) -> str:
     for row in body:
         lines.append("  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row)))
     return "\n".join(lines)
+
+
+def resolve_instance_image(image: str) -> str:
+    """``COMFYFLEET_INSTANCE_IMAGE`` overrides the default instance tag.
+
+    An explicit non-default ``--image`` is kept. The tag must already exist
+    on the host engine; the manager does not build it during create.
+    """
+
+    if image != DEFAULT_IMAGE:
+        return image
+    override = os.environ.get("COMFYFLEET_INSTANCE_IMAGE", "").strip()
+    return override or DEFAULT_IMAGE
+
+
+def list_url_host() -> str:
+    raw = os.environ.get("COMFYFLEET_PUBLIC_HOST", "").strip()
+    if not raw:
+        return "0.0.0.0"
+    from comfyfleet.public_host import open_host
+
+    return open_host(None, "0.0.0.0", public_host=raw)
 
 
 def _create_args(layout: FleetLayout, instance: Instance) -> list[str]:

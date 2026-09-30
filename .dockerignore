@@ -10,6 +10,4 @@ build
 tests
 examples
 *.md
-comfyfleet-logo-ships.jpg
-comfyfleet
-pyproject.toml
+/comfyfleet-logo-ships.jpg
