@@ -1,9 +1,8 @@
 """Create, start, stop, and list workflow instances.
 
-Phase 2 Auth should wrap ``authorize`` and keep calling these functions.
-Phase 3 iOS control should call the same functions. Mounts, naming, the
-operator workflow copy, and port assignment live here so they are not
-reimplemented behind a later login gate.
+The Phase 2 control HTTP API calls these functions and does not reimplement
+mounts, naming, the operator workflow copy, or port assignment. Phase 3 Auth
+should wrap ``authorize`` and keep calling the same functions.
 """
 
 from __future__ import annotations
@@ -64,7 +63,11 @@ class ActionResult:
 
 
 def authorize(action: str) -> None:
-    """Phase 2 authentication hook. Phase 1 allows the local operator."""
+    """No-op Auth stub. Real login and tokens are Phase 3.
+
+    Phase 1 and Phase 2 call this and then allow the local operator.
+    Returning normally is not a login.
+    """
 
     if action not in {"create", "start", "stop", "restart", "list"}:
         raise FleetError(f"unknown control action {action!r}")

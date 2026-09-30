@@ -2,11 +2,11 @@
 
 # ComfyFleet
 
-ComfyFleet runs **many** named ComfyUI workflow containers on one GPU host and **starts only a few** of them. Phase 1 is a local/LAN Docker fleet: a CUDA 12.4 image and a host CLI (`comfyfleet`) for create, start, stop, and list.
+ComfyFleet runs **many** named ComfyUI workflow containers on one GPU host and **starts only a few** of them. Phase 1 is a local/LAN Docker fleet: a CUDA 12.4 image and a host CLI (`comfyfleet`) for create, start, stop, and list. Phase 2 adds a control HTTP API on that same host so a web UI can list, create, start, stop, and open instances by calling `comfyfleet.control`. The iOS-like pages are not in this tree (`ui/index.html` is a placeholder).
 
-It is not a cloud service, not an account system, and not a phone app. Auth is Phase 2. The iOS control UI is Phase 3. Neither is implemented here.
+It is not a cloud service and not an account system. **Auth is Phase 3 and is not implemented.** `authorize()` is a no-op stub. The control server assumes a **trusted LAN**. Do not expose it to the public internet.
 
-The locked requirements are in [SPEC.md](SPEC.md).
+The locked requirements are in [SPEC.md](SPEC.md) (Phase 1) and [SPEC_PHASE2.md](SPEC_PHASE2.md) (Phase 2). The HTTP contract is in [CONTROL_HTTP.md](CONTROL_HTTP.md).
 
 ## What you need on the host
 
@@ -186,12 +186,37 @@ comfyfleet restart <name>
 
 The image checkouts start detached at the pins above, so a bare `git pull` will not move them until you check out a branch. Keep the torch constraints file in the pip command so a pull does not replace CUDA 12.4 torch with the PyPI CUDA 13 wheel. Restart the container afterward. Do not expect the old process to keep serving during the pull.
 
-## Phase 2 and Phase 3
+## Control HTTP API (Phase 2)
 
-Not in this tree:
+`comfyfleet ui` (alias `comfyfleet serve`) serves a JSON API that only calls `comfyfleet.control`, plus `comfyfleet.gpu.detect_gpus` for the create form. Default bind is `0.0.0.0:9100`. Primary URL: `http://<host>:9100/`.
 
-- **Phase 2 Auth.** No login, token, or multi-user gate. `comfyfleet.control.authorize` is the hook a later Auth layer should wrap. Create, start, stop, restart, and list go through `comfyfleet.control` so mounts and workflow copy do not need a second implementation.
-- **Phase 3 iOS control UI.** No phone app and no control web UI. A later client should call the same control functions. ComfyUI-ComfyDock is baked so the stock ComfyUI page is usable on a phone; it is not the fleet control app.
+```bash
+comfyfleet ui
+comfyfleet ui --host 127.0.0.1 --port 9100
+```
+
+`0.0.0.0` is so a phone on the LAN can open the UI. Use `--host 127.0.0.1` to keep it on this machine. There is no login. Do not put this port on the public internet.
+
+The UI and the API are same-origin. This server does not send CORS headers. Static files come from `ui/` when that directory exists. This repo's `ui/index.html` is a placeholder, not the iOS-like control UI.
+
+| Method | Path | Behavior |
+|---|---|---|
+| `GET` | `/api/health` | `ok`, and a note that Auth is a Phase 3 stub |
+| `GET` | `/api/gpus` | Detected GPUs (`index`, `name`, `memory`) |
+| `GET` | `/api/instances` | `name`, `status`, `port`, `gpus`, and `url` when `status` is `running` |
+| `POST` | `/api/instances` | Create. Requires an uploaded workflow JSON or `workflow_path`. Requires `gpu` or `gpus`. `start` defaults to false. `force` defaults to false. No baked workflow. |
+| `POST` | `/api/instances/{name}/start` | Start without rebuilding the image |
+| `POST` | `/api/instances/{name}/stop` | Stop without destroying the container |
+
+Field names, error status codes, and the open-URL rule are in [CONTROL_HTTP.md](CONTROL_HTTP.md).
+
+Phase 1 mount, port, and GPU behavior is unchanged. Create still copies the operator workflow to `/home/files/<name>/default_workflow.json` and still refuses a missing or invalid file.
+
+## Phase 3
+
+**Auth is not in this tree.** No login, token, or multi-user gate. `comfyfleet.control.authorize` is the hook a later Auth layer should wrap. Create, start, stop, restart, and list go through `comfyfleet.control` so mounts and workflow copy do not need a second implementation.
+
+ComfyUI-ComfyDock is baked so the stock ComfyUI page is usable on a phone. It is not the fleet control app. The fleet control UI is the Phase 2 web UI, served from this API's origin when `ui/` contains it.
 
 ## Tests
 
@@ -199,4 +224,4 @@ Not in this tree:
 python -m unittest discover -s tests
 ```
 
-The tests cover naming, port reservation, workflow rejection, `nvidia-smi` failures, GPU prompts, create-without-start, collision, and start/stop without an image rebuild. They do not build the CUDA image and they do not need a GPU.
+The tests cover naming, port reservation, workflow rejection, `nvidia-smi` failures, GPU prompts, create-without-start, collision, start/stop without an image rebuild, and the Phase 2 HTTP adapter (happy path and a missing workflow). They do not build the CUDA image and they do not need a GPU.

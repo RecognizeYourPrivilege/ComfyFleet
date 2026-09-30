@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "comfyfleet"
 version = "0.1.0"
-description = "Host CLI for a ComfyUI workflow container fleet (Phase 1)"
+description = "Host CLI and trusted-LAN control HTTP API for a ComfyUI workflow container fleet"
 readme = "README.md"
 requires-python = ">=3.10"
 
