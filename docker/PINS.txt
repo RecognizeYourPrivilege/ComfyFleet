@@ -5,6 +5,15 @@ Base
   CUDA runtime: cuda-libraries-12-4=12.4.1-1 and cuda-cudart-12-4=12.4.127-1
     from https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/
   cuDNN runtime: libcudnn9-cuda-12=9.1.0.70-1 (NVIDIA package description: CUDA 12.4)
+  Host C compiler for Triton JIT (not the CUDA devel toolkit):
+    gcc and python3-dev from Debian bookworm.
+    torch 2.6.0+cu124 depends on triton==3.2.0. import comfy_kitchen loads
+    backends.triton, and quantization.py's @triton.autotune initializes the
+    NVIDIA driver. That compiles driver.c (cuda_utils) and needs gcc plus
+    Python.h. Without gcc, triton/runtime/build.py raises
+    "Failed to find C compiler. Please specify via CC environment variable."
+    cuda.h ships in
+    the triton wheel. g++, build-essential, and cuda-nvcc are not installed.
 
 PyTorch (matches CUDA 12.4; not the PyPI default, which is CUDA 13)
   index: https://download.pytorch.org/whl/cu124
@@ -43,7 +52,10 @@ comfy-kitchen
   to typing.List, then imports the patched eager modules so torch 2.6
   infer_schema registers them. The image build does not import the top-level
   comfy_kitchen package. That import loads the Triton backend, and Triton
-  raises "0 active drivers" when the build has no NVIDIA driver.
+  raises "0 active drivers" when the build has no NVIDIA driver. A GPU host
+  gets past that check and JIT-compiles cuda_utils; gcc and python3-dev in
+  the base packages are what that compile uses. The link is -lcuda against
+  the host driver mounted into the container (libcuda.so).
 
 No workflow JSON is baked into this image. The operator file is bind-mounted
 to /opt/comfyfleet/instance/default_workflow.json and loaded on every start.
