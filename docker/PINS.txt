@@ -31,6 +31,20 @@ ComfyUI
 ComfyUI-Manager
   https://github.com/Comfy-Org/ComfyUI-Manager
   commit 14b5aaab711ad1f1306d420732a923fb058c44d7
+  That commit reads <user>/__manager/config.ini. ComfyUI v0.38.0 has
+  get_system_user_directory, and the entrypoint does not pass
+  --user-directory, so the file is /opt/ComfyUI/user/__manager/config.ini.
+  A missing file leaves allow_git_url_install and allow_pip_install false.
+  docker/seed_manager_config.py (from the entrypoint, every start) sets
+  allow_git_url_install=true, allow_pip_install=true, security_level=normal
+  in [default] without dropping other keys.
+  is_dedicated_install_allowed in that commit is flag AND loopback listen.
+  --listen stays 0.0.0.0 so Docker can publish the port onto the docker.sock
+  LAN. docker/patch_manager_trusted_install.py (late image layer, after the
+  torch and clone layers) keeps the flag and skips the loopback term when
+  COMFYFLEET_TRUSTED_INSTALL=1, which the entrypoint exports. Unset, the
+  stock check remains. A Manager on the public internet is a different
+  threat model; the env var is the gate for this image.
 
 pixaroma (full repository, not a subset of nodes)
   https://github.com/pixaroma/ComfyUI-Pixaroma
