@@ -53,8 +53,12 @@ RUN mkdir -p /opt/comfyfleet \
     && printf '%s\n' 'torch==2.6.0+cu124' 'torchvision==0.21.0+cu124' > /opt/comfyfleet/torch-constraints.txt
 
 # Pure-Python comfy-kitchen (eager backend). The manylinux wheel targets CUDA 13.
-RUN pip install --no-cache-dir \
-    https://files.pythonhosted.org/packages/38/23/a6787aac01d7c28ae3cb07579ba839297a35e6fad66baac096916246cc7f/comfy_kitchen-0.2.36-py3-none-any.whl
+# Install this wheel before ComfyUI requirements so comfy-kitchen==0.2.36 is
+# already satisfied and pip does not select the CUDA 13 wheel. Torch 2.6
+# infer_schema still rejects this release's list[int]/list[bool] custom-op
+# annotations; the rewrite below the requirements install fixes that.
+ARG COMFY_KITCHEN_WHEEL=https://files.pythonhosted.org/packages/38/23/a6787aac01d7c28ae3cb07579ba839297a35e6fad66baac096916246cc7f/comfy_kitchen-0.2.36-py3-none-any.whl
+RUN pip install --no-cache-dir "${COMFY_KITCHEN_WHEEL}"
 
 # Full upstream checkouts. Pixaroma's workflow-browser examples stay inside that
 # custom node; the entrypoint never uses them as the instance default.
@@ -79,6 +83,15 @@ RUN pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt \
     && python -c 'import torch; assert "cu124" in torch.__version__, torch.__version__'
 
 COPY docker/PINS.txt /opt/comfyfleet/PINS.txt
+COPY docker/patch_comfy_kitchen_torch26.py /opt/comfyfleet/patch_comfy_kitchen_torch26.py
+
+# Requirements leave an already-installed 0.2.36 in place. Reinstall the
+# pure-Python wheel anyway so a resolver that picked the manylinux build cannot
+# survive into the image, then rewrite custom-op annotations for torch 2.6.
+# import comfy_kitchen is the crash-loop check: it registers those ops.
+RUN pip install --no-cache-dir --force-reinstall --no-deps "${COMFY_KITCHEN_WHEEL}" \
+    && python /opt/comfyfleet/patch_comfy_kitchen_torch26.py \
+    && python -c 'import comfy_kitchen; from importlib.metadata import version; assert version("comfy-kitchen") == "0.2.36"'
 COPY docker/comfyfleet_default_workflow /opt/comfyfleet/baked_custom_nodes/comfyfleet_default_workflow
 COPY docker/entrypoint.sh /opt/comfyfleet/entrypoint.sh
 
