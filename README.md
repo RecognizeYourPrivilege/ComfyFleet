@@ -179,7 +179,7 @@ PyTorch is the CUDA 12.4 wheels from `https://download.pytorch.org/whl/cu124`, n
 | torch | `torch==2.6.0+cu124` |
 | torchvision | `torchvision==0.21.0+cu124` |
 
-The image Python is Debian bookworm CPython 3.11. A constraints file at `/opt/comfyfleet/torch-constraints.txt` keeps later `pip install -r requirements.txt` from replacing those wheels. `comfy-kitchen==0.2.36` is the pure-Python wheel so the eager backend runs on CUDA 12.4.
+The image Python is Debian bookworm CPython 3.11. A constraints file at `/opt/comfyfleet/torch-constraints.txt` keeps later `pip install -r requirements.txt` from replacing those wheels. `comfy-kitchen==0.2.36` is the pure-Python wheel (`py3-none-any`) so the eager backend runs on CUDA 12.4. The manylinux wheel targets CUDA 13 and is not installed. Torch 2.6.0+cu124 `infer_schema` rejects that release's PEP 585 `list[int]` and `list[bool]` custom-op annotations, so `import comfy_kitchen` dies in `backends/eager/conv3d.py` (`stride: list[int]`). There is no stable torch 2.7+ cu124 wheel. The image keeps this torch pin and, after install, rewrites those custom-op annotations to `typing.List` via `docker/patch_comfy_kitchen_torch26.py` (also at `/opt/comfyfleet/patch_comfy_kitchen_torch26.py`).
 
 Baked custom nodes (also in `docker/PINS.txt`):
 
@@ -258,7 +258,7 @@ exit
 docker exec comfyfleet-manager comfyfleet restart portrait
 ```
 
-The image checkouts start detached at the pins above, so a bare `git pull` will not move them until you check out a branch. Keep the torch constraints file in the pip command so a pull does not replace CUDA 12.4 torch with the PyPI CUDA 13 wheel.
+The image checkouts start detached at the pins above, so a bare `git pull` will not move them until you check out a branch. Keep the torch constraints file in the pip command so a pull does not replace CUDA 12.4 torch with the PyPI CUDA 13 wheel. If that command reinstalls comfy-kitchen, install the pure-Python 0.2.36 wheel again and rerun `python /opt/comfyfleet/patch_comfy_kitchen_torch26.py`. A manylinux kitchen wheel targets CUDA 13, and an unpatched 0.2.36 tree crashes torch 2.6 at import.
 
 ## API
 
