@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
+from comfyfleet.auth import LoginGuard, SessionStore
 from comfyfleet.cli import build_parser
 from comfyfleet.control import authorize
 from comfyfleet.errors import FleetError
@@ -74,6 +75,15 @@ class Probe:
         return list(self.gpus)
 
 
+PASSWORD = "test-password"
+
+
+def _auth_context(ctx):
+    ctx.password = PASSWORD
+    ctx.sessions = SessionStore()
+    ctx.login_guard = LoginGuard(fail_delay_s=0)
+
+
 def _workflow(marker: str) -> bytes:
     payload = {
         "last_node_id": 0,
@@ -135,6 +145,7 @@ class HttpApiTests(unittest.TestCase):
             ui_dir=self.ui,
             use_env_limit=True,
         )
+        _auth_context(self.ctx)
         self.httpd = make_server("127.0.0.1", 0, self.ctx)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
@@ -147,11 +158,14 @@ class HttpApiTests(unittest.TestCase):
         self.thread.join(timeout=5)
         self.tmp.cleanup()
 
-    def _open(self, method, path, data=None, headers=None):
+    def _open(self, method, path, data=None, headers=None, auth=True):
+        merged = dict(headers or {})
+        if auth and "Authorization" not in merged:
+            merged["Authorization"] = f"Bearer {PASSWORD}"
         request = urllib.request.Request(
             self.base + path,
             data=data,
-            headers=headers or {},
+            headers=merged,
             method=method,
         )
         try:
@@ -165,15 +179,15 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(payload.get("ok"), status < 400)
         return payload
 
-    def test_health_is_auth_stub_without_credentials(self):
-        status, raw = self._open("GET", "/api/health")
+    def test_health_is_public_and_has_no_fleet_data(self):
+        status, raw = self._open("GET", "/api/health", auth=False)
         self.assertEqual(status, 200)
         payload = self._body(status, raw)
-        self.assertEqual(payload["auth"], "phase3-stub")
-        self.assertEqual(payload["phase"], 2)
-        self.assertIn("Phase 3", payload["note"])
-        self.assertIn("no-op", payload["note"])
-        self.assertNotIn("logged in", payload["note"].lower())
+        self.assertEqual(payload["auth"], "required")
+        self.assertNotIn("phase", payload)
+        self.assertNotIn("no-op", payload["note"])
+        self.assertNotIn(PASSWORD, raw.decode("utf-8"))
+        self.assertNotIn("instances", payload)
 
     def test_gpus_and_probe_failure(self):
         status, raw = self._open("GET", "/api/gpus")
@@ -254,7 +268,15 @@ class HttpApiTests(unittest.TestCase):
         self.assertIn(("start", "portrait"), self.docker.calls)
         self.assertNotIn("build", [call[0] for call in self.docker.calls])
 
-        viewed = dispatch(self.ctx, "GET", "/api/instances", "phone.lan:9100", b"", None)
+        viewed = dispatch(
+            self.ctx,
+            "GET",
+            "/api/instances",
+            "phone.lan:9100",
+            b"",
+            None,
+            {"Authorization": f"Bearer {PASSWORD}"},
+        )
         listed = json.loads(viewed.body.decode("utf-8"))["instances"]
         self.assertEqual(listed[0]["url"], "http://phone.lan:8188")
 
@@ -390,7 +412,7 @@ class HttpApiTests(unittest.TestCase):
         connection.request("GET", "/../secret.txt")
         response = connection.getresponse()
         body = response.read()
-        self.assertEqual(response.status, 404)
+        self.assertIn(response.status, (302, 404))
         self.assertNotIn(b"SECRET-MARK", body)
         connection.close()
 
@@ -398,7 +420,7 @@ class HttpApiTests(unittest.TestCase):
         status, raw = self._open("GET", "/")
         self.assertEqual(status, 200)
         self.assertIn(b"placeholder", raw.lower())
-        self.assertIn(b"Phase 3", raw)
+        self.assertIn(b"Bearer", raw)
 
     def test_body_too_large(self):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)

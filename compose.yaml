@@ -15,6 +15,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /home:/home
     environment:
+      COMFYFLEET_PASSWORD: ${COMFYFLEET_PASSWORD:?Set COMFYFLEET_PASSWORD}
       COMFYFLEET_PUBLIC_HOST: ${COMFYFLEET_PUBLIC_HOST:-}
       COMFYFLEET_INSTANCE_IMAGE: comfyfleet:phase1
       COMFYFLEET_BIND_HOST: 0.0.0.0

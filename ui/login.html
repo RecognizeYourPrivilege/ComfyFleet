@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="color-scheme" content="dark">
+  <title>Sign in — ComfyFleet</title>
+  <link rel="icon" href="/comfyfleet-logo-ships.jpg">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+  <main class="login-wrap">
+    <form id="login-form" class="login-card glass" method="post" action="/api/login">
+      <p class="eyebrow">Fleet control</p>
+      <h1>ComfyFleet</h1>
+      <p id="login-lead" class="sheet-lead">Sign in with the manager password.</p>
+      <figure class="logo-plate">
+        <img src="/comfyfleet-logo-ships.jpg" alt="ComfyFleet — ships on the water">
+      </figure>
+      <label class="field-label" for="password">Password</label>
+      <input id="password" name="password" class="text-input" type="password" autocomplete="current-password" required>
+      <p id="login-error" class="banner" role="alert" hidden></p>
+      <button class="btn primary" type="submit">Sign in</button>
+      <p class="trust">Trusted LAN is still recommended. This login gates the manager only.</p>
+    </form>
+  </main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const error = document.querySelector("#login-error");
+    const passwordInput = document.querySelector("#password");
+    if (params.get("expired")) {
+      error.hidden = false;
+      error.textContent = "Session expired. Sign in again.";
+    }
+    document.querySelector("#login-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const password = passwordInput.value;
+      let response;
+      try {
+        response = await fetch("/api/login", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ password })
+        });
+      } catch (err) {
+        error.hidden = false;
+        error.textContent = "Control backend unreachable.";
+        return;
+      }
+      let payload = null;
+      try { payload = await response.json(); } catch (err) { payload = null; }
+      if (response.ok && payload && payload.ok) {
+        window.location.assign("/");
+        return;
+      }
+      passwordInput.value = "";
+      error.hidden = false;
+      if (response.status === 429) {
+        error.textContent = "Too many sign-in attempts. Wait a moment and try again.";
+      } else {
+        error.textContent = "Invalid credentials.";
+      }
+    });
+  </script>
+</body>
+</html>
