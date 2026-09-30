@@ -6,8 +6,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-INSTANCE = "ghcr.io/recognizeyourprivilege/comfyfleet:phase1"
-MANAGER = "ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest"
+INSTANCE = "ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba"
+MANAGER = "ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a4204564c60cf3afc40db17b34a268cf2c1c2f8e685b4601bc1c6e4dedbc713f"
 
 
 class InstallScriptTests(unittest.TestCase):
@@ -139,7 +139,6 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("COMFYFLEET_INSTANCE_IMAGE", head)
         self.assertIn("COMFYFLEET_INSTANCE_DIGEST", head)
         self.assertNotIn("docker build", head)
-        self.assertIn("not pinned", head.lower())
         self.assertIn("docker build -t comfyfleet:phase1 .", tail)
         self.assertIn("Dockerfile.manager", tail)
         self.assertIn("scripts/publish-images.sh", tail)
