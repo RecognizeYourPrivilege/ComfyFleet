@@ -33,8 +33,14 @@ ComfyUI-ComfyDock
   commit 3a9ff9eba897bf2388d6c1943b01d819ba05a0c6
 
 comfy-kitchen
-  0.2.36 pure-Python wheel (eager backend).
+  0.2.36 pure-Python wheel (eager backend): comfy_kitchen-0.2.36-py3-none-any.whl
+  https://files.pythonhosted.org/packages/38/23/a6787aac01d7c28ae3cb07579ba839297a35e6fad66baac096916246cc7f/comfy_kitchen-0.2.36-py3-none-any.whl
   The manylinux wheel targets CUDA 13 and is intentionally not installed.
+  torch 2.6.0+cu124 infer_schema rejects PEP 585 list[int] and list[bool] on
+  custom ops (first crash: backends/eager/conv3d.py parameter stride). There is
+  no stable torch>=2.7 cu124 wheel, so torch stays 2.6.0+cu124. After install,
+  docker/patch_comfy_kitchen_torch26.py rewrites those custom-op annotations
+  to typing.List.
 
 No workflow JSON is baked into this image. The operator file is bind-mounted
 to /opt/comfyfleet/instance/default_workflow.json and loaded on every start.
