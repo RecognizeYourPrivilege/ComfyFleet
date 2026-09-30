@@ -18,28 +18,82 @@ Requirements and contracts: [SPEC.md](SPEC.md), [SPEC_PHASE2.md](SPEC_PHASE2.md)
 - A working NVIDIA driver. `nvidia-smi` must succeed on the host. A CPU-only start is a failure.
 - The [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), so `docker create --gpus device=N` works and so the manager can see host GPUs.
 - Permission to create directories under `/home` (`/home/models`, `/home/custom_nodes_<name>`, `/home/files/<name>/...`).
+- Disk space to pull the images. A normal install does not compile torch on the host.
 
 Those `/home/...` paths are the default contract.
 
+The images are `linux/amd64` Debian bookworm-slim. The host can be Arch. The host does not need Debian, a CUDA toolkit, or a local image rebuild.
+
 ## Run the manager
 
-Two images:
+Pull the prebuilt images and start the manager. That is the normal install. A local image rebuild is optional and is documented under Development.
 
-| Image | Tag | Role |
-|---|---|---|
-| Manager | `comfyfleet-manager:latest` | Control HTTP API and web UI. No CUDA stack. |
-| Instance | `comfyfleet:phase1` | ComfyUI container the manager creates. CUDA 12.4. |
+Two images. [`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml) is what publishes them to GHCR from `main`:
 
-Build both on the host. The instance tag has to exist in the **host** engine before create, because sibling containers are started by that engine.
+| Image | Pull | Also tagged locally by `install.sh` | Role |
+|---|---|---|---|
+| Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest` | `comfyfleet-manager:latest` | Control HTTP API and web UI. No CUDA stack. |
+| Instance | `ghcr.io/recognizeyourprivilege/comfyfleet:phase1` | `comfyfleet:phase1` | ComfyUI container the manager creates. CUDA 12.4. |
 
-```bash
-docker build -t comfyfleet:phase1 .
-docker build -f Dockerfile.manager -t comfyfleet-manager:latest .
+Each successful publish also tags the git commit SHA (`ghcr.io/recognizeyourprivilege/comfyfleet:<sha>` and `ghcr.io/recognizeyourprivilege/comfyfleet-manager:<sha>`). `ghcr.io/recognizeyourprivilege/comfyfleet:latest` is the same instance build as `:phase1`.
+
+Digests are not pinned in this file yet. After a successful publish, the workflow job summary prints:
+
+```text
+instance ghcr.io/recognizeyourprivilege/comfyfleet@sha256:<digest>
+manager ghcr.io/recognizeyourprivilege/comfyfleet-manager@sha256:<digest>
 ```
 
-Start the manager. Replace `192.168.1.20` with the address browsers on your LAN use to reach this machine.
+Copy those lines into this section when they exist. Until then, installs follow the tags above. To pin a later install:
 
 ```bash
+export COMFYFLEET_INSTANCE_DIGEST=sha256:<instance-digest>
+export COMFYFLEET_MANAGER_DIGEST=sha256:<manager-digest>
+```
+
+Until that Actions run has succeeded on `main` and a maintainer has made both GHCR packages public, `docker pull` fails. This tree does not claim the images are already pullable. What a human still has to do is listed under Development.
+
+The instance tag has to exist in the **host** engine before create, because sibling containers are started by that engine. `install.sh` pulls it and sets `COMFYFLEET_INSTANCE_IMAGE` to that ref. The manager's own default, when that variable is unset, remains `comfyfleet:phase1`. The script also applies that local tag, so a manager started without the variable still finds the image.
+
+### Install script
+
+From a checkout of this repo, replace `192.168.1.20` with the address browsers on your LAN use:
+
+```bash
+export COMFYFLEET_PASSWORD=replace-with-a-long-secret
+export COMFYFLEET_PUBLIC_HOST=192.168.1.20
+./install.sh
+```
+
+Without a checkout:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RecognizeYourPrivilege/ComfyFleet/main/install.sh \
+  | COMFYFLEET_PASSWORD=replace-with-a-long-secret COMFYFLEET_PUBLIC_HOST=192.168.1.20 bash
+```
+
+Compose uses the same mounts and environment. The script still pulls the instance image, which is not a compose service:
+
+```bash
+export COMFYFLEET_PASSWORD=replace-with-a-long-secret
+export COMFYFLEET_PUBLIC_HOST=192.168.1.20
+./install.sh --compose
+```
+
+`replace-with-a-long-secret` is a placeholder. Pick a long password and do not commit it. Changing the password means recreating or restarting the manager with the new value. Sessions live in process memory and end on that restart.
+
+Open `http://192.168.1.20:9100/`. The browser shows a sign-in page until the password is accepted.
+
+The script pulls both images, tags the local names above, removes an existing container named `comfyfleet-manager`, and starts the manager with `--gpus all`, `-p 9100:9100`, the Docker socket, `/home`, `COMFYFLEET_PASSWORD`, `COMFYFLEET_PUBLIC_HOST`, and `COMFYFLEET_INSTANCE_IMAGE`. Re-running it updates the manager container. It does not delete workflow instances.
+
+### The same start by hand
+
+```bash
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet:phase1 comfyfleet:phase1
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest comfyfleet-manager:latest
+
 docker run -d --name comfyfleet-manager \
   --restart unless-stopped \
   --gpus all \
@@ -48,18 +102,16 @@ docker run -d --name comfyfleet-manager \
   -v /home:/home \
   -e COMFYFLEET_PASSWORD=replace-with-a-long-secret \
   -e COMFYFLEET_PUBLIC_HOST=192.168.1.20 \
-  comfyfleet-manager:latest
+  -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:phase1 \
+  ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest
 ```
 
-`replace-with-a-long-secret` is a placeholder. Pick a long password and do not commit it. Changing the password means recreating or restarting the manager with the new value. Sessions live in process memory and end on that restart.
-
-Open `http://192.168.1.20:9100/`. The browser shows a sign-in page until the password is accepted.
-
-The same service is in [compose.yaml](compose.yaml):
+[compose.yaml](compose.yaml) is the same service. It does not pull the instance image. Pull that tag first, or use `./install.sh --compose`:
 
 ```bash
 export COMFYFLEET_PASSWORD=replace-with-a-long-secret
 export COMFYFLEET_PUBLIC_HOST=192.168.1.20
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1
 docker compose up -d
 ```
 
@@ -111,7 +163,7 @@ Create creates any of those directories that are missing, including the usual Co
 
 If `/home` is not a bind mount, the manager warns at startup. Directories created only inside the manager filesystem are not the directories sibling containers mount.
 
-`COMFYFLEET_INSTANCE_IMAGE` overrides the instance tag when you do not pass another image (default `comfyfleet:phase1`).
+`COMFYFLEET_INSTANCE_IMAGE` overrides the instance tag when you do not pass another image. The manager default is `comfyfleet:phase1`. `install.sh` sets the variable to the GHCR ref it pulled (`ghcr.io/recognizeyourprivilege/comfyfleet:phase1`, or a digest ref when `COMFYFLEET_INSTANCE_DIGEST` is set) and also tags that image as `comfyfleet:phase1`.
 
 ## Use the web UI
 
@@ -162,7 +214,7 @@ The container name is the workflow filename stem, sanitized:
 
 ## Instance image
 
-The instance image is Debian bookworm-slim plus the NVIDIA CUDA 12.4 runtime (not the devel toolkit):
+The instance image is Debian bookworm-slim plus the NVIDIA CUDA 12.4 runtime (not the devel toolkit). The GHCR tag `ghcr.io/recognizeyourprivilege/comfyfleet:phase1` is built from this Dockerfile. The kitchen annotation rewrite and the `gcc` and `python3-dev` packages are image layers. The host does not repeat those steps.
 
 | Package | Pin |
 |---|---|
@@ -232,15 +284,20 @@ Containers are created with `--restart no`, so a created-but-never-started insta
 
 There is no zero-downtime or rolling update.
 
-**Rebuild the instance image:**
+**Pull a newer instance image.** `create` uses the tag already on the host engine. Pulling moves `:phase1`. Then recreate the instance. This does not rebuild torch on the host.
 
 ```bash
-docker build -t comfyfleet:phase1 .
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet:phase1 comfyfleet:phase1
 docker exec comfyfleet-manager comfyfleet stop portrait
 docker exec comfyfleet-manager comfyfleet create \
   --workflow /home/files/portrait/default_workflow.json --force --gpu 0
 docker exec comfyfleet-manager comfyfleet start portrait
 ```
+
+If the manager was installed with `COMFYFLEET_INSTANCE_IMAGE` set to a digest, pulling `:phase1` does not change that pin. Re-run `install.sh` with the new `COMFYFLEET_INSTANCE_DIGEST`, then recreate. Re-running `install.sh` replaces the manager container and pulls images. It leaves workflow containers in place until you stop and create them again.
+
+A local image rebuild is documented under Development.
 
 **In-container git (not pinned after you move HEAD):**
 
@@ -308,3 +365,55 @@ python -m unittest discover -s tests
 `scripts/manager-smoke.sh` builds `comfyfleet-manager:latest`, starts it with a placeholder password, and requests `/api/health` and `/login`. It skips when `docker` is not installed. A full create/start/stop against a real ComfyUI container needs the instance image and a GPU. `tests/test_manager.py` walks health, UI, create (workflow upload), start, and stop with a fake engine.
 
 The tests cover naming, port reservation, workflow rejection, `nvidia-smi` failures, GPU prompts, create-without-start, collision, start/stop without an image rebuild, the HTTP API, and the manager socket and public-host errors. `tests/test_ui.py` checks that the pages call that API and do not implement Docker themselves. They do not build the CUDA image and they do not need a GPU.
+
+### Local image rebuild
+
+Optional. Use this when you are changing the Dockerfiles, or when GHCR does not have a public image yet. No GPU is required: the instance Dockerfile does not import `comfy_kitchen` during the build (that import loads Triton, which errors when no driver is mounted). Torch wheels are large. Expect a long build and several gigabytes of disk.
+
+```bash
+docker build -t comfyfleet:phase1 .
+docker build -f Dockerfile.manager -t comfyfleet-manager:latest .
+export COMFYFLEET_PASSWORD=replace-with-a-long-secret
+export COMFYFLEET_PUBLIC_HOST=192.168.1.20
+export COMFYFLEET_INSTANCE_IMAGE=comfyfleet:phase1
+export COMFYFLEET_MANAGER_IMAGE=comfyfleet-manager:latest
+docker compose -f compose.yaml -f compose.build.yaml up -d --build
+```
+
+`compose.build.yaml` points the manager at the local tags. The instance image is still the separate `docker build -t comfyfleet:phase1 .` above. Recreate running instances after that rebuild the same way as a pulled update: stop, `create --force`, start.
+
+### Publish to GHCR
+
+[`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml) builds both Dockerfiles on `ubuntu-24.04` (`linux/amd64`) and pushes to GHCR. It runs on pushes to `main` that change image inputs, and from the Actions tab (`workflow_dispatch`). It does not run on pull requests. The runner has no GPU. The instance job deletes preinstalled runner toolchains before the build because torch and CUDA layers are large, and the job timeout is 180 minutes.
+
+| Image | Tags |
+|---|---|
+| `ghcr.io/recognizeyourprivilege/comfyfleet` | `phase1`, `latest`, `<git sha>` |
+| `ghcr.io/recognizeyourprivilege/comfyfleet-manager` | `latest`, `<git sha>` |
+
+The workflow logs in with `GITHUB_TOKEN` (`packages: write`). A personal access token is not required for that job. The job summary prints:
+
+```text
+instance ghcr.io/recognizeyourprivilege/comfyfleet@sha256:<digest>
+manager ghcr.io/recognizeyourprivilege/comfyfleet-manager@sha256:<digest>
+```
+
+Those digests are not committed automatically. Copy them into the Install section above.
+
+What a human still has to do before operators can pull:
+
+1. Merge the workflow to `main`. A push to `main` that touches the workflow file starts it. `workflow_dispatch` is offered from the Actions tab only after the workflow file is on the default branch. This pull request does not publish images.
+2. Wait until both jobs succeed. A failed instance job is often disk or time on the hosted runner. The fallback is `scripts/publish-images.sh` on a machine with more free disk. No GPU is required there either.
+3. Open the `comfyfleet` and `comfyfleet-manager` packages on the account. A personal-account package is private on first publish. Set each package to public, or anonymous `docker pull` is denied. Making a package public cannot be undone. `GITHUB_TOKEN` can push the image and does not change visibility.
+4. Copy the digests from the job summary into this README if installs should be pinned.
+
+GHCR limits each layer to 10 GB and each upload to about 10 minutes. These Dockerfiles are the same ones a local build uses. The workflow does not split layers.
+
+Manual push, same tags. Log in first. The password is a PAT, not your GitHub password: classic `write:packages`, or a fine-grained token with Packages read and write.
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+scripts/publish-images.sh
+```
+
+`scripts/publish-images.sh` runs `docker buildx build --platform linux/amd64 --push` for `Dockerfile` and `Dockerfile.manager`, then prints digests. It sets `org.opencontainers.image.source` so a CLI push can be linked to this repo. An Actions push with `GITHUB_TOKEN` links the package to the repo by itself. A CLI push does not, unless that label or a later UI link is present.
