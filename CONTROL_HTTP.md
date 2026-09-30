@@ -2,7 +2,7 @@
 
 Phase 2 contract for the control web UI. The server is a thin adapter over `comfyfleet.control` and the `comfyfleet.gpu` probe. It does not implement Docker lifecycle, mounts, port assignment, or GPU selection itself. It does not implement login.
 
-The iOS-like pages are not in this tree. `ui/index.html` is a placeholder. Replace `ui/` with the real UI when it exists; the same process will serve it.
+The iOS-like control UI is in `ui/` (`index.html`, `app.css`, `app.js`, `comfyfleet-logo-ships.jpg`). This process serves it at `GET /`. The pages call the routes below and do not implement Docker lifecycle.
 
 ## Serve
 
@@ -42,7 +42,7 @@ There is no delete route. Phase 1 control has no destroy API. There is no HTTP r
 | `POST` | `/api/instances` | `create_instance` | The instance just created |
 | `POST` | `/api/instances/{name}/start` | `start_instance` | That instance, running |
 | `POST` | `/api/instances/{name}/stop` | `stop_instance` | That instance, not running |
-| `GET` | `/` and other non-API paths | static files under `ui/` | UI assets, or a placeholder at `/` |
+| `GET` | `/` and other non-API paths | static files under `ui/` | Control UI assets. If `ui/` is missing, `/` is a short placeholder |
 
 `{name}` is the instance name from create (the sanitized workflow filename stem). It is URL-safe: lowercase `[a-z0-9_-]`, at most 63 characters.
 
