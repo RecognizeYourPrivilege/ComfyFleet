@@ -1,4 +1,8 @@
-"""Command-line entrypoint. Phase 2 Auth can wrap ``comfyfleet.control``."""
+"""Command-line entrypoint.
+
+``comfyfleet.control`` is the lifecycle API. ``comfyfleet ui`` (alias
+``serve``) exposes it over HTTP. Phase 3 Auth can wrap ``authorize``.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ from comfyfleet.control import (
 from comfyfleet.docker import DockerCLI
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import detect_gpus
+from comfyfleet.http_api import DEFAULT_BIND_HOST, DEFAULT_BIND_PORT, serve
 from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
 from comfyfleet.ports import tcp_port_in_use
 
@@ -81,6 +86,41 @@ def build_parser() -> argparse.ArgumentParser:
 
     listing = sub.add_parser("list", help="Show instances, status, and host ports")
     listing.set_defaults(func=_cmd_list)
+
+    bind = argparse.ArgumentParser(add_help=False)
+    bind.add_argument(
+        "--host",
+        default=DEFAULT_BIND_HOST,
+        help=(
+            f"Bind address (default {DEFAULT_BIND_HOST}). "
+            "Use 127.0.0.1 to keep the control server on this machine."
+        ),
+    )
+    bind.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_BIND_PORT,
+        help=f"Control HTTP port (default {DEFAULT_BIND_PORT})",
+    )
+    bind.add_argument(
+        "--ui-dir",
+        default=None,
+        help="Directory of static control-UI files to serve at /. Defaults to ./ui when that directory exists.",
+    )
+    ui_help = (
+        "Serve the control HTTP API for the web UI. "
+        f"Default is http://{DEFAULT_BIND_HOST}:{DEFAULT_BIND_PORT}/ . "
+        "Auth is a Phase 3 stub; bind this on a trusted LAN only."
+    )
+    ui = sub.add_parser("ui", parents=[bind], help="Serve the control HTTP API", description=ui_help)
+    ui.set_defaults(func=_cmd_ui)
+    serve_cmd = sub.add_parser(
+        "serve",
+        parents=[bind],
+        help="Alias of ui",
+        description=ui_help,
+    )
+    serve_cmd.set_defaults(func=_cmd_ui)
     return parser
 
 
@@ -158,6 +198,11 @@ def _cmd_restart(args: argparse.Namespace) -> int:
 def _cmd_list(_args: argparse.Namespace) -> int:
     rows = list_instances(FleetLayout(), DockerCLI())
     print(format_list(rows))
+    return 0
+
+
+def _cmd_ui(args: argparse.Namespace) -> int:
+    serve(host=args.host, port=args.port, ui_dir=args.ui_dir)
     return 0
 
 
