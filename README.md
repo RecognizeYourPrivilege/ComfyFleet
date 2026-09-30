@@ -2,20 +2,20 @@
 
 # ComfyFleet
 
-ComfyFleet runs **many** named ComfyUI workflow containers on one GPU host and **starts only a few** of them. Phase 1 is a local/LAN Docker fleet: a CUDA 12.4 image and a host CLI (`comfyfleet`) for create, start, stop, and list. Phase 2 adds a same-origin control HTTP API and an iOS-like web UI on that host. The pages call `/api/...` only. Docker lifecycle stays in `comfyfleet.control`.
+ComfyFleet runs **many** named ComfyUI workflow containers on one GPU host and **starts only a few** of them. It is a local Docker fleet for that host: a CUDA 12.4 image, a host CLI (`comfyfleet`) for create, start, stop, and list, and a same-origin control HTTP API with a web UI. The pages call `/api/...` only. Docker lifecycle stays in `comfyfleet.control`.
 
-It is not a cloud service and not an account system. **Auth is Phase 3 and is not implemented.** `authorize()` is a no-op stub. The control server assumes a **trusted LAN**. Do not expose it to the public internet.
+**There is no auth yet.** Use it on a trusted LAN only. Do not expose the control server or the ComfyUI ports to the public internet.
 
-The locked requirements are in [SPEC.md](SPEC.md) (Phase 1) and [SPEC_PHASE2.md](SPEC_PHASE2.md) (Phase 2). The HTTP contract is in [CONTROL_HTTP.md](CONTROL_HTTP.md).
+**Requirements and contracts:** [SPEC.md](SPEC.md), [SPEC_PHASE2.md](SPEC_PHASE2.md). HTTP contract: [CONTROL_HTTP.md](CONTROL_HTTP.md).
 
 ## What you need on the host
 
 - Linux with Docker.
-- A working NVIDIA driver. `nvidia-smi` must succeed. Phase 1 does not treat a CPU-only start as success.
+- A working NVIDIA driver. `nvidia-smi` must succeed. A CPU-only start is a failure.
 - The [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), so `docker create --gpus device=N` works.
 - Permission to create directories under `/home` (`/home/models`, `/home/custom_nodes_<name>`, `/home/files/<name>/...`).
 
-Those `/home/...` paths are fixed in Phase 1.
+Those `/home/...` paths are fixed.
 
 ## Build the image
 
@@ -24,7 +24,7 @@ docker build -t comfyfleet:phase1 .
 pip install .
 ```
 
-`pip install .` installs the host CLI only. It does not build the image. The image does not contain the CLI.
+`pip install .` installs the host CLI. It does not build the image. The image does not include the CLI.
 
 ### PyTorch and CUDA 12.4
 
@@ -62,11 +62,11 @@ Cloned in full and checked out at these commits (also in `docker/PINS.txt`):
 | pixaroma (full repo) | `https://github.com/pixaroma/ComfyUI-Pixaroma` | tag `v1.4.181`, commit `9259bc49557a92e3fc14796999468c723bd1ecdd` |
 | ComfyUI-ComfyDock | `https://github.com/RecognizeYourPrivilege/ComfyUI-ComfyDock` | `3a9ff9eba897bf2388d6c1943b01d819ba05a0c6` |
 
-`git` is installed in the image so Manager and in-container updates can use it. The pixaroma checkout is the whole repository, including that pack's own workflow-browser examples. Those files are **not** the instance default and are **not** used when `--workflow` is omitted.
+`git` is installed in the image so Manager and in-container updates can use it. The pixaroma checkout is the whole repository, including that pack's own workflow-browser examples. Those files are not the instance default. Omitting `--workflow` fails create; those examples are not substituted.
 
 ## Create, start, stop, list
 
-Create **requires** `--workflow`. There is no stock, QualitySafe, or sample workflow inside the image, and create fails if the file is missing, unreadable, or not a JSON object.
+Create **requires** `--workflow`. The image has no stock, QualitySafe, or sample workflow. Create fails if the file is missing, unreadable, or not a JSON object.
 
 `examples/workflow.example.json` shows the shape of a UI-format workflow. It is documentation only. `.dockerignore` excludes `examples/`, and the Dockerfile does not copy it.
 
@@ -77,7 +77,7 @@ comfyfleet start workflow_example
 comfyfleet stop workflow_example
 ```
 
-The name `workflow_example` is the sanitized stem of `workflow.example.json`. Create does **not** start the container. Pass `--start` only when you want that one instance started immediately.
+The name `workflow_example` is the sanitized stem of `workflow.example.json`. Create leaves the container stopped. Pass `--start` only when you want that one instance started immediately.
 
 ```bash
 comfyfleet create --workflow ~/flows/portrait.json --gpus 0
@@ -139,7 +139,7 @@ A real directory you place at one of those names is left alone.
 5. ComfyUI is executed as `python main.py --listen 0.0.0.0 --port 8188`.
 6. The baked loader node serves `GET /comfyfleet/default-workflow` and `GET /comfyfleet/boot`. Its frontend extension calls `app.loadGraphData` (or `app.loadApiJson` for API-format graphs) after the UI comes up. A browser tab loads the file once per boot id and file mtime, so a container restart or a host-side edit shows up on the next page load. If the fetch fails, the loader does not substitute another workflow.
 
-GPU changes are a recreate: `comfyfleet stop <name>` then `comfyfleet create --workflow ... --force --gpus ...`. There is no in-place GPU edit in Phase 1.
+GPU changes are a recreate: `comfyfleet stop <name>` then `comfyfleet create --workflow ... --force --gpus ...`. There is no in-place GPU edit.
 
 ## Ports and GPUs
 
@@ -155,7 +155,7 @@ Containers are created with `--restart no`, so a created-but-never-started insta
 
 ## Updates
 
-Phase 1 has no zero-downtime or rolling update.
+There is no zero-downtime or rolling update.
 
 **Rebuild (reproducible):**
 
@@ -186,22 +186,28 @@ comfyfleet restart <name>
 
 The image checkouts start detached at the pins above, so a bare `git pull` will not move them until you check out a branch. Keep the torch constraints file in the pip command so a pull does not replace CUDA 12.4 torch with the PyPI CUDA 13 wheel. Restart the container afterward. Do not expect the old process to keep serving during the pull.
 
-## Control HTTP API (Phase 2)
+## Control UI
 
-`comfyfleet ui` (alias `comfyfleet serve`) serves a JSON API that only calls `comfyfleet.control`, plus `comfyfleet.gpu.detect_gpus` for the create form. Default bind is `0.0.0.0:9100`. Primary URL: `http://<host>:9100/`.
+`comfyfleet ui` (alias `comfyfleet serve`) serves a JSON API that only calls `comfyfleet.control`, plus `comfyfleet.gpu.detect_gpus` for the create form, and the web UI. Default bind is `0.0.0.0:9100`. Primary URL: `http://<host>:9100/`.
 
 ```bash
 comfyfleet ui
 comfyfleet ui --host 127.0.0.1 --port 9100
 ```
 
-`0.0.0.0` is so a phone on the LAN can open the UI. Use `--host 127.0.0.1` to keep it on this machine. There is no login. Do not put this port on the public internet.
+`0.0.0.0` lets a phone on the LAN open the UI. Use `--host 127.0.0.1` to keep it on this machine. There is no login. Do not put this port on the public internet.
 
 The UI and the API are same-origin. This server does not send CORS headers. `comfyfleet ui` serves the iOS-like pages in `ui/` (dark glass, fleet logo, large touch targets) at `http://<host>:9100/`. From a phone on the LAN, open that URL, upload a workflow JSON, pick GPUs, then create, start, stop, or open a running instance. Open uses the `url` field, which is set only while `status` is `running`. There is no baked default workflow. A failed GPU probe is shown as an error; the page does not invent a GPU.
 
+ComfyUI-ComfyDock is baked so the stock ComfyUI page is usable on a phone. The fleet control UI is the web UI in `ui/`, served from this API's origin.
+
+`create`, `start`, `stop`, `restart`, and `list` work without this server.
+
+## API
+
 | Method | Path | Behavior |
 |---|---|---|
-| `GET` | `/api/health` | `ok`, and a note that Auth is a Phase 3 stub |
+| `GET` | `/api/health` | `ok`, and a note that the server does not check a login or token |
 | `GET` | `/api/gpus` | Detected GPUs (`index`, `name`, `memory`) |
 | `GET` | `/api/instances` | `name`, `status`, `port`, `gpus`, and `url` when `status` is `running` |
 | `POST` | `/api/instances` | Create. Requires an uploaded workflow JSON or `workflow_path`. Requires `gpu` or `gpus`. `start` defaults to false. `force` defaults to false. No baked workflow. |
@@ -210,13 +216,7 @@ The UI and the API are same-origin. This server does not send CORS headers. `com
 
 Field names, error status codes, and the open-URL rule are in [CONTROL_HTTP.md](CONTROL_HTTP.md).
 
-Phase 1 mount, port, and GPU behavior is unchanged. Create still copies the operator workflow to `/home/files/<name>/default_workflow.json` and still refuses a missing or invalid file.
-
-## Phase 3
-
-**Auth is not in this tree.** No login, token, or multi-user gate. `comfyfleet.control.authorize` is the hook a later Auth layer should wrap. Create, start, stop, restart, and list go through `comfyfleet.control` so mounts and workflow copy do not need a second implementation.
-
-ComfyUI-ComfyDock is baked so the stock ComfyUI page is usable on a phone. It is not the fleet control app. The fleet control UI is the Phase 2 web UI in `ui/`, served from this API's origin.
+Create copies the operator workflow to `/home/files/<name>/default_workflow.json` and refuses a missing or invalid file. Mounts, ports, and GPU selection match the CLI.
 
 ## Tests
 
@@ -224,4 +224,4 @@ ComfyUI-ComfyDock is baked so the stock ComfyUI page is usable on a phone. It is
 python -m unittest discover -s tests
 ```
 
-The tests cover naming, port reservation, workflow rejection, `nvidia-smi` failures, GPU prompts, create-without-start, collision, start/stop without an image rebuild, and the Phase 2 HTTP adapter (happy path and a missing workflow). `tests/test_ui.py` checks that the pages call that API and do not implement Docker themselves. They do not build the CUDA image and they do not need a GPU.
+The tests cover naming, port reservation, workflow rejection, `nvidia-smi` failures, GPU prompts, create-without-start, collision, start/stop without an image rebuild, and the HTTP API (happy path and a missing workflow). `tests/test_ui.py` checks that the pages call that API and do not implement Docker themselves. They do not build the CUDA image and they do not need a GPU.
