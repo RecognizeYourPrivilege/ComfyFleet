@@ -22,7 +22,6 @@ const fileInput = document.querySelector("#workflow-file");
 const fileName = document.querySelector("#file-name");
 const pathInput = document.querySelector("#workflow-path");
 const forceInput = document.querySelector("#force");
-const trust = document.querySelector("#trust");
 
 document.querySelector("#refresh").addEventListener("click", () => refresh());
 document.querySelector("#logout").addEventListener("click", () => logout());
@@ -56,11 +55,11 @@ async function refresh() {
     updated.textContent = "Not connected";
     return;
   }
-  if (health.ok && health.payload.note) trust.textContent = health.payload.note;
   const gpus = await call("/api/gpus");
   if (gpus.sessionExpired) return;
   const instances = await call("/api/instances");
   if (instances.sessionExpired) return;
+  if (isAuthFailure(gpus) || isAuthFailure(instances)) return;
   if (gpus.ok && Array.isArray(gpus.payload.gpus)) {
     state.gpus = gpus.payload.gpus;
     state.gpuError = "";
@@ -294,6 +293,12 @@ function setCreatePending(pending, start) {
   }
   if (start) started.textContent = "Creating…";
   else stopped.textContent = "Creating…";
+}
+
+function isAuthFailure(result) {
+  if (!result || result.sessionExpired || result.status === 401) return true;
+  const error = (result.error || "").toLowerCase();
+  return error === "unauthorized" || error === "session expired";
 }
 
 async function logout() {
