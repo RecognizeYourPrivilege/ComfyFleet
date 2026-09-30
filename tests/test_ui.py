@@ -66,9 +66,15 @@ class UiContractTests(unittest.TestCase):
         self.assertIn("submitCreate(false)", script)
         self.assertIn("submitCreate(true)", script)
         lowered = script.lower()
-        self.assertNotIn("docker", lowered)
-        self.assertNotIn("nvidia-smi", lowered)
-        self.assertNotIn("/opt/comfyui", lowered)
+        for banned in (
+            "docker create",
+            "docker start",
+            "subprocess",
+            "nvidia-smi",
+            "/opt/comfyui",
+            "build_create_args",
+        ):
+            self.assertNotIn(banned, lowered)
         self.assertNotIn("http://", script)
         self.assertTrue((UI / "comfyfleet-logo-ships.jpg").is_file())
 
