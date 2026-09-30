@@ -2,12 +2,97 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="color-scheme" content="dark">
   <title>ComfyFleet</title>
+  <link rel="icon" href="/comfyfleet-logo-ships.jpg">
+  <link rel="apple-touch-icon" href="/comfyfleet-logo-ships.jpg">
+  <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <p>ComfyFleet control API placeholder. The iOS-like control UI is not included.</p>
-  <p>API: <a href="/api/health">/api/health</a>. See CONTROL_HTTP.md.</p>
-  <p>Trusted LAN only. Auth is a Phase 3 stub.</p>
+  <div class="atmosphere" aria-hidden="true"></div>
+  <div class="app">
+    <header class="top glass">
+      <div class="brand-lockup">
+        <p class="eyebrow">Fleet control</p>
+        <h1>ComfyFleet</h1>
+      </div>
+      <button id="refresh" class="icon-btn" type="button" aria-label="Refresh fleet">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M20 12a8 8 0 1 1-2.3-5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </header>
+
+    <figure class="logo-plate glass">
+      <img src="/comfyfleet-logo-ships.jpg" alt="ComfyFleet — ships on the water">
+    </figure>
+
+    <p id="updated" class="updated">Loading fleet…</p>
+    <div id="banner" class="banner" role="alert" hidden></div>
+    <div id="toast" class="toast glass" role="status" aria-live="polite" hidden></div>
+
+    <section id="empty" class="empty glass" hidden>
+      <h2>No instances yet</h2>
+      <p>Create one from your own workflow JSON. New instances stay stopped until you start them.</p>
+    </section>
+
+    <section id="list" class="list" aria-label="Fleet instances"></section>
+
+    <footer id="trust" class="trust">
+      Trusted LAN only. There is no login. Auth is Phase 3 — authorize() is a no-op. Do not expose this page to the internet.
+    </footer>
+  </div>
+
+  <div class="dock glass">
+    <button id="open-create" class="btn primary" type="button">New instance</button>
+  </div>
+
+  <div id="sheet" class="sheet" hidden>
+    <button class="scrim" type="button" data-close aria-label="Close"></button>
+    <div class="sheet-card glass" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="sheet-head">
+        <h2 id="sheet-title">New instance</h2>
+        <button class="icon-btn" type="button" data-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <p class="sheet-lead">An operator workflow JSON is required. ComfyFleet does not ship a default graph.</p>
+
+      <div id="sheet-banner" class="banner" role="alert" hidden></div>
+
+      <label class="field-label" for="workflow-file">Workflow JSON</label>
+      <div class="file-well">
+        <input id="workflow-file" type="file" accept="application/json,.json">
+        <p id="file-name">No file chosen</p>
+      </div>
+
+      <label class="field-label" for="workflow-path">Or host path</label>
+      <input id="workflow-path" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="/home/you/flows/portrait.json">
+      <p class="hint">Use a path only if this server runs as a user who can read it. Leave it empty when you upload a file.</p>
+
+      <p class="field-label" id="gpu-label">GPUs</p>
+      <div id="gpus" class="gpu-row" role="group" aria-labelledby="gpu-label"></div>
+      <p id="gpu-note" class="hint"></p>
+
+      <label class="switch">
+        <input id="force" type="checkbox">
+        <span>Replace a stopped instance with the same name</span>
+      </label>
+
+      <div class="sheet-actions">
+        <button id="create-stopped" class="btn primary" type="button">Create</button>
+        <button id="create-start" class="btn secondary" type="button">Create &amp; start</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
 </body>
 </html>
