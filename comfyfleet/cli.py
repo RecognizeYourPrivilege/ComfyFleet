@@ -25,7 +25,6 @@ from comfyfleet.errors import FleetError
 from comfyfleet.gpu import detect_gpus
 from comfyfleet.http_api import DEFAULT_BIND_HOST, DEFAULT_BIND_PORT, serve
 from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
-from comfyfleet.ports import effective_port_in_use
 from comfyfleet.public_host import PUBLIC_HOST_ENV, open_host
 
 
@@ -140,7 +139,6 @@ def _cmd_create(args: argparse.Namespace) -> int:
         image=args.image,
         start=args.start,
         force=args.force,
-        port_in_use=effective_port_in_use,
         use_env_limit=True,
     )
     _print_warning(result.warning)
@@ -164,7 +162,6 @@ def _cmd_start(args: argparse.Namespace) -> int:
         layout=FleetLayout(),
         docker=DockerCLI(),
         gpus=gpus,
-        port_in_use=effective_port_in_use,
         use_env_limit=True,
     )
     _print_warning(result.warning)
@@ -189,7 +186,6 @@ def _cmd_restart(args: argparse.Namespace) -> int:
         layout=FleetLayout(),
         docker=DockerCLI(),
         gpus=gpus,
-        port_in_use=effective_port_in_use,
         use_env_limit=True,
     )
     _print_warning(result.warning)
