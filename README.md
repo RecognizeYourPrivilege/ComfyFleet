@@ -2,7 +2,7 @@
 
 # ComfyFleet
 
-ComfyFleet runs **many** named ComfyUI workflow containers on one GPU host and **starts only a few** of them. Phase 1 is a local/LAN Docker fleet: a CUDA 12.4 image and a host CLI (`comfyfleet`) for create, start, stop, and list. Phase 2 adds a control HTTP API on that same host so a web UI can list, create, start, stop, and open instances by calling `comfyfleet.control`. The iOS-like pages are not in this tree (`ui/index.html` is a placeholder).
+ComfyFleet runs **many** named ComfyUI workflow containers on one GPU host and **starts only a few** of them. Phase 1 is a local/LAN Docker fleet: a CUDA 12.4 image and a host CLI (`comfyfleet`) for create, start, stop, and list. Phase 2 adds a same-origin control HTTP API and an iOS-like web UI on that host. The pages call `/api/...` only. Docker lifecycle stays in `comfyfleet.control`.
 
 It is not a cloud service and not an account system. **Auth is Phase 3 and is not implemented.** `authorize()` is a no-op stub. The control server assumes a **trusted LAN**. Do not expose it to the public internet.
 
@@ -197,7 +197,7 @@ comfyfleet ui --host 127.0.0.1 --port 9100
 
 `0.0.0.0` is so a phone on the LAN can open the UI. Use `--host 127.0.0.1` to keep it on this machine. There is no login. Do not put this port on the public internet.
 
-The UI and the API are same-origin. This server does not send CORS headers. Static files come from `ui/` when that directory exists. This repo's `ui/index.html` is a placeholder, not the iOS-like control UI.
+The UI and the API are same-origin. This server does not send CORS headers. `comfyfleet ui` serves the iOS-like pages in `ui/` (dark glass, fleet logo, large touch targets) at `http://<host>:9100/`. From a phone on the LAN, open that URL, upload a workflow JSON, pick GPUs, then create, start, stop, or open a running instance. Open uses the `url` field, which is set only while `status` is `running`. There is no baked default workflow. A failed GPU probe is shown as an error; the page does not invent a GPU.
 
 | Method | Path | Behavior |
 |---|---|---|
@@ -216,7 +216,7 @@ Phase 1 mount, port, and GPU behavior is unchanged. Create still copies the oper
 
 **Auth is not in this tree.** No login, token, or multi-user gate. `comfyfleet.control.authorize` is the hook a later Auth layer should wrap. Create, start, stop, restart, and list go through `comfyfleet.control` so mounts and workflow copy do not need a second implementation.
 
-ComfyUI-ComfyDock is baked so the stock ComfyUI page is usable on a phone. It is not the fleet control app. The fleet control UI is the Phase 2 web UI, served from this API's origin when `ui/` contains it.
+ComfyUI-ComfyDock is baked so the stock ComfyUI page is usable on a phone. It is not the fleet control app. The fleet control UI is the Phase 2 web UI in `ui/`, served from this API's origin.
 
 ## Tests
 
@@ -224,4 +224,4 @@ ComfyUI-ComfyDock is baked so the stock ComfyUI page is usable on a phone. It is
 python -m unittest discover -s tests
 ```
 
-The tests cover naming, port reservation, workflow rejection, `nvidia-smi` failures, GPU prompts, create-without-start, collision, start/stop without an image rebuild, and the Phase 2 HTTP adapter (happy path and a missing workflow). They do not build the CUDA image and they do not need a GPU.
+The tests cover naming, port reservation, workflow rejection, `nvidia-smi` failures, GPU prompts, create-without-start, collision, start/stop without an image rebuild, and the Phase 2 HTTP adapter (happy path and a missing workflow). `tests/test_ui.py` checks that the pages call that API and do not implement Docker themselves. They do not build the CUDA image and they do not need a GPU.
