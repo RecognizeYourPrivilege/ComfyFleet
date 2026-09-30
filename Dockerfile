@@ -105,9 +105,20 @@ COPY docker/patch_comfy_kitchen_torch26.py /opt/comfyfleet/patch_comfy_kitchen_t
 RUN pip install --no-cache-dir --force-reinstall --no-deps "${COMFY_KITCHEN_WHEEL}" \
     && python /opt/comfyfleet/patch_comfy_kitchen_torch26.py
 COPY docker/comfyfleet_default_workflow /opt/comfyfleet/baked_custom_nodes/comfyfleet_default_workflow
-COPY docker/entrypoint.sh /opt/comfyfleet/entrypoint.sh
 
-RUN chmod 0755 /opt/comfyfleet/entrypoint.sh
+# Fleet patch of the baked Manager. Stock is_dedicated_install_allowed
+# requires allow_git_url_install / allow_pip_install AND a loopback --listen.
+# The entrypoint keeps --listen 0.0.0.0 so Docker can publish the instance
+# port onto the docker.sock LAN, and it exports COMFYFLEET_TRUSTED_INSTALL=1.
+# This rewrite keeps the flag check and skips the loopback term only when
+# that variable is 1. A public-internet Manager is a different threat model;
+# the env var is the operator gate for this image. Source-only, and it sits
+# after the torch and git-clone layers so a rebuild can reuse them.
+COPY docker/patch_manager_trusted_install.py /opt/comfyfleet/patch_manager_trusted_install.py
+COPY docker/seed_manager_config.py /opt/comfyfleet/seed_manager_config.py
+COPY docker/entrypoint.sh /opt/comfyfleet/entrypoint.sh
+RUN python /opt/comfyfleet/patch_manager_trusted_install.py \
+    && chmod 0755 /opt/comfyfleet/entrypoint.sh
 
 WORKDIR /opt/ComfyUI
 EXPOSE 8188
