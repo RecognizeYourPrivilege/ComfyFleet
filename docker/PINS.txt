@@ -1,0 +1,40 @@
+ComfyFleet Phase 1 pins (implement date 2026-09-30)
+
+Base
+  debian:bookworm-slim
+  CUDA runtime: cuda-libraries-12-4=12.4.1-1 and cuda-cudart-12-4=12.4.127-1
+    from https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/
+  cuDNN runtime: libcudnn9-cuda-12=9.1.0.70-1 (NVIDIA package description: CUDA 12.4)
+
+PyTorch (matches CUDA 12.4; not the PyPI default, which is CUDA 13)
+  index: https://download.pytorch.org/whl/cu124
+  torch==2.6.0+cu124
+  torchvision==0.21.0+cu124
+  image Python: Debian bookworm CPython 3.11
+  wheels: torch-2.6.0+cu124-cp311-cp311-linux_x86_64.whl
+          torchvision-0.21.0+cu124-cp311-cp311-linux_x86_64.whl
+
+ComfyUI
+  https://github.com/Comfy-Org/ComfyUI
+  tag v0.38.0
+  commit 6b747c0428c343e1417219641db93a4fb7cb69ae
+
+ComfyUI-Manager
+  https://github.com/Comfy-Org/ComfyUI-Manager
+  commit 14b5aaab711ad1f1306d420732a923fb058c44d7
+
+pixaroma (full repository, not a subset of nodes)
+  https://github.com/pixaroma/ComfyUI-Pixaroma
+  tag v1.4.181
+  commit 9259bc49557a92e3fc14796999468c723bd1ecdd
+
+ComfyUI-ComfyDock
+  https://github.com/RecognizeYourPrivilege/ComfyUI-ComfyDock
+  commit 3a9ff9eba897bf2388d6c1943b01d819ba05a0c6
+
+comfy-kitchen
+  0.2.36 pure-Python wheel (eager backend).
+  The manylinux wheel targets CUDA 13 and is intentionally not installed.
+
+No workflow JSON is baked into this image. The operator file is bind-mounted
+to /opt/comfyfleet/instance/default_workflow.json and loaded on every start.
