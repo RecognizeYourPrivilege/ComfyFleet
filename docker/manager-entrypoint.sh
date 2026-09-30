@@ -6,6 +6,14 @@ set -euo pipefail
 
 export COMFYFLEET_MANAGER=1
 
+# Refuse to start with no shared secret. Do not print the value.
+if [[ -z "${COMFYFLEET_PASSWORD:-}" || -z "${COMFYFLEET_PASSWORD//[[:space:]]/}" ]]; then
+  echo "comfyfleet: COMFYFLEET_PASSWORD is required and must be non-empty." >&2
+  echo "comfyfleet: refusing to start. Set -e COMFYFLEET_PASSWORD=... or the compose environment." >&2
+  echo "comfyfleet: there is no open-LAN fallback." >&2
+  exit 1
+fi
+
 if [[ -n "${DOCKER_HOST:-}" && "${DOCKER_HOST}" != unix://* ]]; then
   echo "comfyfleet: DOCKER_HOST=${DOCKER_HOST}. The client will use that endpoint instead of /var/run/docker.sock." >&2
 else

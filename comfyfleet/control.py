@@ -1,8 +1,8 @@
 """Create, start, stop, and list workflow instances.
 
-The Phase 2 control HTTP API calls these functions and does not reimplement
-mounts, naming, the operator workflow copy, or port assignment. Phase 3 Auth
-should wrap ``authorize`` and keep calling the same functions.
+The control HTTP API calls these functions and does not reimplement mounts,
+naming, the operator workflow copy, or port assignment. ``authorize`` is the
+fail-closed check on that HTTP path. A local CLI call is not an HTTP request.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from comfyfleet.auth import AuthError, http_auth_state
 from comfyfleet.docker import DockerCLI, build_create_args
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu, select_gpus
@@ -63,14 +64,19 @@ class ActionResult:
 
 
 def authorize(action: str) -> None:
-    """No-op Auth stub. Real login and tokens are Phase 3.
+    """Allow a control action, or fail closed on an unauthenticated HTTP request.
 
-    Phase 1 and Phase 2 call this and then allow the local operator.
-    Returning normally is not a login.
+    Outside an HTTP request (the host CLI, or ``docker exec`` inside the
+    manager) this only checks that ``action`` is known. That process is
+    local: it does not read the session cookie. The HTTP server grants
+    this check only after a valid session cookie or Bearer token, and
+    refuses to start when ``COMFYFLEET_PASSWORD`` is missing.
     """
 
     if action not in {"create", "start", "stop", "restart", "list"}:
         raise FleetError(f"unknown control action {action!r}")
+    if http_auth_state() is False:
+        raise AuthError("unauthorized")
 
 
 def create_instance(

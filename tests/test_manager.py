@@ -15,6 +15,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
+from comfyfleet.auth import LoginGuard, SessionStore
 from comfyfleet.control import resolve_instance_image
 from comfyfleet.docker import (
     DockerCLI,
@@ -29,6 +30,7 @@ from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
 from comfyfleet.public_host import configured_public_host, open_host
 
 ROOT = Path(__file__).resolve().parents[1]
+PASSWORD = "test-password"
 
 
 class FakeDocker:
@@ -136,7 +138,21 @@ class ManagerImageContractTests(unittest.TestCase):
         self.assertIn("--gpus all", text)
         self.assertIn("/home", text)
         self.assertIn("COMFYFLEET_PUBLIC_HOST", text)
+        self.assertIn("COMFYFLEET_PASSWORD", text)
+        self.assertIn("refusing to start", text)
+        self.assertIn("no open-LAN fallback", text)
         self.assertIn("does not run a Docker daemon", text)
+        refused = subprocess.run(
+            ["bash", str(script)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={"PATH": "/usr/bin:/bin", "COMFYFLEET_PASSWORD": "   "},
+        )
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("COMFYFLEET_PASSWORD", refused.stderr)
+        self.assertIn("refusing to start", refused.stderr)
+        self.assertNotIn("super-secret-value", refused.stderr)
         checked = subprocess.run(
             ["bash", "-n", str(script)],
             check=False,
@@ -153,6 +169,8 @@ class ManagerImageContractTests(unittest.TestCase):
         self.assertIn("/home:/home", compose)
         self.assertIn("gpus: all", compose)
         self.assertIn("COMFYFLEET_PUBLIC_HOST", compose)
+        self.assertIn("COMFYFLEET_PASSWORD", compose)
+        self.assertNotIn("replace-with-a-long-secret", compose)
         self.assertIn("comfyfleet:phase1", compose)
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -166,6 +184,8 @@ class ManagerImageContractTests(unittest.TestCase):
         self.assertIn("-v /home:/home", readme)
         self.assertIn("root-equivalent", readme)
         self.assertIn("COMFYFLEET_PUBLIC_HOST", readme)
+        self.assertIn("-e COMFYFLEET_PASSWORD=replace-with-a-long-secret", readme)
+        self.assertLess(readme.index("-e COMFYFLEET_PASSWORD="), dev_at)
         self.assertIn("--gpus all", readme)
         self.assertIn("nvidia-smi", readme)
         self.assertIn("trusted", readme.lower())
@@ -182,6 +202,8 @@ class ManagerImageContractTests(unittest.TestCase):
         self.assertIn("Dockerfile.manager", text)
         self.assertIn("/api/health", text)
         self.assertIn("ComfyFleet", text)
+        self.assertIn("COMFYFLEET_PASSWORD", text)
+        self.assertIn("smoke-not-a-real-secret", text)
         checked = subprocess.run(
             ["bash", "-n", str(script)],
             check=False,
@@ -341,6 +363,9 @@ class ManagerLifecycleTests(unittest.TestCase):
             port_in_use=lambda _port: False,
             ui_dir=ROOT / "ui",
             public_host="192.168.1.20",
+            password=PASSWORD,
+            sessions=SessionStore(),
+            login_guard=LoginGuard(fail_delay_s=0),
         )
         self.httpd = make_server("127.0.0.1", 0, self.ctx)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
@@ -354,11 +379,14 @@ class ManagerLifecycleTests(unittest.TestCase):
         self.thread.join(timeout=5)
         self.tmp.cleanup()
 
-    def _open(self, method, path, data=None, headers=None):
+    def _open(self, method, path, data=None, headers=None, auth=True):
+        merged = dict(headers or {})
+        if auth and "Authorization" not in merged:
+            merged["Authorization"] = f"Bearer {PASSWORD}"
         request = urllib.request.Request(
             self.base + path,
             data=data,
-            headers=headers or {},
+            headers=merged,
             method=method,
         )
         try:
@@ -368,11 +396,12 @@ class ManagerLifecycleTests(unittest.TestCase):
             return exc.code, exc.read()
 
     def test_health_ui_create_start_stop(self):
-        status, raw = self._open("GET", "/api/health")
+        status, raw = self._open("GET", "/api/health", auth=False)
         self.assertEqual(status, 200)
         health = json.loads(raw.decode("utf-8"))
         self.assertTrue(health["ok"])
-        self.assertEqual(health["auth"], "phase3-stub")
+        self.assertEqual(health["auth"], "required")
+        self.assertNotIn(PASSWORD, raw.decode("utf-8"))
 
         status, page = self._open("GET", "/")
         self.assertEqual(status, 200)
@@ -429,6 +458,7 @@ class ManagerLifecycleTests(unittest.TestCase):
             "127.0.0.1:9100",
             body,
             content_type,
+            {"Authorization": f"Bearer {PASSWORD}"},
         )
         payload = json.loads(response.body.decode("utf-8"))
         self.assertEqual(response.status, 200)
