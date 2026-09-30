@@ -33,6 +33,12 @@ from comfyfleet.control import (
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
 from comfyfleet.paths import FleetLayout
+from comfyfleet.public_host import (
+    PUBLIC_HOST_ENV,
+    configured_public_host,
+    open_host,
+    request_host,
+)
 
 DEFAULT_BIND_HOST = "0.0.0.0"
 DEFAULT_BIND_PORT = 9100
@@ -103,6 +109,7 @@ class ApiContext:
     ui_dir: Path | None = None
     use_env_limit: bool = True
     host_fallback: str = "127.0.0.1"
+    public_host: str | None = None
 
 
 @dataclass
@@ -126,27 +133,6 @@ class _CreateForm:
     gpus: str | None
     start: bool
     force: bool
-
-
-def request_host(host_header: str | None, fallback: str = "127.0.0.1") -> str:
-    """Hostname the caller used, without the control port.
-
-    Browsers send ``Host``. The instance open URL uses that name so a phone
-    that loaded ``http://lan-ip:9100/`` opens Comfy at ``http://lan-ip:<port>``.
-    """
-
-    if host_header is None or not host_header.strip():
-        return fallback
-    host = host_header.strip()
-    if host.startswith("["):
-        end = host.find("]")
-        if end != -1:
-            return host[: end + 1]
-    if host.count(":") == 1:
-        name, port = host.rsplit(":", 1)
-        if port.isdigit() and name:
-            return name
-    return host
 
 
 def resolve_ui_dir(explicit: str | None = None) -> Path | None:
@@ -191,9 +177,10 @@ def serve(
 
         detect_gpus = default_detect_gpus
     if port_in_use is None:
-        from comfyfleet.ports import tcp_port_in_use as default_port_in_use
+        from comfyfleet.ports import effective_port_in_use as default_port_in_use
 
         port_in_use = default_port_in_use
+    public_host = configured_public_host()
     context = ApiContext(
         layout=layout,
         docker=docker,
@@ -202,6 +189,7 @@ def serve(
         ui_dir=resolve_ui_dir(ui_dir),
         use_env_limit=use_env_limit,
         host_fallback="127.0.0.1" if host in {"0.0.0.0", "::"} else host,
+        public_host=public_host,
     )
     try:
         httpd = make_server(host, port, context)
@@ -216,6 +204,17 @@ def serve(
         "(authorize() is a no-op). Do not expose this port to the internet.",
         file=sys.stderr,
     )
+    if public_host:
+        print(
+            f"comfyfleet: Open links use http://{public_host}:<instance-port> ({PUBLIC_HOST_ENV}).",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "comfyfleet: Open links use the request Host header when it is a safe "
+            f"hostname or IP. Set {PUBLIC_HOST_ENV} to pin the LAN name.",
+            file=sys.stderr,
+        )
     if context.ui_dir is None:
         print("comfyfleet: no ui/ directory; / is a placeholder.", file=sys.stderr)
     else:
@@ -278,7 +277,7 @@ def dispatch(
 
     if len(path) > 1 and path.endswith("/"):
         path = path[:-1]
-    host = request_host(host_header, context.host_fallback)
+    host = open_host(host_header, context.host_fallback, context.public_host)
     if path == "/api/health":
         _require_method(method, "GET")
         return _health()

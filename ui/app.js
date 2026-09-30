@@ -1,5 +1,5 @@
 /* ComfyFleet control UI. Calls the same-origin HTTP API only.
-   Docker lifecycle stays in comfyfleet.control on the host. */
+   Docker lifecycle stays in comfyfleet.control. */
 
 const state = {
   busy: false,
