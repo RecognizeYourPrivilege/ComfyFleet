@@ -1,5 +1,8 @@
 # ComfyFleet Phase 1 runtime.
 # Slim Debian bookworm + NVIDIA CUDA 12.4 runtime libraries (not the devel toolkit).
+# gcc and python3-dev are the host C compiler and Python.h that Triton 3.2
+# (torch 2.6.0+cu124's dependency) needs to JIT-compile cuda_utils. That
+# compile runs when the top-level kitchen package loads the Triton backend.
 # No workflow JSON is copied into this image. The operator file is bind-mounted
 # at /opt/comfyfleet/instance/default_workflow.json and the entrypoint refuses
 # to start when that file is missing.
@@ -33,6 +36,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cuda-cudart-12-4=12.4.127-1 \
         libcudnn9-cuda-12=9.1.0.70-1 \
         bash \
+        gcc \
+        python3-dev \
         git \
         python3 \
         python3-venv \
@@ -92,6 +97,11 @@ COPY docker/patch_comfy_kitchen_torch26.py /opt/comfyfleet/patch_comfy_kitchen_t
 # It does not load the top-level kitchen package: that import loads the Triton
 # backend, and Triton raises "0 active drivers" when the build has no NVIDIA
 # driver. GPU selection at runtime does not provide a driver during docker build.
+# On a GPU host the same import reaches triton/runtime/build.py and compiles
+# cuda_utils (driver.c, which includes Python.h). bookworm-slim has no gcc, so
+# that step raised "Failed to find C compiler. Please specify via CC
+# environment variable." gcc and python3-dev above are what that compile uses.
+# Triton ships cuda.h in its wheel; this image does not install nvcc or g++.
 RUN pip install --no-cache-dir --force-reinstall --no-deps "${COMFY_KITCHEN_WHEEL}" \
     && python /opt/comfyfleet/patch_comfy_kitchen_torch26.py
 COPY docker/comfyfleet_default_workflow /opt/comfyfleet/baked_custom_nodes/comfyfleet_default_workflow
