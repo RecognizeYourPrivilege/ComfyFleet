@@ -18,7 +18,7 @@ from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu, select_gpus
 from comfyfleet.naming import instance_name_from_workflow, is_instance_name
 from comfyfleet.paths import DEFAULT_IMAGE, MODEL_SUBDIRS, FleetLayout
-from comfyfleet.ports import choose_port
+from comfyfleet.ports import choose_port, make_port_in_use
 from comfyfleet.workflow import load_operator_workflow
 
 METADATA_SCHEMA = 1
@@ -120,7 +120,7 @@ def create_instance(
     if force and container_status is not None:
         docker.remove(name)
     reserved = _reserved_ports(layout, exclude=name)
-    in_use = port_in_use or _noop_false
+    in_use = _port_in_use(port_in_use, docker)
     port = choose_port(reserved, in_use=in_use)
     _prepare_dirs(layout, name)
     dest = layout.workflow_file(name)
@@ -151,7 +151,7 @@ def create_instance(
             layout=layout,
             docker=docker,
             gpus=gpus,
-            port_in_use=in_use,
+            port_in_use=port_in_use,
             max_concurrent=max_concurrent,
             use_env_limit=use_env_limit,
         )
@@ -189,7 +189,7 @@ def start_instance(
     status = docker.status(name)
     if status == "running":
         return ActionResult(instance=instance, started=True, warning=None)
-    in_use = port_in_use or _noop_false
+    in_use = _port_in_use(port_in_use, docker)
     reserved = _reserved_ports(layout, exclude=name)
     port = choose_port(reserved, preferred=instance.port, in_use=in_use)
     if status is None or port != instance.port:
@@ -450,8 +450,16 @@ def _concurrency_warning(running_after: int, *, gpu_count: int, limit: int | Non
     return None
 
 
-def _noop_false(_port: int) -> bool:
-    return False
+def _port_in_use(explicit, docker):
+    """Use the caller's probe, or snapshot host listeners and published ports.
+
+    Host CLI and the manager HTTP API both allocate here. A missing callback
+    must still skip ports taken outside fleet metadata.
+    """
+
+    if explicit is not None:
+        return explicit
+    return make_port_in_use(docker)
 
 
 class _StatusFreeDocker:

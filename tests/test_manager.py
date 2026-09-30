@@ -281,6 +281,36 @@ class EngineErrorTests(unittest.TestCase):
         text = "0.0.0.0:8188->8188/tcp, :::8188->8188/tcp\n127.0.0.1:9100->9100/tcp\n"
         self.assertEqual(parse_published_ports(text), {8188, 9100})
 
+    def test_published_ports_use_the_host_side_not_the_container_port(self):
+        text = "0.0.0.0:8189->8188/tcp, [::]:8189->8188/tcp\n"
+        self.assertEqual(parse_published_ports(text), {8189})
+
+    def test_host_listener_probe_reads_proc_on_the_host_network(self):
+        seen: list[list[str]] = []
+
+        def run(argv):
+            seen.append(list(argv))
+            if len(argv) > 1 and argv[1] == "run":
+                return subprocess.CompletedProcess(
+                    argv,
+                    0,
+                    "   0: 00000000:1FFC 00000000:0000 0A 00000000:00000000 00:00000000 00000000 0 0 1 1 0 100 0 0 10 0\n",
+                    "",
+                )
+            return subprocess.CompletedProcess(argv, 1, "", "unexpected")
+
+        cli = DockerCLI(run=run)
+        with mock.patch.dict(os.environ, {"COMFYFLEET_MANAGER_IMAGE": "comfyfleet-manager:latest"}):
+            text = cli.host_tcp_tables()
+        self.assertEqual(len(seen), 1)
+        argv = seen[0]
+        self.assertEqual(argv[0], "docker")
+        self.assertIn("--network", argv)
+        self.assertEqual(argv[argv.index("--network") + 1], "host")
+        self.assertEqual(argv[argv.index("--entrypoint") + 1], "/usr/bin/python3")
+        self.assertIn("comfyfleet-manager:latest", argv)
+        self.assertIn("1FFC", text)
+
     def test_missing_nvidia_smi_mentions_manager_gpus(self):
         with self.assertRaises(FleetError) as ctx:
             detect_gpus(run=lambda _argv: (_ for _ in ()).throw(FileNotFoundError("nvidia-smi")))

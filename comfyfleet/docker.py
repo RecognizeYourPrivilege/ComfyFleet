@@ -10,12 +10,24 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from pathlib import Path
 
 from comfyfleet.errors import FleetError
 from comfyfleet.paths import CONTAINER_PORT, WORKFLOW_CONTAINER_PATH
 
 DEFAULT_SOCKET = "/var/run/docker.sock"
 _PUBLISHED_PORT = re.compile(r":(\d+)->")
+# Host network namespace, not the manager's. Prints LISTEN tables only.
+_HOST_LISTENER_SCRIPT = (
+    "import pathlib,sys\n"
+    "n=0\n"
+    "for name in ('tcp','tcp6'):\n"
+    " p=pathlib.Path('/proc/net')/name\n"
+    " if p.is_file():\n"
+    "  sys.stdout.write(p.read_text())\n"
+    "  n+=1\n"
+    "sys.exit(0 if n else 1)\n"
+)
 
 
 def build_create_args(
@@ -128,10 +140,69 @@ class DockerCLI:
         return names
 
     def published_host_ports(self) -> set[int]:
-        """Host ports already published by containers on this engine."""
+        """Host ports published by running (or paused) containers on this engine.
 
-        completed = self._check(["ps", "-a", "--format", "{{.Ports}}"])
+        Stopped containers do not hold the host port. Fleet metadata reserves
+        those separately, including ports recorded for stopped instances.
+        """
+
+        completed = self._check(
+            [
+                "ps",
+                "--filter",
+                "status=running",
+                "--filter",
+                "status=paused",
+                "--filter",
+                "status=restarting",
+                "--format",
+                "{{.Ports}}",
+            ]
+        )
         return parse_published_ports(completed.stdout or "")
+
+    def host_tcp_tables(self) -> str:
+        """``/proc/net/tcp`` and ``tcp6`` from the host network namespace.
+
+        The manager container has its own netns, so a local ``bind()`` or
+        ``/proc/net/tcp`` does not see host listeners. A sibling with
+        ``--network host`` does: its ``/proc/net/tcp`` is the host stack.
+        The entrypoint is replaced so this does not start another UI.
+        """
+
+        image = self._manager_image()
+        completed = self._check(
+            [
+                "run",
+                "--rm",
+                "--network",
+                "host",
+                "--label",
+                "comfyfleet.probe=listeners",
+                "--entrypoint",
+                "/usr/bin/python3",
+                image,
+                "-c",
+                _HOST_LISTENER_SCRIPT,
+            ]
+        )
+        return completed.stdout or ""
+
+    def _manager_image(self) -> str:
+        configured = os.environ.get("COMFYFLEET_MANAGER_IMAGE", "").strip()
+        if configured:
+            return configured
+        try:
+            hostname = Path("/etc/hostname").read_text(encoding="utf-8").strip()
+        except OSError:
+            hostname = ""
+        if hostname:
+            completed = self._run(["docker", "inspect", "-f", "{{.Config.Image}}", hostname])
+            if getattr(completed, "returncode", 1) == 0:
+                image = (completed.stdout or "").strip()
+                if image and image != "<no value>":
+                    return image
+        return "comfyfleet-manager:latest"
 
     def _raise_if_engine_unreachable(self) -> None:
         if not self._check_engine:
@@ -157,7 +228,11 @@ class DockerCLI:
 
 
 def parse_published_ports(text: str) -> set[int]:
-    """Pull host ports out of ``docker ps`` port columns (``0.0.0.0:8188->8188/tcp``)."""
+    """Host ports from ``docker ps`` (``0.0.0.0:8189->8188/tcp`` → ``8189``).
+
+    The number before ``->`` is the host port. The number after it is the
+    port inside the container and is not a host allocation.
+    """
 
     return {int(match) for match in _PUBLISHED_PORT.findall(text)}
 
