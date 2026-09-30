@@ -20,12 +20,15 @@
         <p class="eyebrow">Fleet control</p>
         <h1>ComfyFleet</h1>
       </div>
-      <button id="refresh" class="icon-btn" type="button" aria-label="Refresh fleet">
+      <div class="top-actions">
+        <button id="logout" class="btn secondary" type="button">Log out</button>
+        <button id="refresh" class="icon-btn" type="button" aria-label="Refresh fleet">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M20 12a8 8 0 1 1-2.3-5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
           <path d="M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-      </button>
+        </button>
+      </div>
     </header>
 
     <figure class="logo-plate glass">
@@ -44,7 +47,7 @@
     <section id="list" class="list" aria-label="Fleet instances"></section>
 
     <footer id="trust" class="trust">
-      Trusted LAN only. There is no login. Auth is Phase 3 — authorize() is a no-op. Do not expose this page to the internet.
+      Trusted LAN is still recommended. This login gates the manager only. ComfyUI ports are not covered.
     </footer>
   </div>
 

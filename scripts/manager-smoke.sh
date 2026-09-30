@@ -17,6 +17,7 @@ fi
 tag="${COMFYFLEET_MANAGER_IMAGE:-comfyfleet-manager:latest}"
 name="comfyfleet-manager-smoke-$$"
 port="${COMFYFLEET_SMOKE_PORT:-9100}"
+password="${COMFYFLEET_SMOKE_PASSWORD:-smoke-not-a-real-secret}"
 
 docker build -f Dockerfile.manager -t "${tag}" .
 
@@ -25,7 +26,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker run -d --name "${name}" -p "${port}:9100" "${tag}" >/dev/null
+docker run -d --name "${name}" -p "${port}:9100" \
+  -e "COMFYFLEET_PASSWORD=${password}" \
+  "${tag}" >/dev/null
 
 ready=0
 for _ in $(seq 1 40); do
@@ -44,11 +47,20 @@ fi
 echo "manager-smoke: health"
 curl -fsS "http://127.0.0.1:${port}/api/health"
 echo
-echo "manager-smoke: ui"
-curl -fsS "http://127.0.0.1:${port}/" | grep -q "ComfyFleet"
-curl -fsS "http://127.0.0.1:${port}/" | grep -q "New instance"
+echo "manager-smoke: login page"
+curl -fsS "http://127.0.0.1:${port}/login" | grep -q "ComfyFleet"
+curl -fsS "http://127.0.0.1:${port}/login" | grep -q "password"
 
-gpu_code="$(curl -s -o /tmp/comfyfleet-smoke-gpus.json -w '%{http_code}' "http://127.0.0.1:${port}/api/gpus" || true)"
+unauth="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${port}/api/instances" || true)"
+echo "manager-smoke: unauthenticated /api/instances HTTP ${unauth}"
+test "${unauth}" = "401"
+
+echo "manager-smoke: signed-in ui"
+curl -fsS -H "Authorization: Bearer ${password}" "http://127.0.0.1:${port}/" | grep -q "New instance"
+
+gpu_code="$(curl -s -o /tmp/comfyfleet-smoke-gpus.json -w '%{http_code}' \
+  -H "Authorization: Bearer ${password}" \
+  "http://127.0.0.1:${port}/api/gpus" || true)"
 echo "manager-smoke: /api/gpus HTTP ${gpu_code}"
 if [[ "${gpu_code}" != "200" ]]; then
   grep -q "nvidia-smi" /tmp/comfyfleet-smoke-gpus.json

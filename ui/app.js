@@ -22,9 +22,9 @@ const fileInput = document.querySelector("#workflow-file");
 const fileName = document.querySelector("#file-name");
 const pathInput = document.querySelector("#workflow-path");
 const forceInput = document.querySelector("#force");
-const trust = document.querySelector("#trust");
 
 document.querySelector("#refresh").addEventListener("click", () => refresh());
+document.querySelector("#logout").addEventListener("click", () => logout());
 document.querySelector("#open-create").addEventListener("click", openSheet);
 document.querySelector("#create-stopped").addEventListener("click", () => submitCreate(false));
 document.querySelector("#create-start").addEventListener("click", () => submitCreate(true));
@@ -55,9 +55,11 @@ async function refresh() {
     updated.textContent = "Not connected";
     return;
   }
-  if (health.ok && health.payload.note) trust.textContent = health.payload.note;
   const gpus = await call("/api/gpus");
+  if (gpus.sessionExpired) return;
   const instances = await call("/api/instances");
+  if (instances.sessionExpired) return;
+  if (isAuthFailure(gpus) || isAuthFailure(instances)) return;
   if (gpus.ok && Array.isArray(gpus.payload.gpus)) {
     state.gpus = gpus.payload.gpus;
     state.gpuError = "";
@@ -293,15 +295,46 @@ function setCreatePending(pending, start) {
   else stopped.textContent = "Creating…";
 }
 
+function isAuthFailure(result) {
+  if (!result || result.sessionExpired || result.status === 401) return true;
+  const error = (result.error || "").toLowerCase();
+  return error === "unauthorized" || error === "session expired";
+}
+
+async function logout() {
+  state.busy = true;
+  try {
+    await fetch("/api/logout", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    });
+  } catch {
+    /* still leave the fleet page */
+  }
+  window.location.assign("/login");
+}
+
 async function call(path, options) {
   try {
     const response = await fetch(path, {
       method: (options && options.method) || "GET",
       body: options && options.body,
+      credentials: "same-origin",
       headers: { Accept: "application/json" },
     });
     let payload = null;
     try { payload = await response.json(); } catch { payload = null; }
+    if (response.status === 401) {
+      const expired = payload && payload.error === "session expired";
+      window.location.assign(expired ? "/login?expired=1" : "/login");
+      return {
+        ok: false,
+        status: 401,
+        sessionExpired: true,
+        error: expired ? "session expired" : "unauthorized",
+      };
+    }
     if (!response.ok || !payload || payload.ok === false) {
       return {
         ok: false,

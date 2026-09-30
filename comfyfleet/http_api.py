@@ -2,8 +2,8 @@
 
 This server does not create containers, assign ports, copy workflows, or
 select GPUs itself. Those stay in ``comfyfleet.control`` and
-``comfyfleet.gpu``. Auth is the existing no-op ``authorize()`` stub
-(Phase 3). There is no login.
+``comfyfleet.gpu``. Fleet routes require a session cookie or
+``Authorization: Bearer``. ``authorize()`` fails closed until that grant.
 
 Contract: CONTROL_HTTP.md.
 """
@@ -14,17 +14,33 @@ import json
 import shutil
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.parser import Parser
 from email.policy import compat32
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from comfyfleet import __version__
+from comfyfleet.auth import (
+    AuthError,
+    LoginGuard,
+    SessionStore,
+    bearer_token,
+    begin_http_request,
+    end_http_request,
+    grant_http_request,
+    login_fail_delay,
+    read_cookie,
+    read_password,
+    request_is_https,
+    secrets_equal,
+    session_cookie,
+)
 from comfyfleet.control import (
     Instance,
+    authorize,
     create_instance,
     list_instances,
     start_instance,
@@ -51,9 +67,11 @@ _MISSING_WORKFLOW = (
     "There is no baked default workflow."
 )
 _AUTH_NOTE = (
-    "Auth is a Phase 3 stub. authorize() is a no-op and this server does not "
-    "check a login or token. Serve it only on a trusted LAN; it is not an "
-    "internet-exposed auth product."
+    "Liveness only. This response has no fleet data. "
+    "Fleet routes require a session cookie from POST /api/login "
+    "or Authorization: Bearer. Trusted LAN is still recommended. "
+    "This gate is not a full internet-hardening product; terminate TLS "
+    "at a reverse proxy if you need HTTPS."
 )
 _PLACEHOLDER_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -63,12 +81,78 @@ _PLACEHOLDER_HTML = """<!DOCTYPE html>
   <title>ComfyFleet</title>
 </head>
 <body>
-  <p>ComfyFleet control API placeholder. The iOS-like control UI is not included.</p>
+  <p>ComfyFleet control API placeholder. The web UI files are not in this process.</p>
   <p>API: <a href="/api/health">/api/health</a>. See CONTROL_HTTP.md.</p>
-  <p>Trusted LAN only. Auth is a Phase 3 stub.</p>
+  <p>Fleet routes require a session cookie or Authorization: Bearer. Trusted LAN is still recommended.</p>
 </body>
 </html>
 """
+_BUILTIN_LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in — ComfyFleet</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+      background: #000; color: #f5f5f7; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+    form { width: min(420px, calc(100% - 32px)); padding: 24px; border-radius: 22px;
+      background: rgba(28, 28, 30, 0.72); border: 1px solid rgba(255,255,255,0.12); }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    p { color: rgba(235,235,245,0.62); }
+    input, button { width: 100%; min-height: 50px; box-sizing: border-box; font: inherit; }
+    input { margin: 8px 0 12px; padding: 0 14px; border-radius: 14px; border: 0; background: rgba(118,118,128,0.28); color: inherit; }
+    button { border: 0; border-radius: 14px; background: #0a84ff; color: white; font-weight: 650; }
+    .error { color: #ffd7d4; }
+  </style>
+</head>
+<body>
+  <form id="login-form" method="post" action="/api/login">
+    <h1>ComfyFleet</h1>
+    <p id="login-lead">Sign in with the manager password.</p>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <p id="login-error" class="error" hidden></p>
+    <button type="submit">Sign in</button>
+  </form>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const error = document.querySelector("#login-error");
+    if (params.get("expired")) {
+      error.hidden = false;
+      error.textContent = "Session expired. Sign in again.";
+    }
+    document.querySelector("#login-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const password = document.querySelector("#password").value;
+      const response = await fetch("/api/login", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ password })
+      });
+      let payload = null;
+      try { payload = await response.json(); } catch (err) { payload = null; }
+      if (response.ok && payload && payload.ok) {
+        window.location.assign("/");
+        return;
+      }
+      document.querySelector("#password").value = "";
+      error.hidden = false;
+      error.textContent = response.status === 429
+        ? "Too many sign-in attempts. Wait a moment and try again."
+        : "Invalid credentials.";
+    });
+  </script>
+</body>
+</html>
+"""
+_PUBLIC_FILES = {
+    "/app.css",
+    "/comfyfleet-logo-ships.jpg",
+    "/favicon.ico",
+    "/robots.txt",
+}
 
 _STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -110,6 +194,9 @@ class ApiContext:
     use_env_limit: bool = True
     host_fallback: str = "127.0.0.1"
     public_host: str | None = None
+    password: str | None = None
+    sessions: SessionStore | None = None
+    login_guard: LoginGuard | None = None
 
 
 @dataclass
@@ -117,6 +204,7 @@ class Response:
     status: int
     body: bytes
     content_type: str
+    headers: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -160,8 +248,13 @@ def serve(
     port_in_use: Callable[[int], bool] | None = None,
     use_env_limit: bool = True,
 ) -> None:
-    """Bind the control API and serve until interrupted."""
+    """Bind the control API and serve until interrupted.
 
+    ``COMFYFLEET_PASSWORD`` must be a non-empty string. A missing or empty
+    value raises ``FleetError`` before the socket is bound.
+    """
+
+    password = read_password()
     if not host or not str(host).strip():
         raise FleetError("bind host is required")
     if port < 1 or port > 65535:
@@ -188,6 +281,9 @@ def serve(
         use_env_limit=use_env_limit,
         host_fallback="127.0.0.1" if host in {"0.0.0.0", "::"} else host,
         public_host=public_host,
+        password=password,
+        sessions=SessionStore(),
+        login_guard=LoginGuard(fail_delay_s=login_fail_delay()),
     )
     try:
         httpd = make_server(host, port, context)
@@ -198,8 +294,14 @@ def serve(
         file=sys.stderr,
     )
     print(
-        "comfyfleet: trusted LAN only. Auth is a Phase 3 stub "
-        "(authorize() is a no-op). Do not expose this port to the internet.",
+        "comfyfleet: auth required. Fleet routes need a session cookie "
+        "or Authorization: Bearer. The password is not logged.",
+        file=sys.stderr,
+    )
+    print(
+        "comfyfleet: trusted LAN is still recommended. This gate is not a "
+        "full internet-hardening product. Terminate TLS at a reverse proxy "
+        "if you need HTTPS. Do not expose this port to the public internet.",
         file=sys.stderr,
     )
     if public_host:
@@ -234,15 +336,34 @@ def make_server(host: str, port: int, context: ApiContext) -> ThreadingHTTPServe
             self._respond("POST")
 
         def log_message(self, fmt: str, *args) -> None:
-            print(f"comfyfleet: {self.address_string()} {fmt % args}", file=sys.stderr)
+            # Path only. Query strings and headers are omitted so a password
+            # cannot land in the access log.
+            path = urlsplit(self.path).path
+            print(
+                f"comfyfleet: {self.address_string()} {self.command} {path}",
+                file=sys.stderr,
+            )
 
         def _respond(self, method: str) -> None:
             try:
                 body = _read_body(self)
                 path = urlsplit(self.path).path
-                response = dispatch(context, method, path, self.headers.get("Host"), body, self.headers.get("Content-Type"))
+                header_map = {key: value for key, value in self.headers.items()}
+                client_ip = self.client_address[0] if self.client_address else ""
+                response = dispatch(
+                    context,
+                    method,
+                    path,
+                    self.headers.get("Host"),
+                    body,
+                    self.headers.get("Content-Type"),
+                    header_map,
+                    client_ip,
+                )
             except HTTPStatusError as exc:
                 response = _json(exc.status, {"ok": False, "error": exc.message})
+            except AuthError as exc:
+                response = _json(401, {"ok": False, "error": exc.message})
             except FleetError as exc:
                 response = _json(400, {"ok": False, "error": str(exc)})
             except Exception as exc:
@@ -254,6 +375,8 @@ def make_server(host: str, port: int, context: ApiContext) -> ThreadingHTTPServe
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            for key, value in response.headers:
+                self.send_header(key, value)
             self.end_headers()
             self.wfile.write(payload)
 
@@ -270,15 +393,84 @@ def dispatch(
     host_header: str | None,
     body: bytes,
     content_type: str | None,
+    headers: dict | None = None,
+    client_ip: str | None = None,
 ) -> Response:
     """Route one request. Control errors propagate as ``FleetError``."""
 
+    token = begin_http_request()
+    try:
+        try:
+            return _route(
+                context,
+                method,
+                path,
+                host_header,
+                body,
+                content_type,
+                headers,
+                client_ip or "",
+            )
+        except AuthError as exc:
+            return _json(401, {"ok": False, "error": exc.message})
+    finally:
+        end_http_request(token)
+
+
+def _route(
+    context: ApiContext,
+    method: str,
+    path: str,
+    host_header: str | None,
+    body: bytes,
+    content_type: str | None,
+    headers: dict | None,
+    client_ip: str,
+) -> Response:
     if len(path) > 1 and path.endswith("/"):
         path = path[:-1]
-    host = open_host(host_header, context.host_fallback, context.public_host)
     if path == "/api/health":
         _require_method(method, "GET")
         return _health()
+    if path == "/api/login":
+        _require_method(method, "POST")
+        return _login(context, body, content_type, headers, client_ip)
+    if path == "/api/logout":
+        _require_method(method, "POST")
+        return _logout(context, headers)
+    if path.startswith("/api/"):
+        _require_fleet_auth(context, method, path, headers)
+        grant_http_request()
+        return _fleet(context, method, path, host_header, body, content_type)
+    if path in {"/login", "/login.html"} or path in _PUBLIC_FILES:
+        if _request_authenticated(context, headers) and path in {"/login", "/login.html"}:
+            return _redirect("/")
+        if method != "GET":
+            raise HTTPStatusError(405, "method not allowed")
+        return _static(context, path)
+    if not _request_authenticated(context, headers):
+        if method != "GET":
+            raise AuthError("unauthorized")
+        cookie = read_cookie(_header(headers, "Cookie"))
+        bearer = bearer_token(_header(headers, "Authorization"))
+        if cookie and bearer is None:
+            return _redirect("/login?expired=1")
+        return _redirect("/login")
+    if method != "GET":
+        raise HTTPStatusError(405, "method not allowed")
+    grant_http_request()
+    return _static(context, path)
+
+
+def _fleet(
+    context: ApiContext,
+    method: str,
+    path: str,
+    host_header: str | None,
+    body: bytes,
+    content_type: str | None,
+) -> Response:
+    host = open_host(host_header, context.host_fallback, context.public_host)
     if path == "/api/gpus":
         _require_method(method, "GET")
         return _gpus(context)
@@ -295,11 +487,7 @@ def dispatch(
         if verb == "start":
             return _start(context, host, name)
         return _stop(context, host, name)
-    if path.startswith("/api/"):
-        raise HTTPStatusError(404, "not found")
-    if method != "GET":
-        raise HTTPStatusError(405, "method not allowed")
-    return _static(context, path)
+    raise HTTPStatusError(404, "not found")
 
 
 def _health() -> Response:
@@ -309,11 +497,146 @@ def _health() -> Response:
             "ok": True,
             "service": "comfyfleet",
             "version": __version__,
-            "phase": 2,
-            "auth": "phase3-stub",
+            "auth": "required",
             "note": _AUTH_NOTE,
         },
     )
+
+
+def _require_fleet_auth(context: ApiContext, method: str, path: str, headers: dict | None) -> None:
+    """Grant is required. ``authorize()`` fails closed when it is not."""
+
+    if _request_authenticated(context, headers):
+        return
+    action = _protected_action(method, path)
+    cookie = read_cookie(_header(headers, "Cookie"))
+    bearer = bearer_token(_header(headers, "Authorization"))
+    message = "session expired" if cookie and bearer is None else "unauthorized"
+    if action is not None:
+        try:
+            authorize(action)
+        except AuthError:
+            raise AuthError(message) from None
+    raise AuthError(message)
+
+
+def _protected_action(method: str, path: str) -> str | None:
+    if path == "/api/gpus":
+        return "list"
+    if path == "/api/instances":
+        if method == "POST":
+            return "create"
+        return "list"
+    prefix = "/api/instances/"
+    if path.startswith(prefix):
+        _name, sep, verb = path[len(prefix) :].partition("/")
+        if sep == "/" and verb in {"start", "stop"}:
+            return verb
+        return "list"
+    return None
+
+
+def _request_authenticated(context: ApiContext, headers: dict | None) -> bool:
+    _ensure_auth_state(context)
+    cookie = read_cookie(_header(headers, "Cookie"))
+    if context.sessions is not None and context.sessions.valid(cookie):
+        return True
+    token = bearer_token(_header(headers, "Authorization"))
+    if token is None:
+        return False
+    return secrets_equal(context.password, token)
+
+
+def _ensure_auth_state(context: ApiContext) -> None:
+    if context.sessions is None:
+        context.sessions = SessionStore()
+    if context.login_guard is None:
+        context.login_guard = LoginGuard(fail_delay_s=0.25)
+
+
+def _login(
+    context: ApiContext,
+    body: bytes,
+    content_type: str | None,
+    headers: dict | None,
+    client_ip: str,
+) -> Response:
+    _ensure_auth_state(context)
+    assert context.login_guard is not None
+    assert context.sessions is not None
+    key = client_ip or "unknown"
+    secure = request_is_https(_header(headers, "X-Forwarded-Proto"))
+    presented = _login_password(body, content_type)
+    if context.login_guard.blocked(key):
+        secrets_equal(context.password, presented or "")
+        context.login_guard.pause()
+        raise HTTPStatusError(429, "too many login attempts")
+    if not secrets_equal(context.password, presented or ""):
+        context.login_guard.record_failure(key)
+        raise HTTPStatusError(401, "invalid credentials")
+    context.login_guard.record_success(key)
+    session_id = context.sessions.create()
+    response = _json(200, {"ok": True})
+    response.headers.append(("Set-Cookie", session_cookie(session_id, secure=secure)))
+    return response
+
+
+def _logout(context: ApiContext, headers: dict | None) -> Response:
+    _ensure_auth_state(context)
+    assert context.sessions is not None
+    cookie = read_cookie(_header(headers, "Cookie"))
+    context.sessions.revoke(cookie)
+    secure = request_is_https(_header(headers, "X-Forwarded-Proto"))
+    response = _json(200, {"ok": True})
+    response.headers.append(("Set-Cookie", session_cookie("", secure=secure, clear=True)))
+    return response
+
+
+def _login_password(body: bytes, content_type: str | None) -> str | None:
+    """Pull the password out of the body. Never include it in an error."""
+
+    media = (content_type or "").split(";", 1)[0].strip().lower()
+    if media in {"", "application/json"}:
+        try:
+            payload = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        value = payload.get("password")
+        if not isinstance(value, str):
+            return None
+        return value
+    if media == "application/x-www-form-urlencoded":
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        parsed = parse_qs(text, keep_blank_values=True)
+        values = parsed.get("password") or []
+        if len(values) != 1 or not isinstance(values[0], str):
+            return None
+        return values[0]
+    return None
+
+
+def _redirect(location: str) -> Response:
+    body = (
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+        f"<title>Sign in</title></head><body><p><a href=\"{location}\">Sign in</a></p></body></html>"
+    ).encode("utf-8")
+    response = Response(302, body, "text/html; charset=utf-8")
+    response.headers.append(("Location", location))
+    return response
+
+
+def _header(headers: dict | None, name: str) -> str | None:
+    if not headers:
+        return None
+    for key, value in headers.items():
+        if str(key).lower() == name.lower():
+            return None if value is None else str(value)
+    return None
 
 
 def _gpus(context: ApiContext) -> Response:
@@ -451,6 +774,12 @@ def _instance_action(path: str) -> tuple[str, str] | None:
 def _static(context: ApiContext, path: str) -> Response:
     if path in {"", "/"}:
         path = "/index.html"
+    if path in {"/login", "/login.html"}:
+        if context.ui_dir is not None:
+            found = _safe_static(context.ui_dir, "/login.html")
+            if found is not None:
+                return Response(200, found.read_bytes(), "text/html; charset=utf-8")
+        return Response(200, _BUILTIN_LOGIN_HTML.encode("utf-8"), "text/html; charset=utf-8")
     if context.ui_dir is not None:
         found = _safe_static(context.ui_dir, path)
         if found is not None:
