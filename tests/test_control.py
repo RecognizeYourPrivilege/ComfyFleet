@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from comfyfleet.control import (
     create_instance,
@@ -189,6 +190,56 @@ class ControlTests(unittest.TestCase):
             ],
             "8189:8188",
         )
+
+    def test_start_skips_occupied_neighbors(self):
+        self._create("Neighbor.json")
+        moved = start_instance(
+            "neighbor",
+            layout=self.layout,
+            docker=self.docker,
+            gpus=self.one,
+            port_in_use=lambda port: port in {8188, 8189},
+        )
+        self.assertEqual(moved.instance.port, 8190)
+        args = self.docker.containers["neighbor"]["args"]
+        self.assertEqual(args[args.index("-p") + 1], "8190:8188")
+        self.assertIn(("rm", "neighbor"), self.docker.calls)
+        meta = json.loads((self.root / "files" / "neighbor" / "comfyfleet.json").read_text())
+        self.assertEqual(meta["port"], 8190)
+
+    def test_create_probes_host_when_no_callback_is_passed(self):
+        with mock.patch(
+            "comfyfleet.control.make_port_in_use",
+            return_value=lambda port: port in {8188, 8189},
+        ) as probe:
+            result = create_instance(
+                _workflow(self.sources, "Outside.json", "outside"),
+                layout=self.layout,
+                docker=self.docker,
+                gpus=self.one,
+                gpu="0",
+            )
+        probe.assert_called_once_with(self.docker)
+        self.assertEqual(result.instance.port, 8190)
+        args = self.docker.containers["outside"]["args"]
+        self.assertEqual(args[args.index("-p") + 1], "8190:8188")
+
+    def test_start_probes_host_when_no_callback_is_passed(self):
+        self._create("Gamma.json")
+        with mock.patch(
+            "comfyfleet.control.make_port_in_use",
+            return_value=lambda port: port in {8188, 8189},
+        ) as probe:
+            result = start_instance(
+                "gamma",
+                layout=self.layout,
+                docker=self.docker,
+                gpus=self.one,
+            )
+        probe.assert_called_once_with(self.docker)
+        self.assertEqual(result.instance.port, 8190)
+        args = self.docker.containers["gamma"]["args"]
+        self.assertEqual(args[args.index("-p") + 1], "8190:8188")
 
     def test_list_shows_port(self):
         self._create("Listed.json")
