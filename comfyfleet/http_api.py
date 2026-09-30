@@ -105,7 +105,7 @@ class ApiContext:
     layout: FleetLayout
     docker: object
     detect_gpus: Callable[[], list[Gpu]]
-    port_in_use: Callable[[int], bool]
+    port_in_use: Callable[[int], bool] | None = None
     ui_dir: Path | None = None
     use_env_limit: bool = True
     host_fallback: str = "127.0.0.1"
@@ -176,10 +176,8 @@ def serve(
         from comfyfleet.gpu import detect_gpus as default_detect_gpus
 
         detect_gpus = default_detect_gpus
-    if port_in_use is None:
-        from comfyfleet.ports import effective_port_in_use as default_port_in_use
-
-        port_in_use = default_port_in_use
+    # port_in_use None: comfyfleet.control snapshots Docker-published ports
+    # and host listeners. Do not bind-check inside this process only.
     public_host = configured_public_host()
     context = ApiContext(
         layout=layout,
