@@ -1,14 +1,14 @@
-# ComfyFleet manager. Build the instance image separately:
-#   docker build -t comfyfleet:phase1 .
-# Then: docker compose up -d
+# ComfyFleet manager. Pulls a prebuilt manager image from GHCR.
+# The instance image is not a compose service. Pull it before create:
+#   docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1
+# install.sh does that pull, tags comfyfleet:phase1, and sets
+# COMFYFLEET_INSTANCE_IMAGE. A local rebuild is compose.build.yaml.
 # Open http://<lan-host>:9100/ . Do not publish 9100 on the public internet.
 
 services:
   manager:
-    image: comfyfleet-manager:latest
-    build:
-      context: .
-      dockerfile: Dockerfile.manager
+    image: ${COMFYFLEET_MANAGER_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest}
+    container_name: comfyfleet-manager
     ports:
       - "9100:9100"
     volumes:
@@ -17,7 +17,7 @@ services:
     environment:
       COMFYFLEET_PASSWORD: ${COMFYFLEET_PASSWORD:?Set COMFYFLEET_PASSWORD}
       COMFYFLEET_PUBLIC_HOST: ${COMFYFLEET_PUBLIC_HOST:-}
-      COMFYFLEET_INSTANCE_IMAGE: comfyfleet:phase1
+      COMFYFLEET_INSTANCE_IMAGE: ${COMFYFLEET_INSTANCE_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet:phase1}
       COMFYFLEET_BIND_HOST: 0.0.0.0
       COMFYFLEET_BIND_PORT: "9100"
     gpus: all

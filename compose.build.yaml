@@ -1,0 +1,12 @@
+# Optional local manager build. Not the operator install path.
+# Build the instance image first (it is not a compose service):
+#   docker build -t comfyfleet:phase1 .
+#   docker compose -f compose.yaml -f compose.build.yaml up -d --build
+services:
+  manager:
+    image: comfyfleet-manager:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.manager
+    environment:
+      COMFYFLEET_INSTANCE_IMAGE: comfyfleet:phase1
