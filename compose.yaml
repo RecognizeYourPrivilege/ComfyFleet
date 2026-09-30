@@ -1,0 +1,23 @@
+# ComfyFleet manager. Build the instance image separately:
+#   docker build -t comfyfleet:phase1 .
+# Then: docker compose up -d
+# Open http://<lan-host>:9100/ . Do not publish 9100 on the public internet.
+
+services:
+  manager:
+    image: comfyfleet-manager:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.manager
+    ports:
+      - "9100:9100"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home:/home
+    environment:
+      COMFYFLEET_PUBLIC_HOST: ${COMFYFLEET_PUBLIC_HOST:-}
+      COMFYFLEET_INSTANCE_IMAGE: comfyfleet:phase1
+      COMFYFLEET_BIND_HOST: 0.0.0.0
+      COMFYFLEET_BIND_PORT: "9100"
+    gpus: all
+    restart: unless-stopped
