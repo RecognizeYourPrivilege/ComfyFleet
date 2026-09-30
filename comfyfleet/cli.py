@@ -1,7 +1,8 @@
 """Command-line entrypoint.
 
 ``comfyfleet.control`` is the lifecycle API. ``comfyfleet ui`` (alias
-``serve``) exposes it over HTTP. Phase 3 Auth can wrap ``authorize``.
+``serve``) exposes it over HTTP and requires ``COMFYFLEET_PASSWORD``.
+The host CLI does not use the HTTP session.
 """
 
 from __future__ import annotations
@@ -112,7 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
     ui_help = (
         "Serve the control HTTP API for the web UI. "
         f"Default is http://{DEFAULT_BIND_HOST}:{DEFAULT_BIND_PORT}/ . "
-        "Auth is a Phase 3 stub; bind this on a trusted LAN only."
+        "Requires COMFYFLEET_PASSWORD. Trusted LAN is still recommended."
     )
     ui = sub.add_parser("ui", parents=[bind], help="Serve the control HTTP API", description=ui_help)
     ui.set_defaults(func=_cmd_ui)

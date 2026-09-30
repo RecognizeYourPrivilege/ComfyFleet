@@ -6,7 +6,7 @@ ComfyFleet is a **manager container**. You run that image on a Docker host with 
 
 Create, start, and stop run **inside the manager**. The manager talks to the host Docker engine through the mounted Docker socket and starts **sibling** ComfyUI containers. There is no Docker daemon inside the manager.
 
-**There is no login.** `authorize()` does not check a token. Use ComfyFleet on a trusted LAN. Do not publish port **9100** or the ComfyUI ports (8188 and up) on the public internet.
+The manager requires **`COMFYFLEET_PASSWORD`**. If that variable is missing or empty, the manager **refuses to start**. There is no open-LAN fallback. Sign in once in the browser, or send `Authorization: Bearer` with the same value. A trusted LAN is still recommended. This password is a gate, not a full internet-hardening product: terminate TLS at a reverse proxy if you need HTTPS. Do not publish port **9100** or the ComfyUI ports (8188 and up) on the public internet. ComfyUI on 8188 and up is not behind this login.
 
 The Docker socket you mount into the manager is **root-equivalent on the host**. A process that can use it can start privileged containers and mount host paths. Run the manager only on a machine you trust.
 
@@ -46,15 +46,19 @@ docker run -d --name comfyfleet-manager \
   -p 9100:9100 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /home:/home \
+  -e COMFYFLEET_PASSWORD=replace-with-a-long-secret \
   -e COMFYFLEET_PUBLIC_HOST=192.168.1.20 \
   comfyfleet-manager:latest
 ```
 
-Open `http://192.168.1.20:9100/`.
+`replace-with-a-long-secret` is a placeholder. Pick a long password and do not commit it. Changing the password means recreating or restarting the manager with the new value. Sessions live in process memory and end on that restart.
+
+Open `http://192.168.1.20:9100/`. The browser shows a sign-in page until the password is accepted.
 
 The same service is in [compose.yaml](compose.yaml):
 
 ```bash
+export COMFYFLEET_PASSWORD=replace-with-a-long-secret
 export COMFYFLEET_PUBLIC_HOST=192.168.1.20
 docker compose up -d
 ```
@@ -70,7 +74,7 @@ The image entrypoint runs `comfyfleet ui` and binds **`0.0.0.0:9100`**. You do n
 
 `COMFYFLEET_BIND_HOST` and `COMFYFLEET_BIND_PORT` change that bind (defaults `0.0.0.0` and `9100`). Publish the same port with `-p`.
 
-`docker run comfyfleet-manager:latest list` (and the other `comfyfleet` subcommands) runs the CLI inside the manager instead of the UI. The default, with no command, is the UI.
+`docker run` still requires `-e COMFYFLEET_PASSWORD=...` when you pass a subcommand such as `list`. The default, with no command, is the UI. `docker exec` into an already-running manager is a local process: it does not use the browser session. Anyone who can exec already has access to the Docker socket.
 
 ### Docker socket
 
@@ -111,6 +115,8 @@ If `/home` is not a bind mount, the manager warns at startup. Directories create
 
 ## Use the web UI
 
+Open the manager URL and sign in. The password is the `COMFYFLEET_PASSWORD` value. Wrong password shows invalid credentials. Log out clears the session. After that, fleet API calls fail until you sign in again.
+
 The UI is the primary way to create an instance. Upload a workflow JSON, pick GPUs, then create. New instances stay **stopped**. Start the ones you want running and stop the others. Open is enabled only while an instance is running.
 
 There is no baked default workflow. A missing or invalid workflow JSON does not create an instance.
@@ -127,7 +133,7 @@ From another machine, the ComfyUI page is `http://<public-host>:<port>`. Inside 
 
 ## Optional CLI inside the manager
 
-The same lifecycle is available in the container. Upload in the UI remains the primary create path.
+The same lifecycle is available in the container. Upload in the UI remains the primary create path. These commands do not send the HTTP session cookie. The container itself will not start without `COMFYFLEET_PASSWORD`.
 
 ```bash
 docker exec -it comfyfleet-manager comfyfleet create --workflow /home/files/incoming/portrait.json --gpu 0
@@ -256,16 +262,21 @@ The image checkouts start detached at the pins above, so a bare `git pull` will 
 
 ## API
 
-The UI and the API are same-origin. This server does not send CORS headers. Docker lifecycle stays in `comfyfleet.control`. The pages call `/api/...` only.
+The UI and the API are same-origin. This server does not send CORS headers. Do not add a cross-origin policy that drops or ignores the session cookie. Docker lifecycle stays in `comfyfleet.control`. The pages call `/api/...` with `credentials: "same-origin"` so the browser sends the HttpOnly session cookie.
 
-| Method | Path | Behavior |
-|---|---|---|
-| `GET` | `/api/health` | `ok`, and a note that the server does not check a login or token |
-| `GET` | `/api/gpus` | Detected GPUs (`index`, `name`, `memory`). **503** when `nvidia-smi` is missing or fails |
-| `GET` | `/api/instances` | `name`, `status`, `port`, `gpus`, and `url` when `status` is `running` |
-| `POST` | `/api/instances` | Create. Requires an uploaded workflow JSON or `workflow_path`. Requires `gpu` or `gpus`. `start` defaults to false |
-| `POST` | `/api/instances/{name}/start` | Start without rebuilding the image |
-| `POST` | `/api/instances/{name}/stop` | Stop without destroying the container |
+| Method | Path | Auth | Behavior |
+|---|---|---|---|
+| `GET` | `/api/health` | no | Liveness only. No fleet list and no password |
+| `POST` | `/api/login` | no | Body `{"password":"..."}`. Sets the session cookie |
+| `POST` | `/api/logout` | no | Clears the session cookie and the server session |
+| `GET` | `/login` | no | Sign-in page |
+| `GET` | `/api/gpus` | yes | Detected GPUs (`index`, `name`, `memory`). **503** when `nvidia-smi` is missing or fails |
+| `GET` | `/api/instances` | yes | `name`, `status`, `port`, `gpus`, and `url` when `status` is `running` |
+| `POST` | `/api/instances` | yes | Create. Requires an uploaded workflow JSON or `workflow_path`. Requires `gpu` or `gpus`. `start` defaults to false |
+| `POST` | `/api/instances/{name}/start` | yes | Start without rebuilding the image |
+| `POST` | `/api/instances/{name}/stop` | yes | Stop without destroying the container |
+
+Protected routes accept the session cookie **or** `Authorization: Bearer` set to the same `COMFYFLEET_PASSWORD` value. A missing credential is **401** with `unauthorized` or `session expired`. That text is not a Docker or GPU failure.
 
 Field names and error bodies are in [CONTROL_HTTP.md](CONTROL_HTTP.md).
 
@@ -273,7 +284,9 @@ Field names and error bodies are in [CONTROL_HTTP.md](CONTROL_HTTP.md).
 
 | Situation | What you see |
 |---|---|
-| `/var/run/docker.sock` missing | Create, start, stop, and list say the socket is missing and that the manager does not start its own daemon. The UI still loads. |
+| `COMFYFLEET_PASSWORD` missing or empty | The manager exits non-zero and says it is refusing to start. The UI does not come up. |
+| Wrong password, or no cookie / Bearer | Sign-in says invalid credentials. Fleet routes return **401**. |
+| `/var/run/docker.sock` missing | Create, start, stop, and list say the socket is missing and that the manager does not start its own daemon. The UI still loads after you sign in. |
 | Socket permission denied | The message says permission denied, and that the socket is root-equivalent. Run as root or as a uid in the host `docker` group. |
 | `nvidia-smi` missing or no driver | Create and start fail. `/api/gpus` returns 503. Pass `--gpus all` and install the NVIDIA Container Toolkit. |
 | Workflow missing or not a JSON object | Create is refused. There is no substitute graph. |
@@ -284,12 +297,12 @@ Host `pip install` is for contributors and CI. It is not required to run a fleet
 
 ```bash
 python -m pip install .
-comfyfleet ui --host 127.0.0.1 --port 9100
+COMFYFLEET_PASSWORD=replace-with-a-long-secret comfyfleet ui --host 127.0.0.1 --port 9100
 python -m unittest discover -s tests
 ```
 
-`comfyfleet ui` on the host is the same control server the manager starts. Use `--host 127.0.0.1` to keep a dev server on one machine.
+`comfyfleet ui` on the host is the same control server the manager starts, and it also refuses to start without `COMFYFLEET_PASSWORD`. Use `--host 127.0.0.1` to keep a dev server on one machine. Host commands such as `comfyfleet create` do not go through HTTP Auth. They are a local process on that machine.
 
-`scripts/manager-smoke.sh` builds `comfyfleet-manager:latest`, starts it, and requests `/api/health` and `/`. It skips when `docker` is not installed. A full create/start/stop against a real ComfyUI container needs the instance image and a GPU. `tests/test_manager.py` walks health, UI, create (workflow upload), start, and stop with a fake engine.
+`scripts/manager-smoke.sh` builds `comfyfleet-manager:latest`, starts it with a placeholder password, and requests `/api/health` and `/login`. It skips when `docker` is not installed. A full create/start/stop against a real ComfyUI container needs the instance image and a GPU. `tests/test_manager.py` walks health, UI, create (workflow upload), start, and stop with a fake engine.
 
 The tests cover naming, port reservation, workflow rejection, `nvidia-smi` failures, GPU prompts, create-without-start, collision, start/stop without an image rebuild, the HTTP API, and the manager socket and public-host errors. `tests/test_ui.py` checks that the pages call that API and do not implement Docker themselves. They do not build the CUDA image and they do not need a GPU.

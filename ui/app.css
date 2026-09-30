@@ -105,7 +105,47 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
   color: var(--ink);
 }
 
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-actions .btn {
+  min-height: 44px;
+  padding: 0 14px;
+}
+
 .icon-btn svg { width: 22px; height: 22px; }
+
+.login-wrap {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+}
+
+.login-card {
+  width: min(440px, 100%);
+  padding: 22px 20px 20px;
+  border-radius: 28px;
+}
+
+.login-card h1 { margin-bottom: 6px; }
+
+.login-card input {
+  width: 100%;
+  min-height: var(--hit);
+  margin: 8px 0 12px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--fill);
+}
+
+.login-card .btn { width: 100%; }
 
 .icon-btn:active, .btn:active { transform: scale(0.98); }
 

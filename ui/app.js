@@ -25,6 +25,7 @@ const forceInput = document.querySelector("#force");
 const trust = document.querySelector("#trust");
 
 document.querySelector("#refresh").addEventListener("click", () => refresh());
+document.querySelector("#logout").addEventListener("click", () => logout());
 document.querySelector("#open-create").addEventListener("click", openSheet);
 document.querySelector("#create-stopped").addEventListener("click", () => submitCreate(false));
 document.querySelector("#create-start").addEventListener("click", () => submitCreate(true));
@@ -57,7 +58,9 @@ async function refresh() {
   }
   if (health.ok && health.payload.note) trust.textContent = health.payload.note;
   const gpus = await call("/api/gpus");
+  if (gpus.sessionExpired) return;
   const instances = await call("/api/instances");
+  if (instances.sessionExpired) return;
   if (gpus.ok && Array.isArray(gpus.payload.gpus)) {
     state.gpus = gpus.payload.gpus;
     state.gpuError = "";
@@ -293,15 +296,40 @@ function setCreatePending(pending, start) {
   else stopped.textContent = "Creating…";
 }
 
+async function logout() {
+  state.busy = true;
+  try {
+    await fetch("/api/logout", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    });
+  } catch {
+    /* still leave the fleet page */
+  }
+  window.location.assign("/login");
+}
+
 async function call(path, options) {
   try {
     const response = await fetch(path, {
       method: (options && options.method) || "GET",
       body: options && options.body,
+      credentials: "same-origin",
       headers: { Accept: "application/json" },
     });
     let payload = null;
     try { payload = await response.json(); } catch { payload = null; }
+    if (response.status === 401) {
+      const expired = payload && payload.error === "session expired";
+      window.location.assign(expired ? "/login?expired=1" : "/login");
+      return {
+        ok: false,
+        status: 401,
+        sessionExpired: true,
+        error: expired ? "session expired" : "unauthorized",
+      };
+    }
     if (!response.ok || !payload || payload.ok === false) {
       return {
         ok: false,
