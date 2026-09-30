@@ -49,9 +49,26 @@ def detect_gpus(run=None) -> list[Gpu]:
         raise FleetError(_missing_message()) from exc
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "").strip()
+        hint = ""
+        low = detail.lower()
+        if any(
+            token in low
+            for token in (
+                "nvml",
+                "nvidia driver",
+                "couldn't communicate",
+                "could not communicate",
+            )
+        ):
+            hint = (
+                " If this is the manager container, pass --gpus all and install the "
+                "NVIDIA Container Toolkit on the host. The probe is nvidia-smi inside "
+                "the manager; the toolkit injects the host driver so the list matches "
+                "the host GPUs. The manager image does not ship a CUDA stack."
+            )
         raise FleetError(
-            "nvidia-smi failed. Phase 1 requires a working NVIDIA GPU; "
-            f"CPU-only is not a successful create/start. {detail}".rstrip()
+            "nvidia-smi failed. A working NVIDIA GPU is required; "
+            f"CPU-only is not a successful create or start. {detail}{hint}".rstrip()
         )
     gpus = parse_nvidia_smi(completed.stdout or "")
     if not gpus:
@@ -140,8 +157,12 @@ def _print_gpus(gpus: list[Gpu]) -> None:
 
 def _missing_message() -> str:
     return (
-        "nvidia-smi was not found. Install the NVIDIA driver and confirm nvidia-smi "
-        "works on the host. Phase 1 does not start a CPU-only ComfyUI instance."
+        "nvidia-smi was not found. The GPU probe runs nvidia-smi in this process "
+        "so it sees the host GPUs. Install the NVIDIA driver and confirm nvidia-smi "
+        "works on the host. When this process is the manager container, start it "
+        "with --gpus all so the NVIDIA Container Toolkit injects the host nvidia-smi "
+        "and driver libraries. The manager image does not ship a CUDA stack. "
+        "CPU-only is not a successful create or start."
     )
 
 

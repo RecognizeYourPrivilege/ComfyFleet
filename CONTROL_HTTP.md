@@ -6,6 +6,8 @@ The iOS-like control UI is in `ui/` (`index.html`, `app.css`, `app.js`, `comfyfl
 
 ## Serve
 
+The manager image runs this server on container start (`comfyfleet ui` inside the container, `0.0.0.0:9100`). A host checkout can still start it for development:
+
 ```bash
 comfyfleet ui
 # alias:
@@ -101,7 +103,7 @@ An empty fleet is `{"ok": true, "instances": []}`. That is not an error.
 | `gpus` | number[] | GPU indexes chosen at create. |
 | `url` | string or null | Open target. A string **only while `status` is `running`**. Otherwise `null`. |
 
-`url` is `http://<request-host>:<port>`. `<request-host>` is the `Host` header the browser used to reach this control server, with the control port removed. A phone that opened `http://192.168.1.20:9100/` gets `http://192.168.1.20:8188` for a running instance. Open that URL in a new tab. When `url` is null, Open is disabled. Stop does not destroy the container or the workflow file.
+`url` is `http://<open-host>:<port>`. `<open-host>` is `COMFYFLEET_PUBLIC_HOST` when that variable is a hostname or IP (port suffix stripped). Otherwise it is the `Host` header the browser used to reach this control server, with the control port removed, when that header is a safe hostname or IP. A phone that opened `http://192.168.1.20:9100/` gets `http://192.168.1.20:8188` for a running instance. Set `COMFYFLEET_PUBLIC_HOST=192.168.1.20` when Open links should stay on that LAN name even if a request arrives with a different Host. Empty values, `0.0.0.0`, `::`, and values with spaces or slashes are not used; the server then falls back to `127.0.0.1` when it is bound on all interfaces. An invalid `COMFYFLEET_PUBLIC_HOST` is an error when the server starts. Open that URL in a new tab. When `url` is null, Open is disabled. Stop does not destroy the container or the workflow file.
 
 ### `POST /api/instances`
 
