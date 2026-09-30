@@ -90,13 +90,45 @@ class KitchenTorch26PatchTests(unittest.TestCase):
         self.assertIn(wheel, dockerfile)
         self.assertIn(wheel, pins)
         self.assertIn("patch_comfy_kitchen_torch26.py", dockerfile)
-        self.assertIn('import comfy_kitchen', dockerfile)
+        self.assertNotIn("import comfy_kitchen", dockerfile)
+        self.assertIn("0 active drivers", dockerfile)
         self.assertIn("torch==2.6.0+cu124", dockerfile)
         self.assertIn("typing.List", pins)
         self.assertNotIn("comfy_kitchen-0.2.36-cp311", dockerfile)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("patch_comfy_kitchen_torch26.py", readme)
         self.assertIn("py3-none-any", readme)
+
+    def test_build_check_imports_patched_eager_modules_only(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        imported: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.append(node.module)
+        self.assertFalse(any(name == "comfy_kitchen" or name.startswith("comfy_kitchen.") for name in imported))
+        self.assertNotIn("triton", imported)
+        self.assertIn("verify_patched_eager_ops(root)", source)
+        self.assertEqual(
+            PATCH._eager_module_names(),
+            (
+                "comfy_kitchen.backends.eager.conv3d",
+                "comfy_kitchen.backends.eager.group_norm_pad3d",
+                "comfy_kitchen.backends.eager.na",
+                "comfy_kitchen.backends.eager.sol_attn",
+            ),
+        )
+        self.assertEqual(
+            PATCH.EXPECTED_SCHEMA_MARKERS["fp16_conv3d"],
+            ("SymInt[] stride",),
+        )
+        self.assertEqual(
+            PATCH.EXPECTED_SCHEMA_MARKERS["na3d"],
+            ("SymInt[] kernel_size", "bool[] is_causal"),
+        )
+        self.assertIn("0 active drivers", (ROOT / "docker" / "PINS.txt").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
