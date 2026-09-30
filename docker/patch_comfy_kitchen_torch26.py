@@ -14,15 +14,24 @@ returns already match what torch 2.6 accepts and are left alone.
 
 The installed distribution must stay the pure-Python wheel. The manylinux
 wheel targets CUDA 13.
+
+``import comfy_kitchen`` also imports the Triton backend. That backend
+decorates kernels with ``@triton.autotune``, which initializes Triton's driver
+and raises ``RuntimeError: 0 active drivers`` when the process has no NVIDIA
+driver. Image builds have no driver, so the build check imports only the
+patched eager modules. Those modules are what ``infer_schema`` rejects, and
+loading them does not import Triton.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib
 import importlib.metadata
 import importlib.util
 import shutil
 import sys
+import types
 from pathlib import Path
 
 EXPECTED_VERSION = "0.2.36"
@@ -35,6 +44,17 @@ REQUIRED_RELATIVE_PATHS = (
     "backends/eager/na.py",
     "backends/eager/sol_attn.py",
 )
+# torch 2.6 infer_schema turns typing.List[int] into SymInt[] and
+# typing.List[bool] into bool[]. Builtin list[...] never reaches a schema:
+# infer_schema raises ValueError while the module is imported.
+EXPECTED_SCHEMA_MARKERS = {
+    "fp16_conv3d": ("SymInt[] stride",),
+    "fp16_conv3d_out": ("SymInt[] stride",),
+    "group_norm_silu_pad3d": ("SymInt[] pad",),
+    "group_norm_silu_pad3d_out": ("SymInt[] pad",),
+    "na3d": ("SymInt[] kernel_size", "bool[] is_causal"),
+    "sol_attn": ("SymInt[] sink_blocks", "SymInt[] sink_q"),
+}
 
 
 def _span(source: str, node: ast.AST) -> tuple[int, int]:
@@ -142,6 +162,69 @@ def custom_op_builtin_list_annotations(source: str, path: Path | None = None) ->
     return found
 
 
+def _namespace_module(name: str, path: Path) -> None:
+    """Register ``name`` without executing a package ``__init__``.
+
+    A normal ``import comfy_kitchen`` runs ``__init__.py``, which imports the
+    Triton backend. The same is true of ``backends/eager/__init__.py``: it
+    pulls the rest of the eager package, and that path imports Triton through
+    PyTorch. The patched custom ops live in the four eager modules below.
+    """
+    if name in sys.modules:
+        raise RuntimeError(f"{name} is already imported")
+    module = types.ModuleType(name)
+    module.__path__ = [str(path)]
+    module.__package__ = name
+    module.__file__ = str(path / "__init__.py")
+    sys.modules[name] = module
+    parent, _, attr = name.rpartition(".")
+    if parent:
+        setattr(sys.modules[parent], attr, module)
+
+
+def _eager_module_names() -> tuple[str, ...]:
+    return tuple(
+        "comfy_kitchen." + relative[:-3].replace("/", ".")
+        for relative in REQUIRED_RELATIVE_PATHS
+    )
+
+
+def verify_patched_eager_ops(root: Path) -> dict[str, str]:
+    """Import patched eager modules so torch 2.6 ``infer_schema`` runs.
+
+    Returns ``op name -> schema`` for the custom ops whose parameters were
+    builtin lists. Raises if an annotation is still rejected, an expected op
+    is missing, or the import loaded Triton.
+    """
+    triton_before = "triton" in sys.modules
+    _namespace_module("comfy_kitchen", root)
+    _namespace_module("comfy_kitchen.backends", root / "backends")
+    _namespace_module("comfy_kitchen.backends.eager", root / "backends" / "eager")
+    for module_name in _eager_module_names():
+        importlib.import_module(module_name)
+    if "comfy_kitchen.backends.triton" in sys.modules or "comfy_kitchen.backends.cuda" in sys.modules:
+        raise RuntimeError("eager custom-op check imported a GPU backend")
+    if not triton_before and "triton" in sys.modules:
+        raise RuntimeError("eager custom-op check imported triton")
+
+    import torch
+
+    schemas: dict[str, str] = {}
+    for name, markers in EXPECTED_SCHEMA_MARKERS.items():
+        try:
+            packet = getattr(torch.ops.comfy_kitchen, name)
+        except AttributeError as exc:
+            raise RuntimeError(f"custom op comfy_kitchen::{name} was not registered") from exc
+        schema = " | ".join(str(value) for value in packet._schemas.values())
+        missing = [marker for marker in markers if marker not in schema]
+        if missing:
+            raise RuntimeError(
+                f"comfy_kitchen::{name} schema missing {missing}: {schema}"
+            )
+        schemas[name] = schema
+    return schemas
+
+
 def _purge_bytecode(root: Path) -> None:
     for cache in root.rglob("__pycache__"):
         shutil.rmtree(cache)
@@ -196,8 +279,13 @@ def patch_installed_package() -> int:
             print(f"{relative} has no typing.List custom-op annotation after rewrite", file=sys.stderr)
             return 1
 
+    schemas = verify_patched_eager_ops(root)
     print(
         f"patched comfy_kitchen {version}: {changed_annotations} custom-op annotations in {changed_files} files"
+    )
+    print(
+        "eager infer_schema registered "
+        f"{len(schemas)} custom ops without importing triton"
     )
     return 0
 

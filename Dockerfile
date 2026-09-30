@@ -88,10 +88,12 @@ COPY docker/patch_comfy_kitchen_torch26.py /opt/comfyfleet/patch_comfy_kitchen_t
 # Requirements leave an already-installed 0.2.36 in place. Reinstall the
 # pure-Python wheel anyway so a resolver that picked the manylinux build cannot
 # survive into the image, then rewrite custom-op annotations for torch 2.6.
-# import comfy_kitchen is the crash-loop check: it registers those ops.
+# The patch script registers those eager custom ops through infer_schema.
+# It does not load the top-level kitchen package: that import loads the Triton
+# backend, and Triton raises "0 active drivers" when the build has no NVIDIA
+# driver. GPU selection at runtime does not provide a driver during docker build.
 RUN pip install --no-cache-dir --force-reinstall --no-deps "${COMFY_KITCHEN_WHEEL}" \
-    && python /opt/comfyfleet/patch_comfy_kitchen_torch26.py \
-    && python -c 'import comfy_kitchen; from importlib.metadata import version; assert version("comfy-kitchen") == "0.2.36"'
+    && python /opt/comfyfleet/patch_comfy_kitchen_torch26.py
 COPY docker/comfyfleet_default_workflow /opt/comfyfleet/baked_custom_nodes/comfyfleet_default_workflow
 COPY docker/entrypoint.sh /opt/comfyfleet/entrypoint.sh
 
