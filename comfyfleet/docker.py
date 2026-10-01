@@ -42,11 +42,17 @@ def build_create_args(
     output_dir: str,
     temp_dir: str,
     instance_dir: str,
+    comfy_args: list[str] | None = None,
 ) -> list[str]:
-    """Arguments after ``docker``. Restart policy is ``no`` until ``start``."""
+    """Arguments after ``docker``. Restart policy is ``no`` until ``start``.
+
+    ``comfy_args`` are appended after the image name so they become
+    entrypoint arguments. The entrypoint puts them after
+    ``--listen 0.0.0.0`` and ``--port`` (the container port).
+    """
 
     gpu_list = ",".join(str(index) for index in gpus)
-    return [
+    args = [
         "create",
         "--name",
         name,
@@ -82,6 +88,9 @@ def build_create_args(
         f"comfyfleet.gpus={gpu_list}",
         image,
     ]
+    if comfy_args:
+        args.extend(comfy_args)
+    return args
 
 
 class DockerCLI:

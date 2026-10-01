@@ -25,7 +25,8 @@ from comfyfleet.docker import DockerCLI
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import detect_gpus
 from comfyfleet.http_api import DEFAULT_BIND_HOST, DEFAULT_BIND_PORT, serve
-from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
+from comfyfleet.launch import parse_launch
+from comfyfleet.paths import CONTAINER_PORT, DEFAULT_IMAGE, FleetLayout
 from comfyfleet.public_host import PUBLIC_HOST_ENV, open_host
 
 
@@ -71,6 +72,39 @@ def build_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Replace a stopped instance with the same name. Refuses while it is running.",
+    )
+    create.add_argument(
+        "--vram",
+        default=None,
+        help="VRAM mode: lowvram, novram, or highvram. Omit for stock ComfyUI.",
+    )
+    create.add_argument(
+        "--attention",
+        default=None,
+        help=(
+            "One attention backend: use-pytorch-cross-attention, use-sage-attention, "
+            "use-flash-attention, use-split-cross-attention, use-quad-cross-attention, "
+            "or use-ck-attention."
+        ),
+    )
+    create.add_argument(
+        "--flag",
+        action="append",
+        default=None,
+        help="Repeatable ComfyUI toggle, for example --flag disable-smart-memory.",
+    )
+    create.add_argument("--reserve-vram", default=None, help="GB reserved for the OS (--reserve-vram).")
+    create.add_argument("--vram-headroom", default=None, help="Extra dynamic-VRAM headroom in GB.")
+    create.add_argument(
+        "--preview-method",
+        default=None,
+        help="Sampler preview method: auto, latent2rgb, taesd, or none.",
+    )
+    create.add_argument("--preview-size", default=None, help="Maximum sampler preview size.")
+    create.add_argument(
+        "--extra-args",
+        default="",
+        help="Extra main.py arguments, appended last. --listen and --port are removed.",
     )
     create.set_defaults(func=_cmd_create)
 
@@ -141,6 +175,16 @@ def _cmd_create(args: argparse.Namespace) -> int:
         start=args.start,
         force=args.force,
         use_env_limit=True,
+        launch=parse_launch(
+            vram=args.vram,
+            attention=args.attention,
+            flags=args.flag,
+            reserve_vram=args.reserve_vram,
+            vram_headroom=args.vram_headroom,
+            preview_method=args.preview_method,
+            preview_size=args.preview_size,
+            extra_args=args.extra_args,
+        ),
     )
     _print_warning(result.warning)
     instance = result.instance
@@ -151,6 +195,11 @@ def _cmd_create(args: argparse.Namespace) -> int:
     print(f"  url:      {_open_url(instance.port)}")
     print(f"  gpus:     {','.join(str(index) for index in instance.gpus)}")
     print(f"  image:    {instance.image}")
+    extra = " ".join(instance.launch.argv())
+    comfy = f"--listen 0.0.0.0 --port {CONTAINER_PORT}"
+    if extra:
+        comfy = f"{comfy} {extra}"
+    print(f"  comfy:    {comfy}")
     if not result.started:
         print(f"Start it with: comfyfleet start {instance.name}")
     return 0

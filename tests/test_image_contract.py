@@ -38,6 +38,12 @@ class ImageContractTests(unittest.TestCase):
         script = ROOT / "docker" / "entrypoint.sh"
         text = script.read_text(encoding="utf-8")
         self.assertIn("--listen 0.0.0.0", text)
+        self.assertIn('comfy_args=(--listen 0.0.0.0 --port 8188)', text)
+        self.assertIn('exec /opt/venv/bin/python main.py "${comfy_args[@]}"', text)
+        self.assertLess(
+            text.index('comfy_args=(--listen 0.0.0.0 --port 8188)'),
+            text.index('exec /opt/venv/bin/python main.py "${comfy_args[@]}"'),
+        )
         self.assertIn("/opt/comfyfleet/instance/default_workflow.json", text)
         env = os.environ.copy()
         env["COMFYFLEET_WORKFLOW_PATH"] = "/no/such/comfyfleet-operator-workflow.json"

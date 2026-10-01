@@ -260,10 +260,10 @@ A real directory you place at one of those names is left alone. The links point 
 ## Workflow load path
 
 1. Create copies the operator workflow to `/home/files/<name>/default_workflow.json`.
-2. Instance metadata is written to `/home/files/<name>/comfyfleet.json` (name, port, GPUs, image, workflow paths).
+2. Instance metadata is written to `/home/files/<name>/comfyfleet.json` (name, port, GPUs, image, workflow paths, and any ComfyUI launch flags chosen at create).
 3. `/home/files/<name>` is bind-mounted at `/opt/comfyfleet/instance`. Edit the workflow file in place.
 4. Every instance start runs `docker/entrypoint.sh`, which refuses to exec ComfyUI if that JSON object is missing or invalid. It then writes a new boot id to `/tmp/comfyfleet-boot-id`.
-5. ComfyUI is executed as `python main.py --listen 0.0.0.0 --port 8188`.
+5. ComfyUI is executed as `python main.py --listen 0.0.0.0 --port 8188`, then any per-instance flags saved at create (VRAM mode, attention backend, dtype and memory toggles, and extra args). `--listen` stays `0.0.0.0`. The process port stays `8188` inside the container; the host port is the Docker publish. Pasted `--listen` or `--port` in extra args are removed. On NVIDIA, `--lowvram` does nothing while dynamic VRAM is enabled, so a 12GB GPU also needs `--disable-dynamic-vram`. Changing flags is a recreate (`--force` on a stopped instance).
 6. The baked loader serves `GET /comfyfleet/default-workflow` and `GET /comfyfleet/boot`. Its frontend extension loads the operator graph after the UI comes up. A browser tab loads the file once per boot id and file mtime. If the fetch fails, the loader does not substitute another workflow.
 
 GPU changes are a recreate: stop the instance, then create again with `--force` and the new GPU set. There is no in-place GPU edit.

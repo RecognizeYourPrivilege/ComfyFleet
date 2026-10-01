@@ -34,7 +34,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-button, input { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 
 button { touch-action: manipulation; }
 
@@ -499,6 +499,60 @@ pre {
 }
 
 .hint { margin: 8px 0 0; font-size: 13px; }
+
+.flag-panel {
+  margin-top: 18px;
+  padding: 12px 12px 14px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.flag-panel .field-label:first-child { margin-top: 0; }
+
+.flag-panel code { color: var(--ink); }
+
+.flag-sub {
+  margin: 14px 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.choice, .check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+  margin: 0;
+  padding: 6px 0;
+  font-size: 15px;
+}
+
+.choice input, .check input {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  accent-color: var(--blue);
+  flex: none;
+}
+
+.choice small, .check small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+textarea.text-input {
+  min-height: 72px;
+  padding: 12px 14px;
+  resize: vertical;
+}
 
 .gpu-row {
   display: flex;

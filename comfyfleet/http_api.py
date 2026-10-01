@@ -48,6 +48,7 @@ from comfyfleet.control import (
 )
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
+from comfyfleet.launch import parse_launch, split_flag_field
 from comfyfleet.paths import FleetLayout
 from comfyfleet.public_host import (
     PUBLIC_HOST_ENV,
@@ -66,6 +67,22 @@ _MISSING_WORKFLOW = (
     "'workflow', or pass 'workflow_path' to a .json file this process can read. "
     "There is no baked default workflow."
 )
+_CREATE_FIELDS = (
+    "workflow_path",
+    "gpu",
+    "gpus",
+    "start",
+    "force",
+    "vram",
+    "attention",
+    "flags",
+    "reserve_vram",
+    "vram_headroom",
+    "preview_method",
+    "preview_size",
+    "extra_args",
+)
+_FLOAT_FIELDS = {"reserve_vram", "vram_headroom", "preview_size"}
 _AUTH_NOTE = (
     "Liveness only. This response has no fleet data. "
     "Fleet routes require a session cookie from POST /api/login "
@@ -221,6 +238,14 @@ class _CreateForm:
     gpus: str | None
     start: bool
     force: bool
+    vram: str | None = None
+    attention: str | None = None
+    flags: str | None = None
+    reserve_vram: str | None = None
+    vram_headroom: str | None = None
+    preview_method: str | None = None
+    preview_size: str | None = None
+    extra_args: str | None = None
 
 
 def resolve_ui_dir(explicit: str | None = None) -> Path | None:
@@ -695,6 +720,16 @@ def _create(context: ApiContext, host: str, body: bytes, content_type: str | Non
             force=form.force,
             port_in_use=context.port_in_use,
             use_env_limit=context.use_env_limit,
+            launch=parse_launch(
+                vram=form.vram,
+                attention=form.attention,
+                flags=split_flag_field(form.flags),
+                reserve_vram=form.reserve_vram,
+                vram_headroom=form.vram_headroom,
+                preview_method=form.preview_method,
+                preview_size=form.preview_size,
+                extra_args=form.extra_args,
+            ),
         )
     finally:
         if cleanup is not None:
@@ -746,6 +781,7 @@ def _instance_json(instance: Instance, status: str, host: str) -> dict:
         "port": instance.port,
         "gpus": list(instance.gpus),
         "url": f"http://{host}:{instance.port}" if running else None,
+        "launch": {**instance.launch.to_json(), "argv": instance.launch.argv()},
     }
 
 
@@ -836,6 +872,14 @@ def _parse_create_form(body: bytes, content_type: str | None) -> _CreateForm:
         gpus=_optional_str(fields.get("gpus")),
         start=_as_bool(fields.get("start"), default=False),
         force=_as_bool(fields.get("force"), default=False),
+        vram=_optional_str(fields.get("vram")),
+        attention=_optional_str(fields.get("attention")),
+        flags=_optional_str(fields.get("flags")),
+        reserve_vram=_optional_str(fields.get("reserve_vram")),
+        vram_headroom=_optional_str(fields.get("vram_headroom")),
+        preview_method=_optional_str(fields.get("preview_method")),
+        preview_size=_optional_str(fields.get("preview_size")),
+        extra_args=_optional_str(fields.get("extra_args")),
     )
 
 
@@ -845,15 +889,26 @@ def _json_fields(body: bytes) -> dict[str, str]:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise FleetError(f"request body is not valid JSON: {exc}") from exc
     if not isinstance(payload, dict):
-        raise FleetError("JSON body must be an object with workflow_path, gpu, gpus, start, and force.")
+        raise FleetError(
+            "JSON body must be an object with workflow_path, gpu, gpus, start, force, "
+            "and optional launch fields (vram, attention, flags, reserve_vram, "
+            "vram_headroom, preview_method, preview_size, extra_args)."
+        )
     fields: dict[str, str] = {}
-    for key in ("workflow_path", "gpu", "gpus", "start", "force"):
+    for key in _CREATE_FIELDS:
         if key not in payload or payload[key] is None:
             continue
         value = payload[key]
+        if key == "flags" and isinstance(value, list):
+            if not all(isinstance(item, str) for item in value):
+                raise FleetError("field 'flags' must be a string or a list of strings")
+            fields[key] = ",".join(value)
+            continue
         if isinstance(value, bool):
             fields[key] = "true" if value else "false"
         elif isinstance(value, int) and not isinstance(value, bool):
+            fields[key] = str(value)
+        elif isinstance(value, float) and key in _FLOAT_FIELDS:
             fields[key] = str(value)
         elif isinstance(value, str):
             fields[key] = value
@@ -871,7 +926,7 @@ def _urlencoded_fields(body: bytes) -> dict[str, str]:
         raise FleetError("form body is not UTF-8") from exc
     parsed = parse_qs(text, keep_blank_values=True)
     fields: dict[str, str] = {}
-    for key in ("workflow_path", "gpu", "gpus", "start", "force"):
+    for key in _CREATE_FIELDS:
         values = parsed.get(key)
         if not values:
             continue
@@ -898,7 +953,7 @@ def _multipart_fields(content_type: str, body: bytes) -> tuple[dict[str, str], _
                 raise FleetError("duplicate workflow upload")
             upload = _Upload(filename=safe, data=data)
             continue
-        if name not in {"workflow_path", "gpu", "gpus", "start", "force"}:
+        if name not in _CREATE_FIELDS:
             continue
         if name in fields:
             raise FleetError(f"duplicate form field {name!r}")
