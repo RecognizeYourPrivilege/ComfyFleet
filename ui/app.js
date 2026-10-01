@@ -7,6 +7,7 @@ const state = {
   gpuError: "",
   selected: new Set(),
   drafts: new Map(),
+  openEditors: new Set(),
   timer: 0,
 };
 
@@ -129,11 +130,7 @@ function instanceCard(instance) {
     className: `pill ${running ? "running" : "stopped"}`,
     text: running ? "Running" : "Stopped",
   });
-  const remove = el("button", { className: "icon-btn trash-btn", type: "button" });
-  remove.setAttribute("aria-label", `Delete ${instance.name}`);
-  remove.append(trashIcon());
-  remove.addEventListener("click", () => confirmDelete(instance.name, remove));
-  trailing.append(pill, remove);
+  trailing.append(pill);
   top.append(trailing);
   card.append(top);
   const gpuText = (instance.gpus || []).join(", ") || "none";
@@ -151,28 +148,41 @@ function instanceCard(instance) {
   if (url) {
     card.append(el("p", { className: "url-line", text: url }));
   }
-  const actions = el("div", { className: "actions" });
-  const start = el("button", { className: "btn secondary", type: "button", text: "Start" });
+  const actions = el("div", { className: "icon-actions" });
+  actions.setAttribute("role", "group");
+  actions.setAttribute("aria-label", `Actions for ${instance.name}`);
+  const start = actionButton("Start", "Start", playIcon());
   start.disabled = Boolean(running);
   start.addEventListener("click", () => mutate(instance.name, "start", start, "Starting…"));
-  const stop = el("button", { className: "btn secondary", type: "button", text: "Stop" });
+  const stop = actionButton("Stop", "Stop", stopIcon());
   stop.disabled = !running;
   stop.addEventListener("click", () => mutate(instance.name, "stop", stop, "Stopping…"));
-  const kill = el("button", { className: "btn secondary", type: "button", text: "Force stop" });
+  const kill = actionButton("Force stop", "Force", forceStopIcon());
   kill.disabled = !running;
   kill.addEventListener("click", () => mutate(instance.name, "force-stop", kill, "Killing…"));
-  const open = el("button", { className: "btn primary", type: "button", text: "Open" });
+  const open = actionButton("Open", "Shell", terminalIcon());
   open.disabled = !running;
   open.addEventListener("click", () => openTerminal(instance.name));
-  const comfy = el("button", { className: "btn secondary", type: "button", text: "Open Comfy" });
+  const comfy = actionButton("Open Comfy", "Comfy", comfyIcon());
   comfy.disabled = !url;
   comfy.addEventListener("click", () => openInstance(url));
-  const copy = el("button", { className: "btn secondary", type: "button", text: "Copy URL" });
+  const copy = actionButton("Copy URL", "Copy", copyIcon());
   copy.disabled = !url;
   copy.addEventListener("click", () => copyUrl(url));
-  actions.append(start, stop, kill, open, comfy, copy);
+  const editor = instanceFlagEditor(instance);
+  editor.id = `flags-${instance.name}`;
+  const editing = state.openEditors.has(instance.name);
+  editor.hidden = !editing;
+  const edit = actionButton("Edit flags", "Flags", pencilIcon());
+  edit.setAttribute("aria-expanded", editing ? "true" : "false");
+  edit.setAttribute("aria-controls", editor.id);
+  if (editing) edit.classList.add("on");
+  edit.addEventListener("click", () => toggleFlagEditor(instance.name, edit, editor));
+  const remove = actionButton(`Delete ${instance.name}`, "Delete", trashIcon(), "trash-btn");
+  remove.addEventListener("click", () => confirmDelete(instance.name, remove));
+  actions.append(start, stop, kill, open, comfy, copy, edit, remove);
   card.append(actions);
-  card.append(instanceFlagEditor(instance));
+  card.append(editor);
   const details = el("details");
   details.append(el("summary", { text: "Details" }));
   details.append(el("pre", { text: JSON.stringify(instance, null, 2) }));
@@ -182,15 +192,19 @@ function instanceCard(instance) {
 
 async function mutate(name, action, button, pending) {
   const icon = button.querySelector("svg");
+  const caption = button.querySelector(".action-caption");
   const previous = icon ? button.getAttribute("aria-label") : button.textContent;
+  const previousCaption = caption ? caption.textContent : "";
   state.busy = true;
   button.disabled = true;
   if (icon) button.setAttribute("aria-label", pending);
   else button.textContent = pending;
+  if (caption) caption.textContent = pending;
   const result = await call(`/api/instances/${encodeURIComponent(name)}/${action}`, { method: "POST" });
   state.busy = false;
   if (icon) button.setAttribute("aria-label", previous);
   else button.textContent = previous;
+  if (caption) caption.textContent = previousCaption;
   if (!result.ok) {
     showBanner(result.error);
     await refresh();
@@ -418,16 +432,31 @@ function responseNotices(payload) {
   return items;
 }
 
-function trashIcon() {
+function toggleFlagEditor(name, button, editor) {
+  const open = editor.hidden;
+  editor.hidden = !open;
+  button.setAttribute("aria-expanded", open ? "true" : "false");
+  button.classList.toggle("on", open);
+  if (open) state.openEditors.add(name);
+  else state.openEditors.delete(name);
+}
+
+function actionButton(label, caption, icon, extraClass) {
+  const button = el("button", {
+    className: extraClass ? `icon-btn action-icon ${extraClass}` : "icon-btn action-icon",
+    type: "button",
+  });
+  button.setAttribute("aria-label", label);
+  button.append(icon, el("span", { className: "action-caption", text: caption }));
+  return button;
+}
+
+function strokeIcon(paths) {
   const svgNs = "http:" + "//www.w3.org/2000/svg";
   const svg = document.createElementNS(svgNs, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("aria-hidden", "true");
-  for (const d of [
-    "M4 7h16",
-    "M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2",
-    "M8 7l1 13h6l1-13",
-  ]) {
+  for (const d of paths) {
     const path = document.createElementNS(svgNs, "path");
     path.setAttribute("d", d);
     path.setAttribute("fill", "none");
@@ -438,6 +467,42 @@ function trashIcon() {
     svg.append(path);
   }
   return svg;
+}
+
+function playIcon() {
+  return strokeIcon(["M9 6.5v11l9-5.5-9-5.5z"]);
+}
+
+function stopIcon() {
+  return strokeIcon(["M7 7h10v10H7z"]);
+}
+
+function forceStopIcon() {
+  return strokeIcon(["M7 7h10v10H7z", "M9.5 9.5l5 5", "M14.5 9.5l-5 5"]);
+}
+
+function terminalIcon() {
+  return strokeIcon(["M5 6h14v12H5z", "M8 10l2.5 2L8 14", "M12.5 14H16"]);
+}
+
+function comfyIcon() {
+  return strokeIcon(["M10 6H6v12h12v-4", "M13 5h6v6", "M19 5l-8 8"]);
+}
+
+function copyIcon() {
+  return strokeIcon(["M8 8h10v12H8z", "M6 16V4h10"]);
+}
+
+function pencilIcon() {
+  return strokeIcon(["M4 20l1.2-4.2L16.6 4.4a1.5 1.5 0 0 1 2.1 0l.9.9a1.5 1.5 0 0 1 0 2.1L8.2 18.8 4 20z", "M13.6 6.4l4 4"]);
+}
+
+function trashIcon() {
+  return strokeIcon([
+    "M4 7h16",
+    "M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2",
+    "M8 7l1 13h6l1-13",
+  ]);
 }
 
 function readLaunch() {
@@ -495,6 +560,7 @@ const FLAG_SECTIONS = [
 function instanceFlagEditor(instance) {
   const draft = draftFor(instance);
   const box = el("div", { className: "flag-editor" });
+  box.append(el("p", { className: "flag-sub", text: "ComfyUI flags" }));
   box.append(el("p", {
     className: "hint",
     text: "Click a flag to add it. × removes it. Apply stops this instance if it is running and recreates the same name, port, mounts, and workflow. Only the Comfy arguments change.",
@@ -506,7 +572,7 @@ function instanceFlagEditor(instance) {
   box.append(el("p", { className: "flag-sub", text: "Attention" }));
   box.append(draftRadios(draft, "attention", `attention-${instance.name}`, radioValues("attention"), applied, catalog));
   paintInstanceFlags(draft, applied, catalog);
-  const apply = el("button", { className: "btn secondary", type: "button", text: "Apply" });
+  const apply = el("button", { className: "btn secondary flag-apply", type: "button", text: "Apply" });
   apply.addEventListener("click", () => applyLaunch(instance.name, apply));
   box.append(applied, catalog, apply);
   return box;
