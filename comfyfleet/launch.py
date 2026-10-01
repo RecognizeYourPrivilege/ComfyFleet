@@ -207,6 +207,18 @@ def launch_from_json(payload: object, *, path: str) -> LaunchConfig:
         raise FleetError(f"instance launch flags are invalid ({path}): {exc}") from exc
 
 
+def combine_extra_args(*parts: str | None) -> str | None:
+    """Join ``extra_args`` and ``comfy_extra_args`` into one shell string.
+
+    Blank parts are skipped. The result is still checked by ``parse_launch``.
+    """
+
+    chunks = [str(part).strip() for part in parts if part and str(part).strip()]
+    if not chunks:
+        return None
+    return " ".join(chunks)
+
+
 def split_flag_field(value: str | None) -> list[str]:
     """Comma- or whitespace-separated flag list from a form field."""
 

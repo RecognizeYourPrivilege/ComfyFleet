@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -234,6 +235,7 @@ class HttpApiTests(unittest.TestCase):
         payload = self._body(status, raw)
         self.assertFalse(payload["started"])
         self.assertIsNone(payload["warning"])
+        self.assertEqual(payload["warnings"], [])
         instance = payload["instance"]
         self.assertEqual(instance["name"], "portrait")
         self.assertEqual(instance["status"], "created")
@@ -520,6 +522,12 @@ class HttpApiTests(unittest.TestCase):
         self.assertTrue((self.layout.files / "portrait" / "comfyfleet.json").is_file())
 
         self._open("POST", "/api/instances/portrait/start")
+        marker = self.layout.custom_nodes("portrait") / "kept.txt"
+        marker.write_text("keep-mount\n", encoding="utf-8")
+        status, raw = self._open("DELETE", "/api/instances/portrait/delete")
+        self.assertEqual(status, 405, raw)
+        self.assertIn("POST /api/instances/", json.loads(raw.decode("utf-8"))["error"])
+        self.assertEqual(self.docker.status("portrait"), "running")
         status, raw = self._open("POST", "/api/instances/portrait/delete")
         self.assertEqual(status, 200, raw)
         deleted = self._body(status, raw)
@@ -527,6 +535,7 @@ class HttpApiTests(unittest.TestCase):
         self.assertIsNone(self.docker.status("portrait"))
         self.assertFalse((self.layout.files / "portrait" / "comfyfleet.json").is_file())
         self.assertTrue((self.layout.files / "portrait" / "default_workflow.json").is_file())
+        self.assertEqual(marker.read_text(encoding="utf-8"), "keep-mount\n")
         listed = self._body(*self._open("GET", "/api/instances"))["instances"]
         self.assertEqual(listed, [])
 
@@ -582,6 +591,130 @@ class HttpApiTests(unittest.TestCase):
         )
         for banned in ("build_create_args", "subprocess", "NVIDIA_VISIBLE_DEVICES", "docker create"):
             self.assertNotIn(banned, text)
+
+    def test_blank_custom_node_fields_and_comfy_extra_args(self):
+        path = Path(self.tmp.name) / "Flags.json"
+        path.write_bytes(_workflow("flags-extra"))
+        created = self._post_json(
+            {
+                "workflow_path": str(path),
+                "gpu": "0",
+                "custom_node_git_urls": ["", "  "],
+                "comfy_extra_args": ["--mmap-torch-files"],
+            }
+        )
+        self.assertEqual(created["warnings"], [])
+        self.assertIsNone(created["warning"])
+        self.assertEqual(created["instance"]["launch"]["argv"], ["--mmap-torch-files"])
+        self.assertEqual(created["instance"]["name"], "flags")
+
+    def test_repeated_git_urls_and_default_install_missing(self):
+        cloned = []
+
+        def git_run(argv, **_kwargs):
+            cloned.append(list(argv))
+            target = Path(argv[-1])
+            target.mkdir(parents=True)
+            (target / "marker.txt").write_text("cloned\n", encoding="utf-8")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        installed = []
+
+        def installer(urls, *, docker, name):
+            installed.append((name, list(urls)))
+            return ["install failed for example"], []
+
+        self.ctx.git_run = git_run
+        self.ctx.node_installer = installer
+        workflow = {
+            "last_node_id": 2,
+            "last_link_id": 0,
+            "nodes": [
+                {"type": "KSampler"},
+                {
+                    "type": "ImpactSwitch",
+                    "properties": {"aux_id": "ltdrdata/ComfyUI-Impact-Pack"},
+                },
+            ],
+            "links": [],
+            "version": 0.4,
+        }
+        body, content_type = _multipart(
+            [
+                ("gpu", "0"),
+                ("custom_node_git_urls", ""),
+                ("custom_node_git_urls", "https://github.com/example/FromGit.git"),
+                ("custom_node_git_urls", "ssh://git@github.com/example/Second-Node.git"),
+            ],
+            [("workflow", "Portrait.json", json.dumps(workflow).encode())],
+        )
+        status, raw = self._open(
+            "POST",
+            "/api/instances",
+            data=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 200, raw)
+        payload = self._body(status, raw)
+        self.assertEqual(payload["warnings"], ["install failed for example"])
+        self.assertFalse(payload["started"])
+        self.assertEqual(self.docker.status("portrait"), "exited")
+        nodes = self.layout.custom_nodes("portrait")
+        self.assertTrue((nodes / "FromGit" / "marker.txt").is_file())
+        self.assertTrue((nodes / "Second-Node" / "marker.txt").is_file())
+        self.assertEqual(installed, [("portrait", ["https://github.com/ltdrdata/ComfyUI-Impact-Pack"])])
+        self.assertEqual(len(cloned), 2)
+
+        skipped = {
+            "last_node_id": 1,
+            "last_link_id": 0,
+            "nodes": [
+                {"type": "ImpactSwitch", "properties": {"aux_id": "ltdrdata/ComfyUI-Impact-Pack"}},
+            ],
+            "links": [],
+            "version": 0.4,
+        }
+        path = Path(self.tmp.name) / "Skip.json"
+        path.write_text(json.dumps(skipped), encoding="utf-8")
+        installed.clear()
+        created = self._post_json(
+            {
+                "workflow_path": str(path),
+                "gpu": "0",
+                "install_missing_from_workflow": False,
+            }
+        )
+        self.assertEqual(created["warnings"], [])
+        self.assertEqual(installed, [])
+        self.assertEqual(self.docker.status("skip"), "created")
+
+    def test_zip_path_traversal_is_a_warning(self):
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("../outside.txt", b"pwned")
+            archive.writestr("Ok/a.py", b"x=1\n")
+        body, content_type = _multipart(
+            [("gpu", "0")],
+            [
+                ("workflow", "Packed.json", _workflow("zip")),
+                ("custom_nodes_zip", "nodes.zip", buffer.getvalue()),
+            ],
+        )
+        status, raw = self._open(
+            "POST",
+            "/api/instances",
+            data=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 200, raw)
+        payload = self._body(status, raw)
+        self.assertTrue(any("rejected" in item for item in payload["warnings"]))
+        self.assertEqual(self.docker.status("packed"), "created")
+        self.assertFalse((self.layout.root / "outside.txt").exists())
+        self.assertFalse((self.layout.custom_nodes("packed") / "Ok" / "a.py").exists())
 
     def _post_json(self, payload):
         status, raw = self._open(
