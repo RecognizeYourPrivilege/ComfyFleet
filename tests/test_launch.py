@@ -13,10 +13,11 @@ from comfyfleet.launch import (
     BOOL_FLAGS,
     VRAM_FLAGS,
     LaunchConfig,
+    main_argv,
     parse_launch,
     strip_locked_args,
 )
-from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
+from comfyfleet.paths import CONTAINER_PORT, DEFAULT_IMAGE, FleetLayout
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -310,6 +311,94 @@ class LaunchCreateTests(unittest.TestCase):
             ["--novram", "--use-sage-attention"],
         )
         self.assertEqual(args[args.index("-p") + 1], "8189:8188")
+        # Host port is the Docker publish. main.py still gets the container port.
+        self.assertEqual(
+            main_argv(moved.instance.launch)[:4],
+            ["--listen", "0.0.0.0", "--port", str(CONTAINER_PORT)],
+        )
+        self.assertNotIn("8189", main_argv(moved.instance.launch))
+
+
+class FleetLockTests(unittest.TestCase):
+    """VRAM presets and extra flags cannot move the locked listen/port pair."""
+
+    def test_vram_presets_are_only_the_three_flags(self):
+        self.assertEqual(VRAM_FLAGS, ("--lowvram", "--novram", "--highvram"))
+        html = (ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('name="vram" value="" checked', html)
+        for flag in VRAM_FLAGS:
+            self.assertIn(f'name="vram" value="{flag}"', html)
+        self.assertNotIn("--normalvram", html)
+        self.assertNotIn("normalvram", html)
+
+    def test_default_preset_adds_no_vram_flag(self):
+        self.assertEqual(parse_launch().vram, "")
+        self.assertEqual(parse_launch(vram="").argv(), [])
+        self.assertEqual(parse_launch(vram="default").argv(), [])
+        self.assertEqual(parse_launch(vram="none").argv(), [])
+        command = main_argv(parse_launch())
+        self.assertEqual(command, ["--listen", "0.0.0.0", "--port", "8188"])
+        for flag in (*VRAM_FLAGS, "--normalvram", "--cpu", "--gpu-only"):
+            self.assertNotIn(flag, command)
+
+    def test_one_preset_is_appended_after_listen_and_port(self):
+        for flag in VRAM_FLAGS:
+            command = main_argv(parse_launch(vram=flag, extra_args="--mmap-torch-files"))
+            self.assertEqual(
+                command,
+                ["--listen", "0.0.0.0", "--port", "8188", flag, "--mmap-torch-files"],
+            )
+
+    def test_presets_are_mutually_exclusive(self):
+        with self.assertRaises(FleetError):
+            parse_launch(vram="--lowvram", flags=["--novram"])
+        with self.assertRaises(FleetError):
+            parse_launch(vram="--highvram", flags=["--lowvram"])
+        with self.assertRaises(FleetError):
+            parse_launch(vram="--normalvram")
+
+    def test_extra_flags_append_and_cannot_replace_listen_or_port(self):
+        launch = parse_launch(
+            vram="--lowvram",
+            extra_args="--listen 10.1.1.1 --port 9 --listen=127.0.0.1 --port=1 --mmap-torch-files",
+        )
+        self.assertEqual(launch.argv(), ["--lowvram", "--mmap-torch-files"])
+        command = main_argv(launch)
+        self.assertEqual(command[:4], ["--listen", "0.0.0.0", "--port", "8188"])
+        self.assertEqual(command[-1], "--mmap-torch-files")
+        self.assertNotIn("10.1.1.1", command)
+        self.assertNotIn("9", command)
+        self.assertEqual(command.count("--listen"), 1)
+        self.assertEqual(command.count("--port"), 1)
+
+    def test_published_host_port_stays_on_docker_publish(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name) / "home"
+        layout = FleetLayout(root)
+        sources = Path(tmp.name) / "src"
+        sources.mkdir()
+        workflow = sources / "Portrait.json"
+        workflow.write_text(
+            json.dumps({"last_node_id": 0, "last_link_id": 0, "nodes": [], "links": [], "version": 0.4}),
+            encoding="utf-8",
+        )
+        docker = FakeDocker()
+        create_instance(
+            workflow,
+            layout=layout,
+            docker=docker,
+            gpus=[Gpu(0, "RTX A2000", "12288 MiB")],
+            gpu="0",
+            port_in_use=lambda port: port == 8188,
+            launch=parse_launch(vram="--novram", extra_args="--port 8188 --listen 0.0.0.0 --mmap-torch-files"),
+        )
+        args = docker.containers["portrait"]["args"]
+        self.assertEqual(args[args.index("-p") + 1], "8189:8188")
+        after_image = args[args.index(DEFAULT_IMAGE) + 1 :]
+        self.assertEqual(after_image, ["--novram", "--mmap-torch-files"])
+        self.assertNotIn("--listen", after_image)
+        self.assertNotIn("--port", after_image)
 
 
 if __name__ == "__main__":
