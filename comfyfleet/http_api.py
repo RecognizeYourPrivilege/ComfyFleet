@@ -48,11 +48,12 @@ from comfyfleet.control import (
     start_instance,
     stop_instance,
     terminal_argv,
+    update_instance_launch,
 )
 from comfyfleet.terminal import accept_value, bridge_exec
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
-from comfyfleet.launch import parse_launch, split_flag_field
+from comfyfleet.launch import launch_from_json, parse_launch, split_flag_field
 from comfyfleet.paths import FleetLayout
 from comfyfleet.public_host import PUBLIC_HOST_ENV
 
@@ -569,6 +570,8 @@ def _fleet(
             return _force_stop(context, name)
         if verb == "delete":
             return _delete(context, name)
+        if verb == "launch":
+            return _update_launch(context, name, body, content_type)
         raise HTTPStatusError(404, "not found")
     raise HTTPStatusError(404, "not found")
 
@@ -613,6 +616,8 @@ def _protected_action(method: str, path: str) -> str | None:
     prefix = "/api/instances/"
     if path.startswith(prefix):
         _name, sep, verb = path[len(prefix) :].partition("/")
+        if sep == "/" and verb == "launch":
+            return "update"
         if sep == "/" and verb in {"start", "stop", "force-stop", "delete", "terminal"}:
             return verb
         return "list"
@@ -842,6 +847,37 @@ def _delete(context: ApiContext, name: str) -> Response:
     return _json(200, {"ok": True, "deleted": instance.name})
 
 
+def _update_launch(context: ApiContext, name: str, body: bytes, content_type: str | None) -> Response:
+    media = (content_type or "").split(";", 1)[0].strip().lower()
+    if media != "application/json":
+        raise FleetError("launch update requires application/json")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise FleetError("launch update is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise FleetError("launch update must be a JSON object")
+    result = update_instance_launch(
+        name,
+        launch_from_json(payload, path=name),
+        layout=context.layout,
+        docker=context.docker,
+        gpus=context.detect_gpus(),
+        port_in_use=context.port_in_use,
+        use_env_limit=context.use_env_limit,
+    )
+    status = context.docker.status(result.instance.name) or "missing"
+    return _json(
+        200,
+        {
+            "ok": True,
+            "started": result.started,
+            "warning": result.warning,
+            "instance": _instance_json(result.instance, status),
+        },
+    )
+
+
 def _instance_json(instance: Instance, status: str) -> dict:
     return {
         "name": instance.name,
@@ -874,7 +910,7 @@ def _instance_action(path: str) -> tuple[str, str] | None:
     name, sep, verb = rest.partition("/")
     if sep != "/" or not name or not verb or "/" in verb:
         return None
-    if verb not in {"start", "stop", "force-stop", "delete", "terminal"}:
+    if verb not in {"start", "stop", "force-stop", "delete", "terminal", "launch"}:
         return None
     decoded = unquote(name)
     if (

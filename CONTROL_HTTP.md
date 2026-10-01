@@ -290,6 +290,10 @@ Force-stops the container if it is running, removes **only** that container, and
 {"ok": true, "deleted": "portrait"}
 ```
 
+### `POST /api/instances/{name}/launch`
+
+JSON body with the same launch fields as create (`vram`, `attention`, `flags`, `reserve_vram`, `vram_headroom`, `preview_method`, `preview_size`, `extra_args`). Stops the instance if it is running, removes that container, and creates it again with the same name, host port, GPU set, workflow file, and mount paths. Only the arguments after `--listen 0.0.0.0 --port 8188` change. If it was running, it is started again. The previous container is removed before the replacement is created.
+
 ### `GET /api/instances/{name}/terminal`
 
 WebSocket upgrade. The manager runs `docker exec -it <name> /bin/bash` and copies bytes to the socket. The instance must already be running and must be a fleet record. The browser does not receive the Docker socket and cannot choose the command. A GET without `Upgrade: websocket` is **400**.

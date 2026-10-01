@@ -6,6 +6,7 @@ const state = {
   gpus: [],
   gpuError: "",
   selected: new Set(),
+  drafts: new Map(),
   timer: 0,
 };
 
@@ -158,6 +159,7 @@ function instanceCard(instance) {
   remove.addEventListener("click", () => confirmDelete(instance.name, remove));
   actions.append(start, stop, kill, open, comfy, copy, remove);
   card.append(actions);
+  card.append(instanceFlagEditor(instance));
   const details = el("details");
   details.append(el("summary", { text: "Details" }));
   details.append(el("pre", { text: JSON.stringify(instance, null, 2) }));
@@ -419,6 +421,178 @@ const FLAG_SECTIONS = [
   ["misc", "Misc"],
 ];
 
+function instanceFlagEditor(instance) {
+  const draft = draftFor(instance);
+  const box = el("div", { className: "flag-editor" });
+  box.append(el("p", {
+    className: "hint",
+    text: "Click a flag to add it. × removes it. Apply stops this instance if it is running and recreates the same name, port, mounts, and workflow. Only the Comfy arguments change.",
+  }));
+  const applied = el("div", { className: "chip-row" });
+  const catalog = el("div");
+  box.append(el("p", { className: "flag-sub", text: "VRAM" }));
+  box.append(draftRadios(draft, "vram", `vram-${instance.name}`, radioValues("vram"), applied, catalog));
+  box.append(el("p", { className: "flag-sub", text: "Attention" }));
+  box.append(draftRadios(draft, "attention", `attention-${instance.name}`, radioValues("attention"), applied, catalog));
+  paintInstanceFlags(draft, applied, catalog);
+  const apply = el("button", { className: "btn secondary", type: "button", text: "Apply" });
+  apply.addEventListener("click", () => applyLaunch(instance.name, apply));
+  box.append(applied, catalog, apply);
+  return box;
+}
+
+function radioValues(name) {
+  return [...document.querySelectorAll(`input[name="${name}"]`)].map((node) => node.value);
+}
+
+function draftRadios(draft, field, groupName, values, applied, catalog) {
+  const group = el("div", { className: "choice-col" });
+  for (const value of values) {
+    const label = el("label", { className: "choice" });
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = groupName;
+    input.value = value;
+    input.checked = (draft[field] || "") === value;
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      draft[field] = value;
+      if (field === "vram" && value) {
+        draft.flags.delete("--cpu");
+        draft.flags.delete("--gpu-only");
+      }
+      draft.dirty = true;
+      paintInstanceFlags(draft, applied, catalog);
+    });
+    label.append(input, el("span", { text: value || "Default" }));
+    group.append(label);
+  }
+  return group;
+}
+
+function draftFor(instance) {
+  const existing = state.drafts.get(instance.name);
+  if (existing && existing.dirty) return existing;
+  const launch = instance.launch || {};
+  const fresh = {
+    vram: launch.vram || "",
+    attention: launch.attention || "",
+    flags: new Set(Array.isArray(launch.flags) ? launch.flags : []),
+    preview: launch.preview_method || "",
+    reserve: launch.reserve_vram == null ? "" : String(launch.reserve_vram),
+    headroom: launch.vram_headroom == null ? "" : String(launch.vram_headroom),
+    previewSize: launch.preview_size == null ? "" : String(launch.preview_size),
+    extra: launch.extra_args || "",
+    dirty: false,
+  };
+  state.drafts.set(instance.name, fresh);
+  return fresh;
+}
+
+function paintInstanceFlags(draft, applied, catalog) {
+  applied.replaceChildren();
+  if (draft.vram) {
+    applied.append(appliedChip(draft.vram, () => {
+      draft.vram = "";
+      draft.dirty = true;
+      paintInstanceFlags(draft, applied, catalog);
+    }));
+  }
+  if (draft.attention) {
+    applied.append(appliedChip(draft.attention, () => {
+      draft.attention = "";
+      draft.dirty = true;
+      paintInstanceFlags(draft, applied, catalog);
+    }));
+  }
+  for (const flag of draft.flags) {
+    applied.append(appliedChip(flag, () => {
+      draft.flags.delete(flag);
+      draft.dirty = true;
+      paintInstanceFlags(draft, applied, catalog);
+    }));
+  }
+  if (draft.preview) {
+    applied.append(appliedChip(`--preview-method ${draft.preview}`, () => {
+      draft.preview = "";
+      draft.dirty = true;
+      paintInstanceFlags(draft, applied, catalog);
+    }));
+  }
+  catalog.replaceChildren();
+  for (const [section, label] of FLAG_SECTIONS) {
+    const row = el("div", { className: "chip-row" });
+    if (section === "preview") {
+      for (const value of ["auto", "latent2rgb", "taesd", "none"]) {
+        row.append(catalogChip(`--preview-method ${value}`, draft.preview === value, () => {
+          draft.preview = value;
+          draft.dirty = true;
+          paintInstanceFlags(draft, applied, catalog);
+        }));
+      }
+    }
+    for (const node of document.querySelectorAll(`input[name="flag"][data-section="${section}"]`)) {
+      const flag = node.value;
+      row.append(catalogChip(flag, draft.flags.has(flag) || draft.vram === flag || draft.attention === flag, () => {
+        addDraftFlag(draft, node);
+        paintInstanceFlags(draft, applied, catalog);
+      }));
+    }
+    if (!row.childNodes.length) continue;
+    catalog.append(el("p", { className: "flag-sub", text: label }));
+    catalog.append(row);
+  }
+}
+
+function addDraftFlag(draft, node) {
+  const flag = node.value;
+  const group = node.dataset.exclusive || "";
+  if (group) {
+    for (const other of document.querySelectorAll(`input[name="flag"][data-exclusive="${group}"]`)) {
+      draft.flags.delete(other.value);
+    }
+    if (group === "vram") draft.vram = "";
+  }
+  if (flag === "--cpu" || flag === "--gpu-only") draft.vram = "";
+  draft.flags.add(flag);
+  draft.dirty = true;
+}
+
+async function applyLaunch(name, button) {
+  const draft = state.drafts.get(name);
+  if (!draft || state.busy) return;
+  const previous = button.textContent;
+  state.busy = true;
+  button.disabled = true;
+  button.textContent = "Applying…";
+  const result = await call(`/api/instances/${encodeURIComponent(name)}/launch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      vram: draft.vram,
+      attention: draft.attention,
+      flags: [...draft.flags],
+      reserve_vram: draft.reserve,
+      vram_headroom: draft.headroom,
+      preview_method: draft.preview,
+      preview_size: draft.previewSize,
+      extra_args: draft.extra,
+    }),
+  });
+  state.busy = false;
+  button.textContent = previous;
+  if (!result.ok) {
+    showBanner(result.error);
+    await refresh();
+    return;
+  }
+  draft.dirty = false;
+  const instance = result.payload.instance;
+  showToast(`Updated ${instance.name} on port ${instance.port}. Same name, mounts, and workflow.`);
+  hide(banner);
+  await refresh();
+}
+
 function renderFlagChips() {
   const applied = document.querySelector("#applied-flags");
   const catalog = document.querySelector("#flag-catalog");
@@ -525,7 +699,7 @@ async function call(path, options) {
       method: (options && options.method) || "GET",
       body: options && options.body,
       credentials: "same-origin",
-      headers: { Accept: "application/json" },
+      headers: Object.assign({ Accept: "application/json" }, (options && options.headers) || {}),
     });
     let payload = null;
     try { payload = await response.json(); } catch { payload = null; }
