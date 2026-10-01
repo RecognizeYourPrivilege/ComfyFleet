@@ -151,36 +151,33 @@ function instanceCard(instance) {
   const actions = el("div", { className: "icon-actions" });
   actions.setAttribute("role", "group");
   actions.setAttribute("aria-label", `Actions for ${instance.name}`);
-  const start = actionButton("Start", "Start", playIcon());
+  const start = actionButton("Start", "Start", playIcon(), "green");
   start.disabled = Boolean(running);
   start.addEventListener("click", () => mutate(instance.name, "start", start, "Starting…"));
-  const stop = actionButton("Stop", "Stop", stopIcon());
+  const stop = actionButton("Stop", "Stop", stopIcon(), "gray");
   stop.disabled = !running;
   stop.addEventListener("click", () => mutate(instance.name, "stop", stop, "Stopping…"));
-  const kill = actionButton("Force stop", "Force", forceStopIcon());
+  const kill = actionButton("Force stop", "Force", forceStopIcon(), "orange");
   kill.disabled = !running;
   kill.addEventListener("click", () => mutate(instance.name, "force-stop", kill, "Killing…"));
-  const open = actionButton("Open", "Shell", terminalIcon());
+  const open = actionButton("Open", "Shell", terminalIcon(), "blue");
   open.disabled = !running;
   open.addEventListener("click", () => openTerminal(instance.name));
-  const comfy = actionButton("Open Comfy", "Comfy", comfyIcon());
+  const comfy = actionButton("Open Comfy", "Comfy", comfyIcon(), "blue");
   comfy.disabled = !url;
   comfy.addEventListener("click", () => openInstance(url));
-  const copy = actionButton("Copy URL", "Copy", copyIcon());
-  copy.disabled = !url;
-  copy.addEventListener("click", () => copyUrl(url));
   const editor = instanceFlagEditor(instance);
   editor.id = `flags-${instance.name}`;
   const editing = state.openEditors.has(instance.name);
   editor.hidden = !editing;
-  const edit = actionButton("Edit flags", "Flags", pencilIcon());
+  const edit = actionButton("Edit flags", "Flags", pencilIcon(), "yellow");
   edit.setAttribute("aria-expanded", editing ? "true" : "false");
   edit.setAttribute("aria-controls", editor.id);
   if (editing) edit.classList.add("on");
   edit.addEventListener("click", () => toggleFlagEditor(instance.name, edit, editor));
-  const remove = actionButton(`Delete ${instance.name}`, "Delete", trashIcon(), "trash-btn");
+  const remove = actionButton(`Delete ${instance.name}`, "Delete", trashIcon(), "red");
   remove.addEventListener("click", () => confirmDelete(instance.name, remove));
-  actions.append(start, stop, kill, open, comfy, copy, edit, remove);
+  actions.append(start, stop, kill, open, comfy, edit, remove);
   card.append(actions);
   card.append(editor);
   const details = el("details");
@@ -441,17 +438,19 @@ function toggleFlagEditor(name, button, editor) {
   else state.openEditors.delete(name);
 }
 
-function actionButton(label, caption, icon, extraClass) {
+function actionButton(label, caption, icon, tone) {
   const button = el("button", {
-    className: extraClass ? `icon-btn action-icon ${extraClass}` : "icon-btn action-icon",
+    className: `action-icon tone-${tone}`,
     type: "button",
   });
+  const glyph = el("span", { className: "action-glyph" });
+  glyph.append(icon);
   button.setAttribute("aria-label", label);
-  button.append(icon, el("span", { className: "action-caption", text: caption }));
+  button.append(glyph, el("span", { className: "action-caption", text: caption }));
   return button;
 }
 
-function strokeIcon(paths) {
+function strokeIcon(paths, filled) {
   const svgNs = "http:" + "//www.w3.org/2000/svg";
   const svg = document.createElementNS(svgNs, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -459,9 +458,9 @@ function strokeIcon(paths) {
   for (const d of paths) {
     const path = document.createElementNS(svgNs, "path");
     path.setAttribute("d", d);
-    path.setAttribute("fill", "none");
-    path.setAttribute("stroke", "currentColor");
-    path.setAttribute("stroke-width", "1.8");
+    path.setAttribute("fill", filled ? "currentColor" : "none");
+    path.setAttribute("stroke", filled ? "none" : "currentColor");
+    path.setAttribute("stroke-width", filled ? "0" : "1.65");
     path.setAttribute("stroke-linecap", "round");
     path.setAttribute("stroke-linejoin", "round");
     svg.append(path);
@@ -470,38 +469,49 @@ function strokeIcon(paths) {
 }
 
 function playIcon() {
-  return strokeIcon(["M9 6.5v11l9-5.5-9-5.5z"]);
+  return strokeIcon(["M8.2 5.6c-.7 0-1.2.5-1.2 1.2v10.4c0 .9 1 1.5 1.8 1l8.6-5.2c.7-.4.7-1.5 0-1.9L8.8 5.9c-.2-.1-.4-.3-.6-.3z"], true);
 }
 
 function stopIcon() {
-  return strokeIcon(["M7 7h10v10H7z"]);
+  return strokeIcon(["M8.2 6.8h7.6a1.6 1.6 0 0 1 1.6 1.6v7.2a1.6 1.6 0 0 1-1.6 1.6H8.2a1.6 1.6 0 0 1-1.6-1.6V8.4a1.6 1.6 0 0 1 1.6-1.6z"], true);
 }
 
 function forceStopIcon() {
-  return strokeIcon(["M7 7h10v10H7z", "M9.5 9.5l5 5", "M14.5 9.5l-5 5"]);
+  return strokeIcon([
+    "M12 4.2a7.8 7.8 0 1 0 0 15.6 7.8 7.8 0 0 0 0-15.6z",
+    "M9 9l6 6",
+    "M15 9l-6 6",
+  ]);
 }
 
 function terminalIcon() {
-  return strokeIcon(["M5 6h14v12H5z", "M8 10l2.5 2L8 14", "M12.5 14H16"]);
+  return strokeIcon([
+    "M6.2 7.2h11.6a1.6 1.6 0 0 1 1.6 1.6v6.4a1.6 1.6 0 0 1-1.6 1.6H6.2a1.6 1.6 0 0 1-1.6-1.6V8.8a1.6 1.6 0 0 1 1.6-1.6z",
+    "M8 11.1l2.2 1.6L8 14.3",
+    "M11.6 14.3h3.4",
+  ]);
 }
 
 function comfyIcon() {
-  return strokeIcon(["M10 6H6v12h12v-4", "M13 5h6v6", "M19 5l-8 8"]);
-}
-
-function copyIcon() {
-  return strokeIcon(["M8 8h10v12H8z", "M6 16V4h10"]);
+  return strokeIcon([
+    "M10 7H8.2A1.7 1.7 0 0 0 6.5 8.7v7.1A1.7 1.7 0 0 0 8.2 17.5h7.1a1.7 1.7 0 0 0 1.7-1.7V14",
+    "M13.2 6.2H18v4.8",
+    "M17.6 6.6l-7.2 7.2",
+  ]);
 }
 
 function pencilIcon() {
-  return strokeIcon(["M4 20l1.2-4.2L16.6 4.4a1.5 1.5 0 0 1 2.1 0l.9.9a1.5 1.5 0 0 1 0 2.1L8.2 18.8 4 20z", "M13.6 6.4l4 4"]);
+  return strokeIcon([
+    "M14.2 5.1a1.7 1.7 0 0 1 2.4 0l2.3 2.3a1.7 1.7 0 0 1 0 2.4L9.2 19.5 4.6 20.4l.9-4.6 8.7-10.7z",
+    "M13 7.4l3.6 3.6",
+  ]);
 }
 
 function trashIcon() {
   return strokeIcon([
-    "M4 7h16",
-    "M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2",
-    "M8 7l1 13h6l1-13",
+    "M5 7.5h14",
+    "M9.2 7.5V6a1.4 1.4 0 0 1 1.4-1.4h2.8A1.4 1.4 0 0 1 14.8 6v1.5",
+    "M7.6 7.5l.7 11.1a1.4 1.4 0 0 0 1.4 1.3h4.6a1.4 1.4 0 0 0 1.4-1.3l.7-11.1",
   ]);
 }
 
