@@ -444,24 +444,33 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
 }
 
 .flag-editor {
+  display: flex;
+  flex-direction: column;
   margin-top: 12px;
-  padding: 4px 12px 0;
-  max-height: 440px;
-  overflow: auto;
+  padding: 4px 12px 12px;
+  max-height: 520px;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: rgba(0, 0, 0, 0.28);
 }
 
+.flag-editor-body {
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 4px;
+}
+
+.flag-number { margin-top: 8px; }
+
+.flag-number .field-label { margin-top: 8px; }
+
+.flag-number .text-input { margin-top: 8px; }
+
 .flag-apply {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
-  width: calc(100% + 24px);
-  margin: 12px -12px 0;
-  border-radius: 0 0 15px 15px;
-  background: rgba(22, 22, 24, 0.96);
-  box-shadow: 0 -16px 20px rgba(0, 0, 0, 0.45);
+  flex: none;
+  width: 100%;
+  margin-top: 12px;
 }
 
 .flag-editor[hidden] { display: none; }
