@@ -372,6 +372,10 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
 .primary { background: var(--blue); color: white; }
 .primary:active { background: var(--blue-press); }
 .secondary { background: var(--fill); color: var(--ink); }
+.danger { background: var(--danger); color: white; }
+
+.confirm-card { width: min(480px, 100%); }
+.confirm-card p { margin: 12px 0 0; font-size: 16px; }
 
 .actions .btn { flex: 1 1 120px; }
 

@@ -79,7 +79,7 @@ def authorize(action: str) -> None:
     refuses to start when ``COMFYFLEET_PASSWORD`` is missing.
     """
 
-    if action not in {"create", "start", "stop", "restart", "list"}:
+    if action not in {"create", "start", "stop", "force-stop", "delete", "terminal", "restart", "list"}:
         raise FleetError(f"unknown control action {action!r}")
     if http_auth_state() is False:
         raise AuthError("unauthorized")
@@ -235,6 +235,64 @@ def stop_instance(name: str, *, layout: FleetLayout, docker: DockerCLI) -> Insta
         return instance
     docker.stop(name)
     return instance
+
+
+def force_stop_instance(name: str, *, layout: FleetLayout, docker: DockerCLI) -> Instance:
+    """SIGKILL the instance container. This is not ``docker stop``."""
+
+    authorize("force-stop")
+    _require_name(name)
+    instance = _require_instance(layout, name)
+    status = docker.status(name)
+    if status is None:
+        raise FleetError(
+            f"instance {name!r} has metadata but no container. Nothing to force-stop."
+        )
+    if status != "running":
+        return instance
+    docker.kill(name)
+    return instance
+
+
+def delete_instance(name: str, *, layout: FleetLayout, docker: DockerCLI) -> Instance:
+    """Force-stop and remove this instance container, then drop its fleet record.
+
+    Host files (workflow, input, output, custom nodes) are left in place.
+    Only the named instance is removed. Other containers are not touched.
+    """
+
+    authorize("delete")
+    _require_name(name)
+    instance = _require_instance(layout, name)
+    status = docker.status(name)
+    if status == "running":
+        docker.kill(name)
+    if docker.status(name) is not None:
+        docker.remove(name)
+    _remove_metadata(layout, name)
+    return instance
+
+
+def terminal_argv(
+    name: str,
+    *,
+    layout: FleetLayout,
+    docker: DockerCLI,
+    argv_for=None,
+) -> list[str]:
+    """Argv for a shell in one running instance. The browser does not supply it."""
+
+    from comfyfleet.terminal import terminal_exec_argv
+
+    authorize("terminal")
+    _require_name(name)
+    instance = _require_instance(layout, name)
+    if docker.status(instance.name) != "running":
+        raise FleetError(
+            f"instance {instance.name!r} is not running. Start it before opening a shell."
+        )
+    build = argv_for or terminal_exec_argv
+    return list(build(instance.name))
 
 
 def restart_instance(

@@ -42,10 +42,14 @@ from comfyfleet.control import (
     Instance,
     authorize,
     create_instance,
+    delete_instance,
+    force_stop_instance,
     list_instances,
     start_instance,
     stop_instance,
+    terminal_argv,
 )
+from comfyfleet.terminal import accept_value, bridge_exec
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
 from comfyfleet.launch import parse_launch, split_flag_field
@@ -214,6 +218,8 @@ class ApiContext:
     password: str | None = None
     sessions: SessionStore | None = None
     login_guard: LoginGuard | None = None
+    # Server-side only. The browser cannot replace this command.
+    terminal_argv: Callable[[str], list[str]] | None = None
 
 
 @dataclass
@@ -355,6 +361,11 @@ def serve(
 def make_server(host: str, port: int, context: ApiContext) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
+            path = urlsplit(self.path).path
+            upgrade = (self.headers.get("Upgrade") or "").lower()
+            if upgrade == "websocket" and _terminal_name(path) is not None:
+                self._serve_terminal(path)
+                return
             self._respond("GET")
 
         def do_POST(self) -> None:  # noqa: N802
@@ -404,6 +415,58 @@ def make_server(host: str, port: int, context: ApiContext) -> ThreadingHTTPServe
                 self.send_header(key, value)
             self.end_headers()
             self.wfile.write(payload)
+
+        def _serve_terminal(self, path: str) -> None:
+            """Proxy a shell. The Docker socket is not part of this response."""
+
+            self.close_connection = True
+            token = begin_http_request()
+            try:
+                name = _terminal_name(path)
+                headers = {key: value for key, value in self.headers.items()}
+                if name is None or not _request_authenticated(context, headers):
+                    self._json_now(401, "unauthorized")
+                    return
+                grant_http_request()
+                try:
+                    argv = terminal_argv(
+                        name,
+                        layout=context.layout,
+                        docker=context.docker,
+                        argv_for=context.terminal_argv,
+                    )
+                except AuthError as exc:
+                    self._json_now(401, exc.message)
+                    return
+                except FleetError as exc:
+                    self._json_now(400, str(exc))
+                    return
+                key = (self.headers.get("Sec-WebSocket-Key") or "").strip()
+                if not key:
+                    self._json_now(400, "websocket upgrade requires Sec-WebSocket-Key")
+                    return
+                self.send_response(101, "Switching Protocols")
+                self.send_header("Upgrade", "websocket")
+                self.send_header("Connection", "Upgrade")
+                self.send_header("Sec-WebSocket-Accept", accept_value(key))
+                self.end_headers()
+                self.wfile.flush()
+                try:
+                    bridge_exec(self.connection, argv)
+                except (ConnectionError, OSError, FleetError) as exc:
+                    print(f"comfyfleet: terminal closed: {exc}", file=sys.stderr)
+            finally:
+                end_http_request(token)
+
+        def _json_now(self, status: int, message: str) -> None:
+            body = json.dumps({"ok": False, "error": message}).encode("utf-8") + b"\n"
+            self.send_response(status)
+            self.send_header("Content-Type", _JSON)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
 
     class ControlHTTPServer(ThreadingHTTPServer):
         allow_reuse_address = True
@@ -508,10 +571,19 @@ def _fleet(
     action = _instance_action(path)
     if action is not None:
         name, verb = action
+        if verb == "terminal":
+            _require_method(method, "GET")
+            raise HTTPStatusError(400, "terminal requires a websocket upgrade")
         _require_method(method, "POST")
         if verb == "start":
             return _start(context, host, name)
-        return _stop(context, host, name)
+        if verb == "stop":
+            return _stop(context, host, name)
+        if verb == "force-stop":
+            return _force_stop(context, host, name)
+        if verb == "delete":
+            return _delete(context, name)
+        raise HTTPStatusError(404, "not found")
     raise HTTPStatusError(404, "not found")
 
 
@@ -555,7 +627,7 @@ def _protected_action(method: str, path: str) -> str | None:
     prefix = "/api/instances/"
     if path.startswith(prefix):
         _name, sep, verb = path[len(prefix) :].partition("/")
-        if sep == "/" and verb in {"start", "stop"}:
+        if sep == "/" and verb in {"start", "stop", "force-stop", "delete", "terminal"}:
             return verb
         return "list"
     return None
@@ -773,6 +845,17 @@ def _stop(context: ApiContext, host: str, name: str) -> Response:
     return _json(200, {"ok": True, "instance": _instance_json(instance, status, host)})
 
 
+def _force_stop(context: ApiContext, host: str, name: str) -> Response:
+    instance = force_stop_instance(name, layout=context.layout, docker=context.docker)
+    status = context.docker.status(instance.name) or "missing"
+    return _json(200, {"ok": True, "instance": _instance_json(instance, status, host)})
+
+
+def _delete(context: ApiContext, name: str) -> Response:
+    instance = delete_instance(name, layout=context.layout, docker=context.docker)
+    return _json(200, {"ok": True, "deleted": instance.name})
+
+
 def _instance_json(instance: Instance, status: str, host: str) -> dict:
     running = status == "running"
     return {
@@ -785,6 +868,20 @@ def _instance_json(instance: Instance, status: str, host: str) -> dict:
     }
 
 
+def _terminal_name(path: str) -> str | None:
+    action = None
+    try:
+        action = _instance_action(path)
+    except FleetError:
+        return None
+    if action is None:
+        return None
+    name, verb = action
+    if verb != "terminal":
+        return None
+    return name
+
+
 def _instance_action(path: str) -> tuple[str, str] | None:
     prefix = "/api/instances/"
     if not path.startswith(prefix):
@@ -793,7 +890,7 @@ def _instance_action(path: str) -> tuple[str, str] | None:
     name, sep, verb = rest.partition("/")
     if sep != "/" or not name or not verb or "/" in verb:
         return None
-    if verb not in {"start", "stop"}:
+    if verb not in {"start", "stop", "force-stop", "delete", "terminal"}:
         return None
     decoded = unquote(name)
     if (

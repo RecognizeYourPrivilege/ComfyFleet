@@ -15,6 +15,8 @@ from pathlib import Path
 from comfyfleet import __version__
 from comfyfleet.control import (
     create_instance,
+    delete_instance,
+    force_stop_instance,
     format_list,
     list_instances,
     restart_instance,
@@ -115,6 +117,17 @@ def build_parser() -> argparse.ArgumentParser:
     stop = sub.add_parser("stop", help="Stop one instance. Mounts and the workflow file are kept.")
     stop.add_argument("name", help="Instance name")
     stop.set_defaults(func=_cmd_stop)
+
+    kill = sub.add_parser("kill", help="Force-stop one instance with docker kill (SIGKILL)")
+    kill.add_argument("name", help="Instance name")
+    kill.set_defaults(func=_cmd_kill)
+
+    delete = sub.add_parser(
+        "delete",
+        help="Force-stop and remove one instance container, and drop its fleet record",
+    )
+    delete.add_argument("name", help="Instance name")
+    delete.set_defaults(func=_cmd_delete)
 
     restart = sub.add_parser("restart", help="Stop then start one instance without rebuilding the image")
     restart.add_argument("name", help="Instance name")
@@ -226,6 +239,18 @@ def _cmd_start(args: argparse.Namespace) -> int:
 def _cmd_stop(args: argparse.Namespace) -> int:
     instance = stop_instance(args.name, layout=FleetLayout(), docker=DockerCLI())
     print(f"stopped: {instance.name}")
+    return 0
+
+
+def _cmd_kill(args: argparse.Namespace) -> int:
+    instance = force_stop_instance(args.name, layout=FleetLayout(), docker=DockerCLI())
+    print(f"killed: {instance.name}")
+    return 0
+
+
+def _cmd_delete(args: argparse.Namespace) -> int:
+    instance = delete_instance(args.name, layout=FleetLayout(), docker=DockerCLI())
+    print(f"deleted: {instance.name}")
     return 0
 
 

@@ -112,6 +112,9 @@ There is no delete route. Control has no destroy API. There is no HTTP restart r
 | `POST` | `/api/instances` | yes | `create_instance` | The instance just created |
 | `POST` | `/api/instances/{name}/start` | yes | `start_instance` | That instance, running |
 | `POST` | `/api/instances/{name}/stop` | yes | `stop_instance` | That instance, not running |
+| `POST` | `/api/instances/{name}/force-stop` | yes | `force_stop_instance` | Hard stop (`docker kill`) of that instance only |
+| `POST` | `/api/instances/{name}/delete` | yes | `delete_instance` | Container removed and fleet record dropped |
+| `GET` | `/api/instances/{name}/terminal` | yes | websocket `docker exec` | Shell proxy. Upgrade required. The Docker socket is not sent to the browser |
 | `GET` | `/login` | no | `ui/login.html` | Sign-in page |
 | `GET` | `/` and other non-API paths | yes, except login assets | static files under `ui/` | Fleet UI. If `ui/` is missing, an authenticated `/` is a short placeholder |
 
@@ -279,6 +282,24 @@ Starting an instance that is already running returns 200 and the running instanc
 ```
 
 Stopping an already stopped instance returns 200. The container, mounts, and workflow file stay.
+
+### `POST /api/instances/{name}/force-stop`
+
+`docker kill` on that instance container (SIGKILL). It does not remove the container or the fleet record. A container that is already stopped returns 200 and is left as it is.
+
+### `POST /api/instances/{name}/delete`
+
+Force-stops the container if it is running, removes **only** that container, and deletes `comfyfleet.json`. Host workflow, input, output, and custom-node files are kept. The UI asks for confirmation before calling this.
+
+```json
+{"ok": true, "deleted": "portrait"}
+```
+
+### `GET /api/instances/{name}/terminal`
+
+WebSocket upgrade. The manager runs `docker exec -it <name> /bin/bash` and copies bytes to the socket. The instance must already be running and must be a fleet record. The browser does not receive the Docker socket and cannot choose the command. A GET without `Upgrade: websocket` is **400**.
+
+Open in the fleet UI loads `/terminal.html?name=<name>`. Open Comfy is the separate `url` link.
 
 ## Errors
 
