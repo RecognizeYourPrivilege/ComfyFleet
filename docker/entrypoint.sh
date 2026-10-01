@@ -76,6 +76,7 @@ link_baked() {
 link_baked "ComfyUI-Manager"
 link_baked "ComfyUI-Pixaroma"
 link_baked "ComfyUI-ComfyDock"
+link_baked "RES4LYF"
 link_baked "comfyfleet_default_workflow"
 
 models="/opt/ComfyUI/models"
