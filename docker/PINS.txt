@@ -14,11 +14,27 @@ Base
     "Failed to find C compiler. Please specify via CC environment variable."
     cuda.h ships in
     the triton wheel. g++, build-essential, and cuda-nvcc are not installed.
+  OpenCV shared libraries for RES4LYF (bookworm-slim does not ship them):
+    libxcb1 (libxcb.so.1), libgl1 (libGL.so.1), libglib2.0-0
+    (libglib-2.0.so.0 and libgthread-2.0.so.0).
+    Proven against opencv-python 5.0.0.93, the wheel
+    RES4LYF requirements.txt ("opencv-python", unpinned) selects when
+    numpy==2.2.6 is already installed. ldd on cv2.abi3.so reported those
+    four sonames missing; after the three packages, import cv2 and
+    cv2.medianBlur / cv2.GaussianBlur succeed. The Qt platform plugin
+    inside the wheel is not what RES4LYF calls.
 
 PyTorch (matches CUDA 12.4; not the PyPI default, which is CUDA 13)
   index: https://download.pytorch.org/whl/cu124
   torch==2.6.0+cu124
   torchvision==0.21.0+cu124
+  numpy==2.2.6
+  numpy is installed in the same pip transaction as the torch wheels, then
+  written into /opt/comfyfleet/torch-constraints.txt with those wheels.
+  ComfyUI, baked-node, and RES4LYF requirements installs pass that file
+  with -c, so they cannot leave a different numpy. The image build asserts
+  numpy.__version__ == 2.2.6 after those installs and again after the
+  kitchen reinstall.
   image Python: Debian bookworm CPython 3.11
   wheels: torch-2.6.0+cu124-cp311-cp311-linux_x86_64.whl
           torchvision-0.21.0+cu124-cp311-cp311-linux_x86_64.whl
@@ -54,6 +70,19 @@ pixaroma (full repository, not a subset of nodes)
 ComfyUI-ComfyDock
   https://github.com/RecognizeYourPrivilege/ComfyUI-ComfyDock
   commit 3a9ff9eba897bf2388d6c1943b01d819ba05a0c6
+
+RES4LYF
+  https://github.com/ClownsharkBatwing/RES4LYF
+  commit 3d1d69da69ee47f7647d59e1bd0967e472fccc41
+  requirements.txt: opencv-python, matplotlib, pywavelets, numpy>=1.26.4.
+  Installed with the torch constraints file, which pins numpy==2.2.6.
+  Baked at /opt/comfyfleet/baked_custom_nodes/RES4LYF. The entrypoint
+  symlinks it into custom_nodes when that name is not already on the mount.
+  The image build does not import the RES4LYF package. That import loads
+  ComfyUI, which loads the top-level kitchen package, and Triton raises
+  "0 active drivers" when the build has no NVIDIA driver. The build does
+  import cv2 (medianBlur, GaussianBlur), pywt.wavedecn, and matplotlib,
+  and it checks this commit and NODE_CLASS_MAPPINGS in __init__.py.
 
 comfy-kitchen
   0.2.36 pure-Python wheel (eager backend): comfy_kitchen-0.2.36-py3-none-any.whl
