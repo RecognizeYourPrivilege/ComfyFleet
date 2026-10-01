@@ -1,5 +1,6 @@
-# Optional local manager build. Not the operator install path.
-# Build the instance image first (it is not a compose service):
+# Development compose overlay for a local manager image.
+# install.sh --build runs docker build for both Dockerfiles, then starts
+# the manager with the local tags. This file is the compose equivalent:
 #   docker build -t comfyfleet:phase1 .
 #   docker compose -f compose.yaml -f compose.build.yaml up -d --build
 services:
