@@ -222,7 +222,7 @@ PyTorch is the CUDA 12.4 wheels from `https://download.pytorch.org/whl/cu124`, n
 | torch | `torch==2.6.0+cu124` |
 | torchvision | `torchvision==0.21.0+cu124` |
 
-The image Python is Debian bookworm CPython 3.11. A constraints file at `/opt/comfyfleet/torch-constraints.txt` keeps later `pip install -r requirements.txt` from replacing those wheels. `comfy-kitchen==0.2.36` is the pure-Python wheel (`py3-none-any`) so the eager backend runs on CUDA 12.4. The manylinux wheel targets CUDA 13 and is not installed. Torch 2.6.0+cu124 `infer_schema` rejects that release's PEP 585 `list[int]` and `list[bool]` custom-op annotations, so `import comfy_kitchen` dies in `backends/eager/conv3d.py` (`stride: list[int]`). There is no stable torch 2.7+ cu124 wheel. The image keeps this torch pin and, after install, rewrites those custom-op annotations to `typing.List` via `docker/patch_comfy_kitchen_torch26.py` (also at `/opt/comfyfleet/patch_comfy_kitchen_torch26.py`).
+The image Python is Debian bookworm CPython 3.11. A constraints file at `/opt/comfyfleet/torch-constraints.txt` keeps later `pip install -r requirements.txt` from replacing those wheels. The same file pins `numpy==2.2.6`. The image sets `PIP_CONSTRAINT` to that path, so a later pip install, including Manager's custom-node installer (`python -m pip install -U`), cannot replace torch or numpy. `comfy-kitchen==0.2.36` is the pure-Python wheel (`py3-none-any`) so the eager backend runs on CUDA 12.4. The manylinux wheel targets CUDA 13 and is not installed. Torch 2.6.0+cu124 `infer_schema` rejects that release's PEP 585 `list[int]` and `list[bool]` custom-op annotations, so `import comfy_kitchen` dies in `backends/eager/conv3d.py` (`stride: list[int]`). There is no stable torch 2.7+ cu124 wheel. The image keeps this torch pin and, after install, rewrites those custom-op annotations to `typing.List` via `docker/patch_comfy_kitchen_torch26.py` (also at `/opt/comfyfleet/patch_comfy_kitchen_torch26.py`).
 
 That import also loads the Triton backend. Torch 2.6.0+cu124 depends on `triton==3.2.0`. `comfy_kitchen/backends/triton/quantization.py` decorates kernels with `@triton.autotune`, and the decorator initializes Triton's NVIDIA driver, which JIT-compiles `cuda_utils` (`driver.c`) through `triton/runtime/build.py`. `driver.c` includes `Python.h`. bookworm-slim has neither `gcc` nor Python headers, so on a GPU host that compile raises `Failed to find C compiler. Please specify via CC environment variable.` The image installs Debian bookworm `gcc` and `python3-dev` for that step. It does not install `g++`, `build-essential`, or `cuda-nvcc`: Triton 3.2's import-time compile is C, and the wheel ships `cuda.h`. The image build still does not `import comfy_kitchen`. With no NVIDIA driver mounted, Triton raises `0 active drivers` before it looks for a compiler. The link step uses `-lcuda` against the host driver the NVIDIA Container Toolkit mounts at container start (`libcuda.so`).
 
@@ -234,6 +234,8 @@ Baked custom nodes (also in `docker/PINS.txt`):
 | ComfyUI-Manager | `https://github.com/Comfy-Org/ComfyUI-Manager` | `14b5aaab711ad1f1306d420732a923fb058c44d7` |
 | pixaroma (full repo) | `https://github.com/pixaroma/ComfyUI-Pixaroma` | tag `v1.4.181`, commit `9259bc49557a92e3fc14796999468c723bd1ecdd` |
 | ComfyUI-ComfyDock | `https://github.com/RecognizeYourPrivilege/ComfyUI-ComfyDock` | `3a9ff9eba897bf2388d6c1943b01d819ba05a0c6` |
+| RES4LYF | `https://github.com/ClownsharkBatwing/RES4LYF` | `3d1d69da69ee47f7647d59e1bd0967e472fccc41` |
+| numpy | PyPI | `2.2.6` (in `torch-constraints.txt`) |
 
 `git` is installed in the instance image so Manager and in-container updates can use it. The pixaroma checkout includes that pack's workflow-browser examples. Those files are not the instance default. Omitting the workflow fails create.
 
@@ -244,7 +246,10 @@ The host `custom_nodes` directory hides the image's `custom_nodes` folder. On ev
 - `ComfyUI-Manager`
 - `ComfyUI-Pixaroma`
 - `ComfyUI-ComfyDock`
+- `RES4LYF`
 - `comfyfleet_default_workflow` (loader only; it is not a workflow)
+
+RES4LYF imports `cv2` when it loads. Its requirements ask for `opencv-python` (the Qt build, not headless). On bookworm-slim that wheel's Qt xcb plugin fails with `libxcb.so.1: cannot open shared object file`. The image installs `libxcb1`, `libx11-6`, `libxext6`, `libice6`, `libsm6`, `libglib2.0-0`, and `libgl1`. The image build imports `cv2` and dlopens `libqxcb.so`, so a missing library fails the build. Details are in `docker/PINS.txt`.
 
 A real directory you place at one of those names is left alone. The links point at `/opt/comfyfleet/baked_custom_nodes/...` inside the container, so on the host they look dangling; ComfyUI follows them in the container.
 
@@ -339,18 +344,23 @@ docker exec -it portrait bash
 git -C /opt/ComfyUI fetch origin
 git -C /opt/ComfyUI checkout master
 git -C /opt/ComfyUI pull --ff-only
-/opt/venv/bin/pip install -r /opt/ComfyUI/requirements.txt -c /opt/comfyfleet/torch-constraints.txt
+/opt/venv/bin/pip install \
+  -r /opt/ComfyUI/requirements.txt \
+  -r /opt/comfyfleet/baked_custom_nodes/RES4LYF/requirements.txt \
+  -c /opt/comfyfleet/torch-constraints.txt
 git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Manager checkout main
 git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Manager pull --ff-only
 git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Pixaroma checkout main
 git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Pixaroma pull --ff-only
 git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-ComfyDock checkout main
 git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-ComfyDock pull --ff-only
+git -C /opt/comfyfleet/baked_custom_nodes/RES4LYF checkout main
+git -C /opt/comfyfleet/baked_custom_nodes/RES4LYF pull --ff-only
 exit
 docker exec comfyfleet-manager comfyfleet restart portrait
 ```
 
-The image checkouts start detached at the pins above, so a bare `git pull` will not move them until you check out a branch. Keep the torch constraints file in the pip command so a pull does not replace CUDA 12.4 torch with the PyPI CUDA 13 wheel. If that command reinstalls comfy-kitchen, install the pure-Python 0.2.36 wheel again and rerun `python /opt/comfyfleet/patch_comfy_kitchen_torch26.py`. A manylinux kitchen wheel targets CUDA 13, and an unpatched 0.2.36 tree crashes torch 2.6 at import. If the Manager pull replaces the baked tree, rerun `python /opt/comfyfleet/patch_manager_trusted_install.py`. A pulled Manager has the stock loopback gate again. The entrypoint still rewrites `config.ini` on the next start.
+The image checkouts start detached at the pins above, so a bare `git pull` will not move them until you check out a branch. Keep the constraints file in the pip command so a pull does not replace CUDA 12.4 torch with the PyPI CUDA 13 wheel or move numpy off 2.2.6. `PIP_CONSTRAINT` is already set in the image to that same file. If that command reinstalls comfy-kitchen, install the pure-Python 0.2.36 wheel again and rerun `python /opt/comfyfleet/patch_comfy_kitchen_torch26.py`. A manylinux kitchen wheel targets CUDA 13, and an unpatched 0.2.36 tree crashes torch 2.6 at import. If the Manager pull replaces the baked tree, rerun `python /opt/comfyfleet/patch_manager_trusted_install.py`. A pulled Manager has the stock loopback gate again. The entrypoint still rewrites `config.ini` on the next start.
 
 ## API
 
