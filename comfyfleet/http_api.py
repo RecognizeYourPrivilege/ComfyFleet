@@ -11,6 +11,7 @@ Contract: CONTROL_HTTP.md.
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
 import sys
 import tempfile
@@ -53,7 +54,7 @@ from comfyfleet.control import (
 from comfyfleet.terminal import accept_value, bridge_exec
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
-from comfyfleet.launch import launch_from_json, parse_launch, split_flag_field
+from comfyfleet.launch import combine_extra_args, launch_from_json, parse_launch, split_flag_field
 from comfyfleet.paths import FleetLayout
 from comfyfleet.public_host import PUBLIC_HOST_ENV
 
@@ -81,6 +82,8 @@ _CREATE_FIELDS = (
     "preview_method",
     "preview_size",
     "extra_args",
+    "comfy_extra_args",
+    "install_missing_from_workflow",
 )
 _FLOAT_FIELDS = {"reserve_vram", "vram_headroom", "preview_size"}
 _AUTH_NOTE = (
@@ -216,6 +219,10 @@ class ApiContext:
     login_guard: LoginGuard | None = None
     # Server-side only. The browser cannot replace this command.
     terminal_argv: Callable[[str], list[str]] | None = None
+    # Tests inject these. Production leaves them unset.
+    node_installer: Callable | None = None
+    node_map: dict | None = None
+    git_run: Callable | None = None
 
 
 @dataclass
@@ -248,6 +255,9 @@ class _CreateForm:
     preview_method: str | None = None
     preview_size: str | None = None
     extra_args: str | None = None
+    custom_node_git_urls: list[str] = field(default_factory=list)
+    custom_nodes_zip: bytes | None = None
+    install_missing_from_workflow: bool = True
 
 
 def resolve_ui_dir(explicit: str | None = None) -> Path | None:
@@ -357,6 +367,10 @@ def make_server(host: str, port: int, context: ApiContext) -> ThreadingHTTPServe
 
         def do_POST(self) -> None:  # noqa: N802
             self._respond("POST")
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            # Delete is POST /api/instances/{name}/delete. This does not remove anything.
+            self._respond("DELETE")
 
         def log_message(self, fmt: str, *args) -> None:
             # Path only. Query strings and headers are omitted so a password
@@ -561,6 +575,14 @@ def _fleet(
         if verb == "terminal":
             _require_method(method, "GET")
             raise HTTPStatusError(400, "terminal requires a websocket upgrade")
+        if verb == "delete":
+            if method != "POST":
+                raise HTTPStatusError(
+                    405,
+                    "method not allowed. Delete is POST /api/instances/{name}/delete. "
+                    "That removes the container and the fleet record and leaves host mounts.",
+                )
+            return _delete(context, name)
         _require_method(method, "POST")
         if verb == "start":
             return _start(context, name)
@@ -568,8 +590,6 @@ def _fleet(
             return _stop(context, name)
         if verb == "force-stop":
             return _force_stop(context, name)
-        if verb == "delete":
-            return _delete(context, name)
         if verb == "launch":
             return _update_launch(context, name, body, content_type)
         raise HTTPStatusError(404, "not found")
@@ -793,10 +813,18 @@ def _create(context: ApiContext, body: bytes, content_type: str | None) -> Respo
                 preview_size=form.preview_size,
                 extra_args=form.extra_args,
             ),
+            custom_node_git_urls=form.custom_node_git_urls,
+            custom_nodes_zip=form.custom_nodes_zip,
+            install_missing_from_workflow=form.install_missing_from_workflow,
+            node_installer=context.node_installer,
+            node_map=context.node_map,
+            git_run=context.git_run,
         )
     finally:
         if cleanup is not None:
             shutil.rmtree(cleanup, ignore_errors=True)
+    for item in result.warnings:
+        print(f"comfyfleet: warning: {item}", file=sys.stderr)
     status = context.docker.status(result.instance.name) or "missing"
     return _json(
         200,
@@ -804,6 +832,7 @@ def _create(context: ApiContext, body: bytes, content_type: str | None) -> Respo
             "ok": True,
             "started": result.started,
             "warning": result.warning,
+            "warnings": list(result.warnings),
             "instance": _instance_json(result.instance, status),
         },
     )
@@ -965,17 +994,19 @@ def _safe_static(ui_dir: Path, url_path: str) -> Path | None:
 
 def _parse_create_form(body: bytes, content_type: str | None) -> _CreateForm:
     media = (content_type or "").split(";", 1)[0].strip().lower()
+    zip_bytes: bytes | None = None
     if body == b"" and media in {"", "application/json", "application/x-www-form-urlencoded"}:
         fields: dict[str, str] = {}
+        git_urls: list[str] = []
         upload = None
     elif media == "application/json":
-        fields = _json_fields(body)
+        fields, git_urls = _json_fields(body)
         upload = None
     elif media == "application/x-www-form-urlencoded":
-        fields = _urlencoded_fields(body)
+        fields, git_urls = _urlencoded_fields(body)
         upload = None
     elif media == "multipart/form-data":
-        fields, upload = _multipart_fields(content_type or "", body)
+        fields, upload, git_urls, zip_bytes = _multipart_fields(content_type or "", body)
     else:
         raise HTTPStatusError(
             415,
@@ -996,11 +1027,17 @@ def _parse_create_form(body: bytes, content_type: str | None) -> _CreateForm:
         vram_headroom=_optional_str(fields.get("vram_headroom")),
         preview_method=_optional_str(fields.get("preview_method")),
         preview_size=_optional_str(fields.get("preview_size")),
-        extra_args=_optional_str(fields.get("extra_args")),
+        extra_args=combine_extra_args(fields.get("extra_args"), fields.get("comfy_extra_args")),
+        custom_node_git_urls=git_urls,
+        custom_nodes_zip=zip_bytes,
+        install_missing_from_workflow=_as_bool(
+            fields.get("install_missing_from_workflow"),
+            default=True,
+        ),
     )
 
 
-def _json_fields(body: bytes) -> dict[str, str]:
+def _json_fields(body: bytes) -> tuple[dict[str, str], list[str]]:
     try:
         payload = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -1009,17 +1046,18 @@ def _json_fields(body: bytes) -> dict[str, str]:
         raise FleetError(
             "JSON body must be an object with workflow_path, gpu, gpus, start, force, "
             "and optional launch fields (vram, attention, flags, reserve_vram, "
-            "vram_headroom, preview_method, preview_size, extra_args)."
+            "vram_headroom, preview_method, preview_size, extra_args, comfy_extra_args)."
         )
     fields: dict[str, str] = {}
+    git_urls = _git_url_values(payload.get("custom_node_git_urls"))
     for key in _CREATE_FIELDS:
         if key not in payload or payload[key] is None:
             continue
         value = payload[key]
-        if key == "flags" and isinstance(value, list):
+        if key in {"flags", "comfy_extra_args"} and isinstance(value, list):
             if not all(isinstance(item, str) for item in value):
-                raise FleetError("field 'flags' must be a string or a list of strings")
-            fields[key] = ",".join(value)
+                raise FleetError(f"field {key!r} must be a string or a list of strings")
+            fields[key] = ",".join(value) if key == "flags" else shlex.join(value)
             continue
         if isinstance(value, bool):
             fields[key] = "true" if value else "false"
@@ -1031,10 +1069,10 @@ def _json_fields(body: bytes) -> dict[str, str]:
             fields[key] = value
         else:
             raise FleetError(f"field {key!r} must be a string, boolean, or integer")
-    return fields
+    return fields, git_urls
 
 
-def _urlencoded_fields(body: bytes) -> dict[str, str]:
+def _urlencoded_fields(body: bytes) -> tuple[dict[str, str], list[str]]:
     from urllib.parse import parse_qs
 
     try:
@@ -1043,6 +1081,7 @@ def _urlencoded_fields(body: bytes) -> dict[str, str]:
         raise FleetError("form body is not UTF-8") from exc
     parsed = parse_qs(text, keep_blank_values=True)
     fields: dict[str, str] = {}
+    git_urls = _git_url_values(parsed.get("custom_node_git_urls"))
     for key in _CREATE_FIELDS:
         values = parsed.get(key)
         if not values:
@@ -1050,25 +1089,51 @@ def _urlencoded_fields(body: bytes) -> dict[str, str]:
         if len(values) > 1:
             raise FleetError(f"duplicate form field {key!r}")
         fields[key] = values[0]
-    return fields
+    return fields, git_urls
 
 
-def _multipart_fields(content_type: str, body: bytes) -> tuple[dict[str, str], _Upload | None]:
+def _multipart_fields(
+    content_type: str,
+    body: bytes,
+) -> tuple[dict[str, str], _Upload | None, list[str], bytes | None]:
     boundary = _boundary(content_type)
     fields: dict[str, str] = {}
     upload: _Upload | None = None
+    git_urls: list[str] = []
+    zip_bytes: bytes | None = None
     for headers, data in _multipart_parts(boundary, body):
         name = headers.get("name")
         if not name:
             continue
         filename = headers.get("filename")
         if filename:
+            if name == "custom_nodes_zip":
+                if zip_bytes is not None:
+                    raise FleetError("duplicate custom_nodes_zip upload")
+                _zip_filename(filename)
+                zip_bytes = data
+                continue
             safe = _upload_filename(filename)
             if name != "workflow":
                 raise FleetError("upload the workflow JSON as the multipart field 'workflow'")
             if upload is not None:
                 raise FleetError("duplicate workflow upload")
             upload = _Upload(filename=safe, data=data)
+            continue
+        if name == "custom_node_git_urls":
+            try:
+                git_urls.extend(_split_git_url_field(data.decode("utf-8")))
+            except UnicodeDecodeError as exc:
+                raise FleetError("form field 'custom_node_git_urls' is not UTF-8") from exc
+            continue
+        if name == "custom_nodes_zip":
+            # A text field is not a zip. Blank is a no-op; other text is ignored
+            # with a warning at create time by treating it as an empty archive
+            # only when bytes were uploaded. Non-file values are not read from disk.
+            if data.strip():
+                raise FleetError(
+                    "custom_nodes_zip must be a multipart file, not a text field"
+                )
             continue
         if name not in _CREATE_FIELDS:
             continue
@@ -1078,7 +1143,39 @@ def _multipart_fields(content_type: str, body: bytes) -> tuple[dict[str, str], _
             fields[name] = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise FleetError(f"form field {name!r} is not UTF-8") from exc
-    return fields, upload
+    return fields, upload, git_urls, zip_bytes
+
+
+def _git_url_values(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return _split_git_url_field(value)
+    if isinstance(value, list):
+        found: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise FleetError("custom_node_git_urls must be a string or a list of strings")
+            found.extend(_split_git_url_field(item))
+        return found
+    raise FleetError("custom_node_git_urls must be a string or a list of strings")
+
+
+def _split_git_url_field(value: str) -> list[str]:
+    """One field may hold several URLs separated by newlines or commas. Blanks drop out."""
+
+    found: list[str] = []
+    for line in value.replace(",", "\n").splitlines():
+        text = line.strip()
+        if text:
+            found.append(text)
+    return found
+
+
+def _zip_filename(filename: str) -> None:
+    base = filename.replace("\\", "/").split("/")[-1]
+    if not base or base in {".", ".."} or "\x00" in base:
+        raise FleetError("custom_nodes_zip filename is invalid")
 
 
 def _boundary(content_type: str) -> bytes:

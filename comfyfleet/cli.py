@@ -27,7 +27,7 @@ from comfyfleet.docker import DockerCLI
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import detect_gpus
 from comfyfleet.http_api import DEFAULT_BIND_HOST, DEFAULT_BIND_PORT, serve
-from comfyfleet.launch import main_argv, parse_launch
+from comfyfleet.launch import combine_extra_args, main_argv, parse_launch
 from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
 from comfyfleet.public_host import PUBLIC_HOST_ENV, open_host
 
@@ -108,6 +108,39 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Extra main.py arguments, appended last. --listen and --port are removed.",
     )
+    create.add_argument(
+        "--comfy-extra-args",
+        default=None,
+        help=(
+            "Extra main.py arguments. Appended after --extra-args. "
+            "--listen and --port are removed. "
+            "If the value starts with -, use --comfy-extra-args=--flag."
+        ),
+    )
+    create.add_argument(
+        "--custom-node-git-url",
+        action="append",
+        default=None,
+        dest="custom_node_git_urls",
+        help=(
+            "HTTPS or SSH git URL to clone into this instance's custom_nodes. "
+            "Repeatable. Blank values are ignored."
+        ),
+    )
+    create.add_argument(
+        "--custom-nodes-zip",
+        default=None,
+        help="Zip of custom node packs to extract into this instance's custom_nodes.",
+    )
+    create.add_argument(
+        "--install-missing-from-workflow",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Install custom nodes referenced by this workflow that are not already "
+            "present (default: true). Uses Manager's git-URL install for those nodes only."
+        ),
+    )
     create.set_defaults(func=_cmd_create)
 
     start = sub.add_parser("start", help="Start one existing instance without rebuilding the image")
@@ -175,6 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _cmd_create(args: argparse.Namespace) -> int:
     gpus = detect_gpus()
+    zip_bytes = _read_zip(args.custom_nodes_zip)
     result = create_instance(
         Path(args.workflow),
         layout=FleetLayout(),
@@ -196,10 +230,15 @@ def _cmd_create(args: argparse.Namespace) -> int:
             vram_headroom=args.vram_headroom,
             preview_method=args.preview_method,
             preview_size=args.preview_size,
-            extra_args=args.extra_args,
+            extra_args=combine_extra_args(args.extra_args, args.comfy_extra_args),
         ),
+        custom_node_git_urls=args.custom_node_git_urls,
+        custom_nodes_zip=zip_bytes,
+        install_missing_from_workflow=args.install_missing_from_workflow,
     )
     _print_warning(result.warning)
+    for item in result.warnings:
+        print(f"comfyfleet: warning: {item}", file=sys.stderr)
     instance = result.instance
     state = "started" if result.started else "created (not started)"
     print(f"{state}: {instance.name}")
@@ -212,6 +251,16 @@ def _cmd_create(args: argparse.Namespace) -> int:
     if not result.started:
         print(f"Start it with: comfyfleet start {instance.name}")
     return 0
+
+
+def _read_zip(path: str | None) -> bytes | None:
+    if path is None or not str(path).strip():
+        return None
+    zip_path = Path(path)
+    try:
+        return zip_path.read_bytes()
+    except OSError as exc:
+        raise FleetError(f"cannot read custom nodes zip {zip_path}: {exc}") from exc
 
 
 def _cmd_start(args: argparse.Namespace) -> int:

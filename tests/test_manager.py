@@ -115,6 +115,7 @@ class ManagerImageContractTests(unittest.TestCase):
         self.assertIn("COMFYFLEET_MANAGER=1", text)
         self.assertIn("manager-entrypoint.sh", text)
         self.assertIn("COPY comfyfleet", text)
+        self.assertIn("\n        git \\\n", text)
         self.assertIn("COPY ui", text)
         self.assertIn("/usr/local/bin/docker", text)
         self.assertNotIn("cuda-libraries", text)

@@ -84,6 +84,25 @@
       <div id="gpus" class="gpu-row" role="group" aria-labelledby="gpu-label"></div>
       <p id="gpu-note" class="hint"></p>
 
+      <section class="optional-nodes" aria-labelledby="nodes-label">
+        <p class="field-label" id="nodes-label">Custom nodes <span class="optional-tag">optional</span></p>
+        <p class="hint">Optional — leave blank to skip. Create still requires a workflow. Empty git URLs and no zip are a no-op.</p>
+        <label class="field-label" for="custom-node-git-urls">Git URL(s)</label>
+        <textarea id="custom-node-git-urls" class="text-input" rows="3" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo"></textarea>
+        <p class="hint">One URL per line. Blank lines are ignored.</p>
+        <label class="field-label" for="custom-nodes-zip">Zip of node packs</label>
+        <div class="file-well">
+          <input id="custom-nodes-zip" type="file" accept=".zip,application/zip">
+          <p id="zip-name">No zip chosen</p>
+        </div>
+        <label class="check install-missing">
+          <input id="install-missing-from-workflow" type="checkbox" checked>
+          <span>Install nodes missing from this workflow<small>Trusted Manager path only. Not the whole registry. Uncheck to skip.</small></span>
+        </label>
+      </section>
+
+      <details class="disclosure" id="comfy-flags">
+        <summary>Advanced / ComfyUI flags</summary>
       <div class="flag-panel" role="group" aria-labelledby="flags-label">
         <p class="field-label" id="flags-label">Launch flags</p>
         <p class="hint">Nothing selected starts ComfyUI with only <code>--listen 0.0.0.0</code> and the container port. Those two stay locked. On a 12GB GPU such as an RTX A2000, <code>--lowvram</code> alone is a no-op while dynamic VRAM is on. Use <code>--lowvram</code> and <code>--disable-dynamic-vram</code> together.</p>
@@ -206,6 +225,7 @@
         <textarea id="extra-args" class="text-input" rows="3" spellcheck="false" autocomplete="off" placeholder="--mmap-torch-files"></textarea>
         <p class="hint">Appended last, after the selected flags. Pasted <code>--listen</code> and <code>--port</code> are removed. Replace a stopped instance to change flags.</p>
       </div>
+      </details>
 
       <label class="switch">
         <input id="force" type="checkbox">

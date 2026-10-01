@@ -120,6 +120,34 @@ class DockerCLI:
     def update_restart(self, name: str, policy: str) -> None:
         self._check(["update", "--restart", policy, name])
 
+    def exec(
+        self,
+        name: str,
+        command: list[str],
+        *,
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        """``docker exec`` inside one instance. The command is not a shell string.
+
+        Used for the trusted Manager git-URL install, which has to run where
+        ``COMFYFLEET_TRUSTED_INSTALL`` is set (the instance, not the manager).
+        """
+
+        if not command or any("\x00" in part for part in command):
+            raise FleetError("invalid docker exec command")
+        argv = ["docker", "exec", "-i", name, *command]
+        self._raise_if_engine_unreachable()
+        try:
+            try:
+                completed = self._run(argv, timeout=timeout)
+            except TypeError:
+                completed = self._run(argv)
+        except subprocess.TimeoutExpired as exc:
+            raise FleetError(f"docker exec {name} timed out after {timeout:g}s") from exc
+        except FileNotFoundError as exc:
+            raise FleetError(_missing_docker_message()) from exc
+        return completed
+
     def status(self, name: str) -> str | None:
         self._raise_if_engine_unreachable()
         completed = self._run(["docker", "inspect", "-f", "{{.State.Status}}", name])
@@ -341,8 +369,8 @@ def _missing_docker_message() -> str:
     )
 
 
-def default_run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+def default_run(argv: list[str], timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(argv, check=False, capture_output=True, text=True)
+        return subprocess.run(argv, check=False, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError as exc:
         raise FleetError(_missing_docker_message()) from exc
