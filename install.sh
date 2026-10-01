@@ -10,6 +10,8 @@ INSTANCE_REPO="${REGISTRY}/${OWNER}/comfyfleet"
 MANAGER_REPO="${REGISTRY}/${OWNER}/comfyfleet-manager"
 LOCAL_INSTANCE_TAG="comfyfleet:phase1"
 LOCAL_MANAGER_TAG="comfyfleet-manager:latest"
+INSTANCE_PIN="sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba"
+MANAGER_PIN="sha256:a4204564c60cf3afc40db17b34a268cf2c1c2f8e685b4601bc1c6e4dedbc713f"
 NAME="${COMFYFLEET_CONTAINER_NAME:-comfyfleet-manager}"
 PORT="${COMFYFLEET_PUBLISH_PORT:-9100}"
 MODE="run"
@@ -26,11 +28,11 @@ Pull prebuilt images and start the ComfyFleet manager. Does not docker-build tor
   COMFYFLEET_PUBLIC_HOST    LAN hostname or IP browsers use. Required unless --pull-only.
 
 Default images:
-  ${INSTANCE_REPO}:phase1
-  ${MANAGER_REPO}:latest
+  ${INSTANCE_REPO}:phase1@${INSTANCE_PIN}
+  ${MANAGER_REPO}:latest@${MANAGER_PIN}
 
   COMFYFLEET_INSTANCE_IMAGE / COMFYFLEET_MANAGER_IMAGE replace those refs.
-  COMFYFLEET_INSTANCE_DIGEST / COMFYFLEET_MANAGER_DIGEST (sha256:...) pull by digest.
+  COMFYFLEET_INSTANCE_DIGEST / COMFYFLEET_MANAGER_DIGEST (sha256:...) pull a different digest.
 
 The instance image is tagged ${LOCAL_INSTANCE_TAG}. The manager image is tagged
 ${LOCAL_MANAGER_TAG}. The running manager gets COMFYFLEET_INSTANCE_IMAGE set to
@@ -118,7 +120,7 @@ if [[ -n "${COMFYFLEET_INSTANCE_DIGEST:-}" ]]; then
 elif [[ -n "${COMFYFLEET_INSTANCE_IMAGE:-}" ]]; then
   INSTANCE_REF="${COMFYFLEET_INSTANCE_IMAGE}"
 else
-  INSTANCE_REF="${INSTANCE_REPO}:phase1"
+  INSTANCE_REF="${INSTANCE_REPO}:phase1@${INSTANCE_PIN}"
 fi
 
 if [[ -n "${COMFYFLEET_MANAGER_DIGEST:-}" ]]; then
@@ -126,7 +128,7 @@ if [[ -n "${COMFYFLEET_MANAGER_DIGEST:-}" ]]; then
 elif [[ -n "${COMFYFLEET_MANAGER_IMAGE:-}" ]]; then
   MANAGER_REF="${COMFYFLEET_MANAGER_IMAGE}"
 else
-  MANAGER_REF="${MANAGER_REPO}:latest"
+  MANAGER_REF="${MANAGER_REPO}:latest@${MANAGER_PIN}"
 fi
 
 # Create reads this name on the host engine. install always sets it.

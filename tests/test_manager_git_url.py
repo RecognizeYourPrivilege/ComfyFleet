@@ -261,12 +261,25 @@ class TrustedInstallPatchTests(unittest.TestCase):
             dockerfile.index("torch==2.6.0+cu124"),
             dockerfile.index("patch_manager_trusted_install.py"),
         )
+        self.assertIn('comfy_args=(--listen 0.0.0.0 --port 8188)', entrypoint)
         exec_lines = [line for line in entrypoint.splitlines() if line.startswith("exec ")]
         self.assertEqual(
             exec_lines,
-            ["exec /opt/venv/bin/python main.py --listen 0.0.0.0 --port 8188"],
+            ['exec /opt/venv/bin/python main.py "${comfy_args[@]}"'],
+        )
+        self.assertLess(
+            entrypoint.index('comfy_args=(--listen 0.0.0.0 --port 8188)'),
+            entrypoint.index("exec "),
         )
         self.assertIn("export COMFYFLEET_TRUSTED_INSTALL=1", entrypoint)
+        self.assertIn(
+            'echo "comfyfleet: COMFYFLEET_TRUSTED_INSTALL=${COMFYFLEET_TRUSTED_INSTALL}"',
+            entrypoint,
+        )
+        self.assertLess(
+            entrypoint.index("export COMFYFLEET_TRUSTED_INSTALL=1"),
+            entrypoint.index("exec "),
+        )
         self.assertIn("/opt/comfyfleet/seed_manager_config.py", entrypoint)
         self.assertNotIn("--listen 127.0.0.1", entrypoint)
         self.assertIn("/opt/ComfyUI/user/__manager/config.ini", readme)

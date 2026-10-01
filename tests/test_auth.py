@@ -85,7 +85,7 @@ class AuthorizeTests(unittest.TestCase):
 
     def test_unknown_action_is_still_an_error(self):
         with self.assertRaises(FleetError):
-            authorize("delete")
+            authorize("wipe-host")
 
 
 class HttpAuthTests(unittest.TestCase):
