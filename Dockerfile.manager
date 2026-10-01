@@ -17,12 +17,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
     COMFYFLEET_UI_DIR=/opt/comfyfleet/ui \
     PATH=/opt/venv/bin:/usr/local/bin:${PATH}
 
+# git clones create-time custom node repos onto the host custom_nodes mount.
+# unzip is for operators. Create extracts zips in-process so a path-traversal
+# member can be rejected before anything is written. This is the manager
+# image only. Instance images are not rebuilt to bake those nodes.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        git \
         python3 \
         python3-pip \
         python3-venv \
+        unzip \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -c 'import sys; assert sys.version_info[:2] >= (3, 11), sys.version'
 

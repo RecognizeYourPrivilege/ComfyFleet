@@ -355,6 +355,7 @@ class ControlTests(unittest.TestCase):
         self.assertIsNone(self.docker.status("portrait"))
         self.assertFalse((self.root / "files" / "portrait" / "comfyfleet.json").is_file())
         self.assertTrue(workflow.is_file())
+        self.assertTrue((self.root / "custom_nodes_portrait").is_dir())
         self.assertEqual(self.docker.status("other"), "created")
         names = [item.name for item, _status in list_instances(self.layout, self.docker)]
         self.assertEqual(names, ["other"])

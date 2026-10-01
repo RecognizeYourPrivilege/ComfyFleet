@@ -9,11 +9,19 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
 from comfyfleet.auth import AuthError, http_auth_state
+from comfyfleet.custom_nodes import (
+    clone_git_urls,
+    extract_custom_nodes_zip,
+    node_map_from_env,
+    plan_missing_installs,
+    trusted_manager_install,
+)
 from comfyfleet.docker import DockerCLI, build_create_args
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu, select_gpus
@@ -67,6 +75,7 @@ class ActionResult:
     instance: Instance
     started: bool
     warning: str | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 def authorize(action: str) -> None:
@@ -102,12 +111,18 @@ def create_instance(
     max_concurrent: int | None = None,
     use_env_limit: bool = False,
     launch: LaunchConfig | None = None,
+    custom_node_git_urls: list[str] | None = None,
+    custom_nodes_zip: bytes | None = None,
+    install_missing_from_workflow: bool = True,
+    node_installer: Callable | None = None,
+    node_map: dict[str, str] | None = None,
+    git_run: Callable | None = None,
 ) -> ActionResult:
     authorize("create")
     launch = _canonicalize_launch(launch)
     image = resolve_instance_image(image)
     source = Path(workflow)
-    load_operator_workflow(source)
+    workflow_data = load_operator_workflow(source)
     name = instance_name_from_workflow(source)
     _require_name(name)
     previous = _load_if_present(layout, name)
@@ -158,11 +173,84 @@ def create_instance(
         else:
             _remove_metadata(layout, name)
         raise
-    warning = None
-    started = False
-    if start:
-        started_result = start_instance(
-            name,
+    node_warnings: list[str] = []
+    nodes_dir = layout.custom_nodes(name)
+    install_urls: list[str] = []
+    try:
+        clone_warnings, _cloned = clone_git_urls(
+            custom_node_git_urls,
+            nodes_dir,
+            run=git_run,
+        )
+        node_warnings.extend(clone_warnings)
+        zip_warnings, _extracted = extract_custom_nodes_zip(custom_nodes_zip, nodes_dir)
+        node_warnings.extend(zip_warnings)
+        if install_missing_from_workflow:
+            resolved_map = node_map
+            if resolved_map is None:
+                resolved_map, map_warnings = node_map_from_env()
+                node_warnings.extend(map_warnings)
+            install_urls, plan_warnings = plan_missing_installs(
+                workflow_data,
+                nodes_dir,
+                resolved_map,
+            )
+            node_warnings.extend(plan_warnings)
+    except Exception as exc:
+        # The container already exists. Optional node work must not turn that
+        # into a failed create (O-CN-01).
+        node_warnings.append(f"custom node provisioning failed: {exc}")
+        install_urls = []
+    warning, started, instance = _finish_create_start(
+        instance,
+        start=start,
+        install_urls=install_urls,
+        node_warnings=node_warnings,
+        layout=layout,
+        docker=docker,
+        gpus=gpus,
+        port_in_use=port_in_use,
+        max_concurrent=max_concurrent,
+        use_env_limit=use_env_limit,
+        node_installer=node_installer,
+    )
+    return ActionResult(
+        instance=instance,
+        started=started,
+        warning=warning,
+        warnings=node_warnings,
+    )
+
+
+def _finish_create_start(
+    instance: Instance,
+    *,
+    start: bool,
+    install_urls: list[str],
+    node_warnings: list[str],
+    layout: FleetLayout,
+    docker: DockerCLI,
+    gpus: list[Gpu],
+    port_in_use,
+    max_concurrent: int | None,
+    use_env_limit: bool,
+    node_installer: Callable | None,
+) -> tuple[str | None, bool, Instance]:
+    """Start when asked. Install missing workflow nodes, then reload.
+
+    Git clones and zip extracts are already on the volume, so the first start
+    loads those. A trusted Manager install happens while ComfyUI is up, so a
+    successful install is followed by a restart. If the operator did not ask
+    to leave the instance running, it is stopped again. Host mounts stay.
+    """
+
+    warning: str | None = None
+    running = False
+
+    def _start() -> None:
+        nonlocal warning, running, instance
+        result = start_instance(
+            instance.name,
             layout=layout,
             docker=docker,
             gpus=gpus,
@@ -170,10 +258,65 @@ def create_instance(
             max_concurrent=max_concurrent,
             use_env_limit=use_env_limit,
         )
-        warning = started_result.warning
-        started = True
-        instance = started_result.instance
-    return ActionResult(instance=instance, started=started, warning=warning)
+        warning = result.warning
+        instance = result.instance
+        running = True
+
+    if install_urls:
+        try:
+            _start()
+        except FleetError as exc:
+            if start:
+                raise
+            node_warnings.append(
+                f"missing-node install skipped; could not start {instance.name}: {exc}"
+            )
+        if running:
+            installer = node_installer or trusted_manager_install
+            installed: list[str] = []
+            try:
+                install_warnings, installed = installer(
+                    install_urls,
+                    docker=docker,
+                    name=instance.name,
+                )
+                node_warnings.extend(install_warnings)
+            except Exception as exc:
+                node_warnings.append(f"trusted install failed: {exc}")
+                installed = []
+            if installed:
+                try:
+                    restarted = restart_instance(
+                        instance.name,
+                        layout=layout,
+                        docker=docker,
+                        gpus=gpus,
+                        port_in_use=port_in_use,
+                        max_concurrent=max_concurrent,
+                        use_env_limit=use_env_limit,
+                    )
+                    warning = restarted.warning
+                    instance = restarted.instance
+                    running = True
+                except FleetError as exc:
+                    node_warnings.append(f"restart after custom node install failed: {exc}")
+                    if start:
+                        _start()
+                    else:
+                        running = docker.status(instance.name) == "running"
+            if not start and running:
+                try:
+                    stop_instance(instance.name, layout=layout, docker=docker)
+                except FleetError as exc:
+                    node_warnings.append(
+                        f"custom nodes were installed but the instance stayed running: {exc}"
+                    )
+                else:
+                    running = False
+                    warning = None
+    elif start:
+        _start()
+    return (warning if start else None), bool(start and running), instance
 
 
 def start_instance(

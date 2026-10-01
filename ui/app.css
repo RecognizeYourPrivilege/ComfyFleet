@@ -313,6 +313,24 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
   gap: 12px;
 }
 
+.card-trailing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.trash-btn {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  border-radius: 10px;
+  background: rgba(255, 69, 58, 0.16);
+  color: var(--danger);
+}
+
+.trash-btn svg { width: 18px; height: 18px; }
+
 .card h2 {
   font-size: 22px;
   word-break: break-word;
@@ -378,6 +396,43 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
 .confirm-card p { margin: 12px 0 0; font-size: 16px; }
 
 .actions .btn { flex: 1 1 120px; }
+
+.optional-nodes {
+  margin-top: 18px;
+  padding: 12px 12px 4px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.optional-tag {
+  margin-left: 6px;
+  color: var(--faint);
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+
+.install-missing { margin-top: 12px; }
+
+.disclosure {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.disclosure > summary {
+  min-height: 48px;
+  padding: 0 14px;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.disclosure .flag-panel {
+  margin: 0 10px 12px;
+}
 
 details {
   margin-top: 12px;
