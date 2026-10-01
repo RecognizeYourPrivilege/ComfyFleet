@@ -32,26 +32,19 @@ Two images. [`.github/workflows/publish-images.yml`](.github/workflows/publish-i
 
 | Image | Pull | Also tagged locally by `install.sh` | Role |
 |---|---|---|---|
-| Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest` | `comfyfleet-manager:latest` | Control HTTP API and web UI. No CUDA stack. |
-| Instance | `ghcr.io/recognizeyourprivilege/comfyfleet:phase1` | `comfyfleet:phase1` | ComfyUI container the manager creates. CUDA 12.4. |
+| Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a4204564c60cf3afc40db17b34a268cf2c1c2f8e685b4601bc1c6e4dedbc713f` | `comfyfleet-manager:latest` | Control HTTP API and web UI. No CUDA stack. |
+| Instance | `ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba` | `comfyfleet:phase1` | ComfyUI container the manager creates. CUDA 12.4. |
 
 Each successful publish also tags the git commit SHA (`ghcr.io/recognizeyourprivilege/comfyfleet:<sha>` and `ghcr.io/recognizeyourprivilege/comfyfleet-manager:<sha>`). `ghcr.io/recognizeyourprivilege/comfyfleet:latest` is the same instance build as `:phase1`.
 
-Digests are not pinned in this file yet. After a successful publish, the workflow job summary prints:
-
-```text
-instance ghcr.io/recognizeyourprivilege/comfyfleet@sha256:<digest>
-manager ghcr.io/recognizeyourprivilege/comfyfleet-manager@sha256:<digest>
-```
-
-Copy those lines into this section when they exist. Until then, installs follow the tags above. To pin a later install:
+`install.sh`, [compose.yaml](compose.yaml), and the pull commands in this section use those digest refs. Moving a tag does not change an install that already pins the digest. To pull a different build:
 
 ```bash
 export COMFYFLEET_INSTANCE_DIGEST=sha256:<instance-digest>
 export COMFYFLEET_MANAGER_DIGEST=sha256:<manager-digest>
 ```
 
-Until that Actions run has succeeded on `main` and a maintainer has made both GHCR packages public, `docker pull` fails. This tree does not claim the images are already pullable. What a human still has to do is listed under Development.
+`COMFYFLEET_INSTANCE_IMAGE` and `COMFYFLEET_MANAGER_IMAGE` replace the full ref instead. If `docker pull` is denied, the GHCR package is still private. That case is under Development.
 
 The instance tag has to exist in the **host** engine before create, because sibling containers are started by that engine. `install.sh` pulls it and sets `COMFYFLEET_INSTANCE_IMAGE` to that ref. The manager's own default, when that variable is unset, remains `comfyfleet:phase1`. The script also applies that local tag, so a manager started without the variable still finds the image.
 
@@ -89,10 +82,10 @@ The script pulls both images, tags the local names above, removes an existing co
 ### The same start by hand
 
 ```bash
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest
-docker tag ghcr.io/recognizeyourprivilege/comfyfleet:phase1 comfyfleet:phase1
-docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest comfyfleet-manager:latest
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a4204564c60cf3afc40db17b34a268cf2c1c2f8e685b4601bc1c6e4dedbc713f
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba comfyfleet:phase1
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a4204564c60cf3afc40db17b34a268cf2c1c2f8e685b4601bc1c6e4dedbc713f comfyfleet-manager:latest
 
 docker run -d --name comfyfleet-manager \
   --restart unless-stopped \
@@ -102,16 +95,16 @@ docker run -d --name comfyfleet-manager \
   -v /home:/home \
   -e COMFYFLEET_PASSWORD=replace-with-a-long-secret \
   -e COMFYFLEET_PUBLIC_HOST=192.168.1.20 \
-  -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:phase1 \
-  ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest
+  -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba \
+  ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a4204564c60cf3afc40db17b34a268cf2c1c2f8e685b4601bc1c6e4dedbc713f
 ```
 
-[compose.yaml](compose.yaml) is the same service. It does not pull the instance image. Pull that tag first, or use `./install.sh --compose`:
+[compose.yaml](compose.yaml) is the same service. It does not pull the instance image. Pull that digest ref first, or use `./install.sh --compose`:
 
 ```bash
 export COMFYFLEET_PASSWORD=replace-with-a-long-secret
 export COMFYFLEET_PUBLIC_HOST=192.168.1.20
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba
 docker compose up -d
 ```
 
@@ -163,7 +156,7 @@ Create creates any of those directories that are missing, including the usual Co
 
 If `/home` is not a bind mount, the manager warns at startup. Directories created only inside the manager filesystem are not the directories sibling containers mount.
 
-`COMFYFLEET_INSTANCE_IMAGE` overrides the instance tag when you do not pass another image. The manager default is `comfyfleet:phase1`. `install.sh` sets the variable to the GHCR ref it pulled (`ghcr.io/recognizeyourprivilege/comfyfleet:phase1`, or a digest ref when `COMFYFLEET_INSTANCE_DIGEST` is set) and also tags that image as `comfyfleet:phase1`.
+`COMFYFLEET_INSTANCE_IMAGE` overrides the instance tag when you do not pass another image. The manager default is `comfyfleet:phase1`. `install.sh` sets the variable to the GHCR ref it pulled (`ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba`, unless `COMFYFLEET_INSTANCE_IMAGE` or `COMFYFLEET_INSTANCE_DIGEST` replaces it) and also tags that image as `comfyfleet:phase1`.
 
 ## Use the web UI
 
@@ -282,7 +275,9 @@ Containers are created with `--restart no`, so a created-but-never-started insta
 
 There is no zero-downtime or rolling update.
 
-**Pull a newer instance image.** `create` uses the tag already on the host engine. Pulling moves `:phase1`. Then recreate the instance. This does not rebuild torch on the host.
+**Pull a newer instance image.** `create` uses the image ref already on the host engine. The default install pins that ref, so pulling `:phase1` does not move it. Re-run `install.sh` with a new `COMFYFLEET_INSTANCE_DIGEST`, then recreate. This does not rebuild torch on the host.
+
+When the instance ref is the floating tag, pulling moves `:phase1`:
 
 ```bash
 docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1
@@ -293,7 +288,7 @@ docker exec comfyfleet-manager comfyfleet create \
 docker exec comfyfleet-manager comfyfleet start portrait
 ```
 
-If the manager was installed with `COMFYFLEET_INSTANCE_IMAGE` set to a digest, pulling `:phase1` does not change that pin. Re-run `install.sh` with the new `COMFYFLEET_INSTANCE_DIGEST`, then recreate. Re-running `install.sh` replaces the manager container and pulls images. It leaves workflow containers in place until you stop and create them again.
+Re-running `install.sh` replaces the manager container and pulls images. It leaves workflow containers in place until you stop and create them again.
 
 A local image rebuild is documented under Development.
 
@@ -396,14 +391,14 @@ instance ghcr.io/recognizeyourprivilege/comfyfleet@sha256:<digest>
 manager ghcr.io/recognizeyourprivilege/comfyfleet-manager@sha256:<digest>
 ```
 
-Those digests are not committed automatically. Copy them into the Install section above.
+Those digests are not committed automatically. When a publish should move the install pin, copy the new lines into the Install section, `install.sh`, and `compose.yaml`.
 
 What a human still has to do before operators can pull:
 
 1. Merge the workflow to `main`. A push to `main` that touches the workflow file starts it. `workflow_dispatch` is offered from the Actions tab only after the workflow file is on the default branch. This pull request does not publish images.
 2. Wait until both jobs succeed. A failed instance job is often disk or time on the hosted runner. The fallback is `scripts/publish-images.sh` on a machine with more free disk. No GPU is required there either.
 3. Open the `comfyfleet` and `comfyfleet-manager` packages on the account. A personal-account package is private on first publish. Set each package to public, or anonymous `docker pull` is denied. Making a package public cannot be undone. `GITHUB_TOKEN` can push the image and does not change visibility.
-4. Copy the digests from the job summary into this README if installs should be pinned.
+4. When the install pin should move, copy the new digests into the Install section, `install.sh`, and `compose.yaml`.
 
 GHCR limits each layer to 10 GB and each upload to about 10 minutes. These Dockerfiles are the same ones a local build uses. The workflow does not split layers.
 
