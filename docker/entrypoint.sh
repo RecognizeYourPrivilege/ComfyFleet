@@ -109,7 +109,17 @@ mkdir -p \
   "${models}/optical_flow" \
   "${models}/detection"
 
+# Stock Manager (pin 14b5aaab) allows git-URL and pip installs only when the
+# config flag is true AND --listen is loopback. This process keeps
+# --listen 0.0.0.0 so Docker can publish the port onto the docker.sock LAN.
+# COMFYFLEET_TRUSTED_INSTALL=1 is the gate the baked Manager patch reads:
+# the config flags still have to be true, and the loopback term is skipped.
+# See docker/patch_manager_trusted_install.py.
+export COMFYFLEET_TRUSTED_INSTALL=1
+/opt/venv/bin/python /opt/comfyfleet/seed_manager_config.py
+
 echo "comfyfleet: loading operator workflow ${WF}"
+echo "comfyfleet: COMFYFLEET_TRUSTED_INSTALL=${COMFYFLEET_TRUSTED_INSTALL}"
 # Locked first. Extra arguments come from `docker create` (the instance
 # launch flags). A pasted --listen or --port is dropped so it cannot
 # replace this pair. The published host port is Docker's -p mapping;

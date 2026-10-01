@@ -248,13 +248,53 @@ The host `custom_nodes` directory hides the image's `custom_nodes` folder. On ev
 
 A real directory you place at one of those names is left alone. The links point at `/opt/comfyfleet/baked_custom_nodes/...` inside the container, so on the host they look dangling; ComfyUI follows them in the container.
 
+## Manager git URL install
+
+Install via Git URL is on for an instance that starts from this image. The entrypoint writes Manager's `config.ini` and exports `COMFYFLEET_TRUSTED_INSTALL=1` before it execs ComfyUI.
+
+Pinned ComfyUI v0.38.0 has `folder_paths.get_system_user_directory`, so Manager 14b5aaab reads `<user directory>/__manager/config.ini`. The entrypoint does not pass `--user-directory`. That directory is not a bind mount. The file is `/opt/ComfyUI/user/__manager/config.ini`. On every start the entrypoint creates it when it is missing, and otherwise sets these keys in `[default]`. Other keys and other sections stay:
+
+```ini
+[default]
+allow_git_url_install = true
+allow_pip_install = true
+security_level = normal
+```
+
+Manager's flag parser accepts the string `true` in any case. `security_level` is lowercased on read. With no file, both install flags are false.
+
+That same Manager commit still requires a loopback `--listen` (`127.0.0.1` or `::1`) inside `is_dedicated_install_allowed` before `POST /customnode/install/git_url`, `POST /customnode/install/pip`, or the unknown-git-URL arm of the install queue will run. ComfyFleet keeps `--listen 0.0.0.0` so Docker can publish the instance port. `docker/patch_manager_trusted_install.py` rewrites that one helper in the baked checkout. The flag stays required. When the entrypoint has exported `COMFYFLEET_TRUSTED_INSTALL=1`, the loopback term is skipped. With the variable unset, the stock check remains.
+
+`0.0.0.0` is what lets Docker publish the instance port onto the docker.sock LAN. That operator network is the ComfyFleet case. A Manager process on the public internet, with git-URL install open and no operator gate, is a different threat model. The env var is the gate this image sets.
+
+The instance log records the seed, the env var, and the values Manager loaded:
+
+```text
+comfyfleet: Manager config /opt/ComfyUI/user/__manager/config.ini allow_git_url_install=true allow_pip_install=true security_level=normal
+comfyfleet: COMFYFLEET_TRUSTED_INSTALL=1
+[ComfyUI-Manager] ComfyFleet dedicated install flags: allow_git_url_install=True allow_pip_install=True security_level=normal COMFYFLEET_TRUSTED_INSTALL=1
+```
+
+A directory you place at `custom_nodes/ComfyUI-Manager` is left alone, and that copy does not include this patch. After an in-container `git pull` of the baked Manager, run `python /opt/comfyfleet/patch_manager_trusted_install.py` again. The config seed runs on the next start either way.
+
+To prove the gate opened, recreate the instance from this image and read the three log lines above. Then, from the host, against the published port:
+
+```bash
+curl -sS -D - -o /tmp/git-url-body.txt \
+  -X POST "http://127.0.0.1:<host-port>/customnode/install/git_url" \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+An open gate returns **400** and a body that contains `expected JSON object with a 'url' field`. The handler checks the flag before it reads the body, so a closed gate returns **403** and `{"error": "allow_git_url_install"}`. 400 is the proof. A real install is the same request with `{"url":"https://github.com/ltdrdata/ComfyUI-Impact-Pack"}`, which returns **200** when the clone succeeds.
+
 ## Workflow load path
 
 1. Create copies the operator workflow to `/home/files/<name>/default_workflow.json`.
 2. Instance metadata is written to `/home/files/<name>/comfyfleet.json` (name, port, GPUs, image, workflow paths, and any ComfyUI launch flags chosen at create).
 3. `/home/files/<name>` is bind-mounted at `/opt/comfyfleet/instance`. Edit the workflow file in place.
 4. Every instance start runs `docker/entrypoint.sh`, which refuses to exec ComfyUI if that JSON object is missing or invalid. It then writes a new boot id to `/tmp/comfyfleet-boot-id`.
-5. ComfyUI is executed as `python main.py --listen 0.0.0.0 --port 8188`, then any per-instance flags saved at create (VRAM mode, attention backend, dtype and memory toggles, and extra args). `--listen` stays `0.0.0.0`. The process port stays `8188` inside the container; the host port is the Docker publish. Pasted `--listen` or `--port` in extra args are removed. On NVIDIA, `--lowvram` does nothing while dynamic VRAM is enabled, so a 12GB GPU also needs `--disable-dynamic-vram`. Changing flags is a recreate (`--force` on a stopped instance).
+5. ComfyUI is executed as `python main.py --listen 0.0.0.0 --port 8188`, then any per-instance flags saved at create (VRAM mode, attention backend, dtype and memory toggles, and extra args). `--listen` stays `0.0.0.0`. The process port stays `8188` inside the container; the host port is the Docker publish. Pasted `--listen` or `--port` in extra args are removed. On NVIDIA, `--lowvram` does nothing while dynamic VRAM is enabled, so a 12GB GPU also needs `--disable-dynamic-vram`. Changing flags is a recreate (`--force` on a stopped instance). Before that exec, the entrypoint seeds Manager `config.ini` and exports `COMFYFLEET_TRUSTED_INSTALL=1` (see Manager git URL install).
 6. The baked loader serves `GET /comfyfleet/default-workflow` and `GET /comfyfleet/boot`. Its frontend extension loads the operator graph after the UI comes up. A browser tab loads the file once per boot id and file mtime. If the fetch fails, the loader does not substitute another workflow.
 
 GPU changes are a recreate: stop the instance, then create again with `--force` and the new GPU set. There is no in-place GPU edit.
@@ -310,7 +350,7 @@ exit
 docker exec comfyfleet-manager comfyfleet restart portrait
 ```
 
-The image checkouts start detached at the pins above, so a bare `git pull` will not move them until you check out a branch. Keep the torch constraints file in the pip command so a pull does not replace CUDA 12.4 torch with the PyPI CUDA 13 wheel. If that command reinstalls comfy-kitchen, install the pure-Python 0.2.36 wheel again and rerun `python /opt/comfyfleet/patch_comfy_kitchen_torch26.py`. A manylinux kitchen wheel targets CUDA 13, and an unpatched 0.2.36 tree crashes torch 2.6 at import.
+The image checkouts start detached at the pins above, so a bare `git pull` will not move them until you check out a branch. Keep the torch constraints file in the pip command so a pull does not replace CUDA 12.4 torch with the PyPI CUDA 13 wheel. If that command reinstalls comfy-kitchen, install the pure-Python 0.2.36 wheel again and rerun `python /opt/comfyfleet/patch_comfy_kitchen_torch26.py`. A manylinux kitchen wheel targets CUDA 13, and an unpatched 0.2.36 tree crashes torch 2.6 at import. If the Manager pull replaces the baked tree, rerun `python /opt/comfyfleet/patch_manager_trusted_install.py`. A pulled Manager has the stock loopback gate again. The entrypoint still rewrites `config.ini` on the next start.
 
 ## API
 
