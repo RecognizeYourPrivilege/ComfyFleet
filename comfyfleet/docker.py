@@ -109,6 +109,11 @@ class DockerCLI:
     def stop(self, name: str) -> None:
         self._check(["stop", name])
 
+    def kill(self, name: str) -> None:
+        """Hard stop. ``docker kill`` sends SIGKILL, unlike ``docker stop``."""
+
+        self._check(["kill", name])
+
     def remove(self, name: str) -> None:
         self._check(["rm", "-f", name])
 

@@ -169,7 +169,7 @@ If `/home` is not a bind mount, the manager warns at startup. Directories create
 
 Open the manager URL and sign in. The password is the `COMFYFLEET_PASSWORD` value. Wrong password shows invalid credentials. Log out clears the session. After that, fleet API calls fail until you sign in again.
 
-The UI is the primary way to create an instance. Upload a workflow JSON, pick GPUs, then create. New instances stay **stopped**. Start the ones you want running and stop the others. Open is enabled only while an instance is running.
+The UI is the primary way to create an instance. Upload a workflow JSON, pick GPUs, launch flags, then create. New instances stay **stopped**. Start the ones you want running and stop the others. **Open** is a shell in that instance, proxied by the manager over a websocket (`docker exec` stays on the manager; the browser never gets the Docker socket). **Open Comfy** is the ComfyUI page and is enabled only while the instance is running. **Force stop** is `docker kill`. **Delete** asks for confirmation, then removes that container and its fleet record. Host files for the instance are kept.
 
 There is no baked default workflow. A missing or invalid workflow JSON does not create an instance.
 

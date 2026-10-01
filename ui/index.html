@@ -86,7 +86,7 @@
 
       <div class="flag-panel" role="group" aria-labelledby="flags-label">
         <p class="field-label" id="flags-label">Launch flags</p>
-        <p class="hint">Nothing selected starts ComfyUI with only <code>--listen 0.0.0.0</code> and the container port. Those two stay locked. On NVIDIA, <code>--lowvram</code> does nothing while dynamic VRAM is on — also check <code>--disable-dynamic-vram</code> for a 12GB card.</p>
+        <p class="hint">Nothing selected starts ComfyUI with only <code>--listen 0.0.0.0</code> and the container port. Those two stay locked. On a 12GB GPU such as an RTX A2000, <code>--lowvram</code> alone is a no-op while dynamic VRAM is on. Use <code>--lowvram</code> and <code>--disable-dynamic-vram</code> together.</p>
 
         <p class="flag-sub" id="vram-label">VRAM</p>
         <div class="choice-col" role="radiogroup" aria-labelledby="vram-label">
@@ -96,7 +96,7 @@
           </label>
           <label class="choice">
             <input type="radio" name="vram" value="--lowvram">
-            <span>--lowvram<small>Text encoders on CPU when dynamic VRAM is off.</small></span>
+            <span>--lowvram<small>On a 12GB GPU (RTX A2000), --lowvram alone is a no-op while dynamic VRAM is on. Also check --disable-dynamic-vram.</small></span>
           </label>
           <label class="choice">
             <input type="radio" name="vram" value="--novram">
@@ -162,7 +162,7 @@
         <label class="check"><input type="checkbox" name="flag" value="--cpu" data-exclusive="vram"><span>--cpu<small>Use the CPU for everything (slow).</small></span></label>
         <label class="check"><input type="checkbox" name="flag" value="--gpu-only" data-exclusive="vram"><span>--gpu-only<small>Keep text encoders and CLIP on the GPU.</small></span></label>
         <label class="check"><input type="checkbox" name="flag" value="--disable-smart-memory"><span>--disable-smart-memory</span></label>
-        <label class="check"><input type="checkbox" name="flag" value="--disable-dynamic-vram" data-exclusive="dynvram"><span>--disable-dynamic-vram</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--disable-dynamic-vram" data-exclusive="dynvram"><span>--disable-dynamic-vram<small>Independent of the VRAM radio. Pair it with --lowvram on a 12GB card.</small></span></label>
         <label class="check"><input type="checkbox" name="flag" value="--enable-dynamic-vram" data-exclusive="dynvram"><span>--enable-dynamic-vram</span></label>
         <label class="check"><input type="checkbox" name="flag" value="--cuda-malloc" data-exclusive="cudamalloc"><span>--cuda-malloc</span></label>
         <label class="check"><input type="checkbox" name="flag" value="--disable-cuda-malloc" data-exclusive="cudamalloc"><span>--disable-cuda-malloc</span></label>
@@ -203,6 +203,18 @@
       <div class="sheet-actions">
         <button id="create-stopped" class="btn primary" type="button">Create</button>
         <button id="create-start" class="btn secondary" type="button">Create &amp; start</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm" class="sheet" hidden>
+    <button class="scrim" type="button" data-confirm-no aria-label="Cancel"></button>
+    <div class="sheet-card glass confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+      <h2 id="confirm-title">Delete instance</h2>
+      <p id="confirm-text"></p>
+      <div class="sheet-actions">
+        <button id="confirm-yes" class="btn danger" type="button">Delete</button>
+        <button id="confirm-no" class="btn secondary" type="button">Cancel</button>
       </div>
     </div>
   </div>

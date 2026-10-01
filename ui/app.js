@@ -136,13 +136,21 @@ function instanceCard(instance) {
   const stop = el("button", { className: "btn secondary", type: "button", text: "Stop" });
   stop.disabled = !running;
   stop.addEventListener("click", () => mutate(instance.name, "stop", stop, "Stopping…"));
+  const kill = el("button", { className: "btn secondary", type: "button", text: "Force stop" });
+  kill.disabled = !running;
+  kill.addEventListener("click", () => mutate(instance.name, "force-stop", kill, "Killing…"));
   const open = el("button", { className: "btn primary", type: "button", text: "Open" });
-  open.disabled = !url;
-  open.addEventListener("click", () => openInstance(url));
+  open.disabled = !running;
+  open.addEventListener("click", () => openTerminal(instance.name));
+  const comfy = el("button", { className: "btn secondary", type: "button", text: "Open Comfy" });
+  comfy.disabled = !url;
+  comfy.addEventListener("click", () => openInstance(url));
   const copy = el("button", { className: "btn secondary", type: "button", text: "Copy URL" });
   copy.disabled = !url;
   copy.addEventListener("click", () => copyUrl(url));
-  actions.append(start, stop, open, copy);
+  const remove = el("button", { className: "btn danger", type: "button", text: "Delete" });
+  remove.addEventListener("click", () => confirmDelete(instance.name, remove));
+  actions.append(start, stop, kill, open, comfy, copy, remove);
   card.append(actions);
   const details = el("details");
   details.append(el("summary", { text: "Details" }));
@@ -164,6 +172,12 @@ async function mutate(name, action, button, pending) {
     await refresh();
     return;
   }
+  if (action === "delete") {
+    showToast(`Deleted ${name}.`);
+    hide(banner);
+    await refresh();
+    return;
+  }
   const warning = result.payload.warning;
   const instance = result.payload.instance;
   showToast(warning ? `${actionLabel(action, instance)} ${warning}` : actionLabel(action, instance));
@@ -174,7 +188,46 @@ async function mutate(name, action, button, pending) {
 function actionLabel(action, instance) {
   if (!instance) return action;
   if (action === "start") return `Started ${instance.name} on port ${instance.port}.`;
+  if (action === "force-stop") return `Force-stopped ${instance.name}.`;
   return `Stopped ${instance.name}.`;
+}
+
+function openTerminal(name) {
+  const page = `/terminal.html?name=${encodeURIComponent(name)}`;
+  const opened = window.open(page, "_blank", "noopener");
+  if (!opened) showToast(page);
+}
+
+async function confirmDelete(name, button) {
+  const yes = await askConfirm(
+    `Delete ${name}? This force-stops and removes only that instance container, and drops its fleet record. Other containers are not touched. Host files for this instance are kept.`
+  );
+  if (!yes) return;
+  await mutate(name, "delete", button, "Deleting…");
+}
+
+function askConfirm(text) {
+  const sheet = document.querySelector("#confirm");
+  const message = document.querySelector("#confirm-text");
+  message.textContent = text;
+  sheet.hidden = false;
+  return new Promise((resolve) => {
+    function finish(value) {
+      sheet.hidden = true;
+      sheet.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKey);
+      resolve(value);
+    }
+    function onClick(event) {
+      if (event.target.closest("#confirm-yes")) finish(true);
+      else if (event.target.closest("#confirm-no") || event.target.closest("[data-confirm-no]")) finish(false);
+    }
+    function onKey(event) {
+      if (event.key === "Escape") finish(false);
+    }
+    sheet.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKey);
+  });
 }
 
 function openInstance(url) {

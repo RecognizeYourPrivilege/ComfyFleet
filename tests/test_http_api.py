@@ -45,6 +45,10 @@ class FakeDocker:
         self.calls.append(("stop", name))
         self.containers[name]["status"] = "exited"
 
+    def kill(self, name):
+        self.calls.append(("kill", name))
+        self.containers[name]["status"] = "exited"
+
     def remove(self, name):
         self.calls.append(("rm", name))
         self.containers.pop(name, None)
@@ -462,6 +466,28 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(replaced["instance"]["name"], "portrait")
         self.assertIn(("rm", "portrait"), self.docker.calls)
 
+    def test_force_stop_and_delete_named_instance(self):
+        path = Path(self.tmp.name) / "Portrait.json"
+        path.write_bytes(_workflow("gone"))
+        self._post_json({"workflow_path": str(path), "gpu": "0", "start": True})
+        status, raw = self._open("POST", "/api/instances/portrait/force-stop")
+        self.assertEqual(status, 200, raw)
+        self.assertIn(("kill", "portrait"), self.docker.calls)
+        self.assertNotIn(("stop", "portrait"), self.docker.calls)
+        self.assertEqual(self.docker.status("portrait"), "exited")
+        self.assertTrue((self.layout.files / "portrait" / "comfyfleet.json").is_file())
+
+        self._open("POST", "/api/instances/portrait/start")
+        status, raw = self._open("POST", "/api/instances/portrait/delete")
+        self.assertEqual(status, 200, raw)
+        deleted = self._body(status, raw)
+        self.assertEqual(deleted["deleted"], "portrait")
+        self.assertIsNone(self.docker.status("portrait"))
+        self.assertFalse((self.layout.files / "portrait" / "comfyfleet.json").is_file())
+        self.assertTrue((self.layout.files / "portrait" / "default_workflow.json").is_file())
+        listed = self._body(*self._open("GET", "/api/instances"))["instances"]
+        self.assertEqual(listed, [])
+
     def test_unknown_instance_and_routes(self):
         status, raw = self._open("POST", "/api/instances/missing/start")
         self.assertEqual(status, 400)
@@ -469,7 +495,8 @@ class HttpApiTests(unittest.TestCase):
         status, raw = self._open("GET", "/api/instances/portrait/start")
         self.assertEqual(status, 405)
         status, raw = self._open("POST", "/api/instances/portrait/delete")
-        self.assertEqual(status, 404)
+        self.assertEqual(status, 400)
+        self.assertIn("no instance named", json.loads(raw.decode("utf-8"))["error"])
         status, raw = self._open("POST", "/api/nope")
         self.assertEqual(status, 404)
 
