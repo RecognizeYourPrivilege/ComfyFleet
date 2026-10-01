@@ -172,7 +172,7 @@ Optional. Leave the git URL list and the zip blank to skip them. Create still re
 
 ## Use
 
-Open the manager URL and sign in with `COMFYFLEET_PASSWORD`. Upload a workflow JSON, pick GPUs, then create. New instances stay stopped. **Open** is a shell proxied by the manager. **Open Comfy** uses `window.location.hostname` plus the instance's published port and is enabled only while the instance is running. **Force stop** is `docker kill`. **Delete** is the trash icon. It asks for confirmation, then removes that container and its fleet record. Host files stay. Comfy args live under **Advanced / ComfyUI flags**, collapsed until you open them.
+Open the manager URL and sign in with `COMFYFLEET_PASSWORD`. Upload a workflow JSON, pick GPUs, then create. New instances stay stopped. Each instance card has an icon row: **Start**, **Stop**, **Force stop** (`docker kill`), **Open** (a shell proxied by the manager), **Open Comfy**, **Flags**, and **Delete**. **Open Comfy** uses `window.location.hostname` plus the instance's published port and is enabled only while the instance is running. **Flags** (pencil) reveals that instance's Comfy arguments; they stay hidden until you open them. **Delete** asks for confirmation, then removes that container and its fleet record. Host files stay. The create sheet keeps Comfy args under **Advanced / ComfyUI flags**, collapsed until you open them.
 
 On a multi-GPU host, create asks which GPUs to attach. A single GPU still has to be selected.
 
