@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from comfyfleet.control import Instance, create_instance, start_instance
+from comfyfleet.control import Instance, create_instance, start_instance, update_instance_launch
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
 from comfyfleet.launch import (
@@ -20,6 +20,16 @@ from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _mounts(args: list[str]) -> list[str]:
+    found = []
+    index = 0
+    while index < len(args):
+        if args[index] == "-v" and index + 1 < len(args):
+            found.append(args[index + 1])
+        index += 1
+    return found
 
 
 class FakeDocker:
@@ -236,6 +246,45 @@ class LaunchCreateTests(unittest.TestCase):
         )
         args = self.docker.containers["portrait"]["args"]
         self.assertEqual(args[-1], DEFAULT_IMAGE)
+
+    def test_update_recreates_same_name_port_and_mounts(self):
+        created = create_instance(
+            _workflow(self.sources),
+            layout=self.layout,
+            docker=self.docker,
+            gpus=self.gpus,
+            gpu="0",
+            port_in_use=lambda _port: False,
+            launch=parse_launch(vram="--lowvram"),
+        )
+        workflow = (self.layout.files / "portrait" / "default_workflow.json").read_bytes()
+        first = self.docker.containers["portrait"]["args"]
+        self.docker.start("portrait")
+        updated = update_instance_launch(
+            "portrait",
+            parse_launch(vram="--novram", flags=["--disable-dynamic-vram", "--cache-none"]),
+            layout=self.layout,
+            docker=self.docker,
+            gpus=self.gpus,
+            port_in_use=lambda _port: False,
+        )
+        self.assertTrue(updated.started)
+        self.assertEqual(updated.instance.name, created.instance.name)
+        self.assertEqual(updated.instance.port, created.instance.port)
+        self.assertEqual(list(self.docker.containers), ["portrait"])
+        second = self.docker.containers["portrait"]["args"]
+        self.assertEqual(_mounts(first), _mounts(second))
+        self.assertEqual(first[first.index("--name") + 1], second[second.index("--name") + 1])
+        self.assertEqual(first[first.index("-p") + 1], second[second.index("-p") + 1])
+        self.assertEqual(first[first.index("--gpus") + 1], second[second.index("--gpus") + 1])
+        self.assertEqual(
+            second[second.index(DEFAULT_IMAGE) + 1 :],
+            ["--novram", "--disable-dynamic-vram", "--cache-none"],
+        )
+        self.assertNotIn("--listen", second)
+        self.assertNotIn("--port", second[second.index(DEFAULT_IMAGE) + 1 :])
+        self.assertEqual((self.layout.files / "portrait" / "default_workflow.json").read_bytes(), workflow)
+        self.assertEqual(self.docker.status("portrait"), "running")
 
     def test_start_recreate_keeps_saved_flags(self):
         create_instance(

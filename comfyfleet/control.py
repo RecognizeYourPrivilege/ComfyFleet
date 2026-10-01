@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -79,7 +79,7 @@ def authorize(action: str) -> None:
     refuses to start when ``COMFYFLEET_PASSWORD`` is missing.
     """
 
-    if action not in {"create", "start", "stop", "force-stop", "delete", "terminal", "restart", "list"}:
+    if action not in {"create", "start", "stop", "force-stop", "delete", "terminal", "restart", "list", "update"}:
         raise FleetError(f"unknown control action {action!r}")
     if http_auth_state() is False:
         raise AuthError("unauthorized")
@@ -271,6 +271,61 @@ def delete_instance(name: str, *, layout: FleetLayout, docker: DockerCLI) -> Ins
         docker.remove(name)
     _remove_metadata(layout, name)
     return instance
+
+
+def update_instance_launch(
+    name: str,
+    launch: LaunchConfig | None,
+    *,
+    layout: FleetLayout,
+    docker: DockerCLI,
+    gpus: list[Gpu],
+    port_in_use=None,
+    max_concurrent: int | None = None,
+    use_env_limit: bool = False,
+) -> ActionResult:
+    """Stop and recreate this instance so only Comfy argv changes.
+
+    Name, host port, GPU set, image, workflow file, and mount paths stay.
+    The previous container is removed before the replacement is created, so
+    the name is not left duplicated.
+    """
+
+    authorize("update")
+    _require_name(name)
+    launch = _canonicalize_launch(launch)
+    current = _require_instance(layout, name)
+    status = docker.status(name)
+    if status is None:
+        raise FleetError(
+            f"instance {name!r} has metadata but no container. "
+            "Nothing to recreate."
+        )
+    was_running = status == "running"
+    if was_running:
+        docker.stop(name)
+    if docker.status(name) is not None:
+        docker.remove(name)
+    updated = replace(current, launch=launch)
+    _write_metadata(layout, updated)
+    try:
+        docker.create(_create_args(layout, updated))
+    except Exception:
+        _write_metadata(layout, current)
+        if docker.status(name) is None:
+            docker.create(_create_args(layout, current))
+        raise
+    if not was_running:
+        return ActionResult(instance=updated, started=False, warning=None)
+    return start_instance(
+        name,
+        layout=layout,
+        docker=docker,
+        gpus=gpus,
+        port_in_use=port_in_use,
+        max_concurrent=max_concurrent,
+        use_env_limit=use_env_limit,
+    )
 
 
 def terminal_argv(

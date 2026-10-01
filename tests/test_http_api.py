@@ -456,6 +456,42 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(status, 400, raw)
         self.assertIn("cannot be combined", json.loads(raw.decode("utf-8"))["error"])
 
+    def test_launch_update_keeps_port_mounts_and_workflow(self):
+        path = Path(self.tmp.name) / "Portrait.json"
+        path.write_bytes(_workflow("keep"))
+        created = self._post_json(
+            {"workflow_path": str(path), "gpu": "0", "start": True, "vram": "lowvram"}
+        )
+        self.assertEqual(created["instance"]["port"], 8188)
+        workflow = (self.layout.files / "portrait" / "default_workflow.json").read_bytes()
+        first = self.docker.containers["portrait"]["args"]
+        status, raw = self._open(
+            "POST",
+            "/api/instances/portrait/launch",
+            data=json.dumps({"vram": "--novram", "flags": ["--cache-none"]}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 200, raw)
+        body = self._body(status, raw)
+        self.assertTrue(body["started"])
+        self.assertEqual(body["instance"]["port"], 8188)
+        self.assertEqual(body["instance"]["launch"]["argv"], ["--novram", "--cache-none"])
+        self.assertEqual(list(self.docker.containers), ["portrait"])
+        second = self.docker.containers["portrait"]["args"]
+        self.assertEqual(first[first.index("-p") + 1], second[second.index("-p") + 1])
+        self.assertEqual(first[first.index("--name") + 1], "portrait")
+        self.assertEqual(
+            [first[index + 1] for index, token in enumerate(first) if token == "-v"],
+            [second[index + 1] for index, token in enumerate(second) if token == "-v"],
+        )
+        self.assertEqual(
+            (self.layout.files / "portrait" / "default_workflow.json").read_bytes(),
+            workflow,
+        )
+        removed = [index for index, call in enumerate(self.docker.calls) if call[0] == "rm"]
+        created_at = [index for index, call in enumerate(self.docker.calls) if call[0] == "create"]
+        self.assertGreater(created_at[-1], removed[-1])
+
     def test_collision_and_force(self):
         path = Path(self.tmp.name) / "Portrait.json"
         path.write_bytes(_workflow("v1"))
