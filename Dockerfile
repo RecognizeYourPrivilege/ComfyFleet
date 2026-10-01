@@ -8,6 +8,14 @@
 # to start when that file is missing.
 #
 # Pins are duplicated in docker/PINS.txt and the README.
+#
+# RES4LYF imports cv2 while the custom node loads. The opencv-python wheel
+# (not the headless build; that is the name in RES4LYF requirements.txt)
+# ships a Qt xcb plugin linked to libxcb.so.1. bookworm-slim does not ship
+# that library, which is the "cannot open shared object file" crash.
+# libxcb1, libx11-6, libxext6, libice6, libsm6, libglib2.0-0, and libgl1
+# cover that plugin plus the libGL and libglib imports cv2 itself performs.
+# numpy==2.2.6 is written into torch-constraints.txt next to the torch pins.
 
 FROM debian:bookworm-slim
 
@@ -42,6 +50,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 \
         python3-venv \
         python3-pip \
+        libxcb1 \
+        libx11-6 \
+        libxext6 \
+        libice6 \
+        libsm6 \
+        libglib2.0-0 \
+        libgl1 \
     && ln -sfn /usr/local/cuda-12.4 /usr/local/cuda \
     && apt-mark hold cuda-libraries-12-4 cuda-cudart-12-4 libcudnn9-cuda-12 \
     && rm -rf /var/lib/apt/lists/* \
@@ -55,7 +70,14 @@ RUN mkdir -p /opt/comfyfleet \
         --index-url https://download.pytorch.org/whl/cu124 \
         --extra-index-url https://pypi.org/simple \
     && python -c 'import torch; v = torch.__version__; assert v.startswith("2.6.0") and "cu124" in v, v' \
-    && printf '%s\n' 'torch==2.6.0+cu124' 'torchvision==0.21.0+cu124' > /opt/comfyfleet/torch-constraints.txt
+    && pip install --no-cache-dir numpy==2.2.6 \
+    && python -c 'import numpy; assert numpy.__version__ == "2.2.6", numpy.__version__' \
+    && printf '%s\n' 'torch==2.6.0+cu124' 'torchvision==0.21.0+cu124' 'numpy==2.2.6' > /opt/comfyfleet/torch-constraints.txt
+
+# Manager custom-node installs run `python -m pip install -U` and do not pass
+# -c themselves. PIP_CONSTRAINT is the same file, so those installs cannot
+# replace torch, torchvision, or numpy.
+ENV PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt
 
 # Pure-Python comfy-kitchen (eager backend). The manylinux wheel targets CUDA 13.
 # Install this wheel before ComfyUI requirements so comfy-kitchen==0.2.36 is
@@ -76,6 +98,8 @@ RUN git config --global --add safe.directory '*' \
     && git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Pixaroma checkout 9259bc49557a92e3fc14796999468c723bd1ecdd \
     && git clone https://github.com/RecognizeYourPrivilege/ComfyUI-ComfyDock.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-ComfyDock \
     && git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-ComfyDock checkout 3a9ff9eba897bf2388d6c1943b01d819ba05a0c6 \
+    && git clone https://github.com/ClownsharkBatwing/RES4LYF.git /opt/comfyfleet/baked_custom_nodes/RES4LYF \
+    && git -C /opt/comfyfleet/baked_custom_nodes/RES4LYF checkout 3d1d69da69ee47f7647d59e1bd0967e472fccc41 \
     && mkdir -p /opt/comfyfleet/stock_custom_nodes \
     && cp -a /opt/ComfyUI/custom_nodes/. /opt/comfyfleet/stock_custom_nodes/ \
     && mkdir -p /opt/ComfyUI/models /opt/ComfyUI/input /opt/ComfyUI/output /opt/ComfyUI/temp /opt/comfyfleet/instance
@@ -85,10 +109,13 @@ RUN pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt \
         -r /opt/comfyfleet/baked_custom_nodes/ComfyUI-Manager/requirements.txt \
         -r /opt/comfyfleet/baked_custom_nodes/ComfyUI-Pixaroma/requirements.txt \
         -r /opt/comfyfleet/baked_custom_nodes/ComfyUI-ComfyDock/requirements.txt \
-    && python -c 'import torch; assert "cu124" in torch.__version__, torch.__version__'
+        -r /opt/comfyfleet/baked_custom_nodes/RES4LYF/requirements.txt \
+    && python -c 'import torch; assert "cu124" in torch.__version__, torch.__version__' \
+    && python -c 'import numpy; assert numpy.__version__ == "2.2.6", numpy.__version__'
 
 COPY docker/PINS.txt /opt/comfyfleet/PINS.txt
 COPY docker/patch_comfy_kitchen_torch26.py /opt/comfyfleet/patch_comfy_kitchen_torch26.py
+COPY docker/verify_image_pins.py /opt/comfyfleet/verify_image_pins.py
 
 # Requirements leave an already-installed 0.2.36 in place. Reinstall the
 # pure-Python wheel anyway so a resolver that picked the manylinux build cannot
@@ -103,7 +130,8 @@ COPY docker/patch_comfy_kitchen_torch26.py /opt/comfyfleet/patch_comfy_kitchen_t
 # environment variable." gcc and python3-dev above are what that compile uses.
 # Triton ships cuda.h in its wheel; this image does not install nvcc or g++.
 RUN pip install --no-cache-dir --force-reinstall --no-deps "${COMFY_KITCHEN_WHEEL}" \
-    && python /opt/comfyfleet/patch_comfy_kitchen_torch26.py
+    && python /opt/comfyfleet/patch_comfy_kitchen_torch26.py \
+    && python /opt/comfyfleet/verify_image_pins.py
 COPY docker/comfyfleet_default_workflow /opt/comfyfleet/baked_custom_nodes/comfyfleet_default_workflow
 
 # Fleet patch of the baked Manager. Stock is_dedicated_install_allowed
