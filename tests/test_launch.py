@@ -86,7 +86,7 @@ class LaunchParseTests(unittest.TestCase):
             flags=["disable-smart-memory", "--force-fp16"],
             reserve_vram="1.5",
             preview_method="auto",
-            extra_args="--listen 127.0.0.1 --port 9 --cache-none",
+            extra_args="--listen 127.0.0.1 --port 9 --quick-test-for-ci",
         )
         self.assertEqual(
             launch.argv(),
@@ -99,7 +99,7 @@ class LaunchParseTests(unittest.TestCase):
                 "1.5",
                 "--preview-method",
                 "auto",
-                "--cache-none",
+                "--quick-test-for-ci",
             ],
         )
         self.assertNotIn("--listen", launch.argv())
@@ -115,8 +115,8 @@ class LaunchParseTests(unittest.TestCase):
             strip_locked_args(["--port", "9000", "--listen=10.0.0.2", "plain"]),
             ["plain"],
         )
-        launch = parse_launch(extra_args="--listen --disable-metadata")
-        self.assertEqual(launch.argv(), ["--disable-metadata"])
+        launch = parse_launch(extra_args="--listen --quick-test-for-ci")
+        self.assertEqual(launch.argv(), ["--quick-test-for-ci"])
 
     def test_conflicts_and_unknown_flags_are_refused(self):
         with self.assertRaises(FleetError):
@@ -135,8 +135,17 @@ class LaunchParseTests(unittest.TestCase):
             parse_launch(extra_args="--preview-method auto")
 
     def test_unlisted_real_flag_stays_in_extra(self):
-        launch = parse_launch(extra_args="--cache-none --mmap-torch-files")
-        self.assertEqual(launch.argv(), ["--cache-none", "--mmap-torch-files"])
+        launch = parse_launch(extra_args="--quick-test-for-ci --mmap-torch-files")
+        self.assertEqual(launch.argv(), ["--quick-test-for-ci", "--mmap-torch-files"])
+
+    def test_cache_flags_are_exclusive(self):
+        with self.assertRaises(FleetError):
+            parse_launch(flags=["--cache-none", "--cache-classic"])
+        launch = parse_launch(vram="--lowvram", flags=["--cache-none", "--disable-dynamic-vram"])
+        self.assertEqual(
+            launch.argv(),
+            ["--lowvram", "--disable-dynamic-vram", "--cache-none"],
+        )
 
     def test_metadata_without_launch_stays_stock(self):
         instance = Instance.from_json(
@@ -182,9 +191,9 @@ class LaunchCreateTests(unittest.TestCase):
     def test_create_appends_flags_after_the_image_and_persists_them(self):
         launch = parse_launch(
             vram="--lowvram",
-            flags=["--disable-dynamic-vram", "--disable-smart-memory"],
+            flags=["--disable-dynamic-vram", "--disable-smart-memory", "--cache-classic"],
             reserve_vram="1",
-            extra_args="--listen 127.0.0.1 --cache-classic",
+            extra_args="--listen 127.0.0.1 --mmap-torch-files",
         )
         result = create_instance(
             _workflow(self.sources),
@@ -201,9 +210,10 @@ class LaunchCreateTests(unittest.TestCase):
                 "--lowvram",
                 "--disable-smart-memory",
                 "--disable-dynamic-vram",
+                "--cache-classic",
                 "--reserve-vram",
                 "1",
-                "--cache-classic",
+                "--mmap-torch-files",
             ],
         )
         args = self.docker.containers["portrait"]["args"]

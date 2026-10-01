@@ -80,6 +80,11 @@ BOOL_FLAGS: tuple[BoolFlag, ...] = (
     BoolFlag("--deterministic", "memory", "Use slower deterministic PyTorch algorithms when possible."),
     BoolFlag("--force-channels-last", "memory", "Force channels-last when running the models."),
     BoolFlag("--supports-fp8-compute", "memory", "Act as if the device supports fp8 compute."),
+    BoolFlag("--fp64-unet", "dtype", "Run the diffusion model in fp64.", "unet"),
+    BoolFlag("--fp16-intermediates", "dtype", "Use fp16 for intermediate tensors between nodes."),
+    BoolFlag("--cache-classic", "caching", "Use the old aggressive caching.", "cache"),
+    BoolFlag("--cache-none", "caching", "Execute every node on each run to save RAM.", "cache"),
+    BoolFlag("--high-ram", "caching", "Prefer RAM or pagefile over reloading models.", "cache"),
 )
 
 _BOOL_BY_FLAG = {item.flag: item for item in BOOL_FLAGS}

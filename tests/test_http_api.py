@@ -395,7 +395,7 @@ class HttpApiTests(unittest.TestCase):
                 "attention": "use-flash-attention",
                 "flags": ["disable-dynamic-vram", "disable-xformers"],
                 "reserve_vram": 1.5,
-                "extra_args": "--listen 127.0.0.1 --port 1 --cache-none",
+                "extra_args": "--listen 127.0.0.1 --port 1 --mmap-torch-files",
             }
         )
         argv = created["instance"]["launch"]["argv"]
@@ -408,7 +408,7 @@ class HttpApiTests(unittest.TestCase):
                 "--disable-xformers",
                 "--reserve-vram",
                 "1.5",
-                "--cache-none",
+                "--mmap-torch-files",
             ],
         )
         args = self.docker.containers["portrait"]["args"]

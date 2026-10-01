@@ -408,7 +408,82 @@ function resetLaunch() {
   previewMethodInput.value = "";
   previewSizeInput.value = "";
   extraArgsInput.value = "";
+  renderFlagChips();
 }
+
+const FLAG_SECTIONS = [
+  ["precision", "Precision"],
+  ["caching", "Caching"],
+  ["preview", "Preview"],
+  ["vram", "VRAM"],
+  ["misc", "Misc"],
+];
+
+function renderFlagChips() {
+  const applied = document.querySelector("#applied-flags");
+  const catalog = document.querySelector("#flag-catalog");
+  if (!applied || !catalog) return;
+  applied.replaceChildren();
+  for (const node of document.querySelectorAll('input[name="flag"]:checked')) {
+    applied.append(appliedChip(node.value, () => {
+      node.checked = false;
+      renderFlagChips();
+    }));
+  }
+  if (previewMethodInput.value) {
+    applied.append(appliedChip(`--preview-method ${previewMethodInput.value}`, () => {
+      previewMethodInput.value = "";
+      renderFlagChips();
+    }));
+  }
+  catalog.replaceChildren();
+  for (const [section, label] of FLAG_SECTIONS) {
+    const row = el("div", { className: "chip-row" });
+    if (section === "preview") {
+      for (const value of ["auto", "latent2rgb", "taesd", "none"]) {
+        row.append(catalogChip(`--preview-method ${value}`, previewMethodInput.value === value, () => {
+          previewMethodInput.value = value;
+          renderFlagChips();
+        }));
+      }
+    }
+    for (const node of document.querySelectorAll(`input[name="flag"][data-section="${section}"]`)) {
+      row.append(catalogChip(node.value, node.checked, () => addFlag(node)));
+    }
+    if (!row.childNodes.length) continue;
+    catalog.append(el("p", { className: "flag-sub", text: label }));
+    catalog.append(row);
+  }
+}
+
+function addFlag(node) {
+  const group = node.dataset.exclusive || "";
+  if (group) {
+    for (const other of document.querySelectorAll(`input[name="flag"][data-exclusive="${group}"]`)) {
+      if (other !== node) other.checked = false;
+    }
+  }
+  node.checked = true;
+  renderFlagChips();
+}
+
+function appliedChip(label, onRemove) {
+  const chip = el("span", { className: "chip on" });
+  chip.append(document.createTextNode(label));
+  const remove = el("button", { className: "chip-x", type: "button", text: "×" });
+  remove.setAttribute("aria-label", `Remove ${label}`);
+  remove.addEventListener("click", onRemove);
+  chip.append(remove);
+  return chip;
+}
+
+function catalogChip(label, selected, onAdd) {
+  const button = el("button", { className: selected ? "chip on" : "chip", type: "button", text: label });
+  button.addEventListener("click", onAdd);
+  return button;
+}
+
+renderFlagChips();
 
 function setCreatePending(pending, start) {
   const stopped = document.querySelector("#create-stopped");
