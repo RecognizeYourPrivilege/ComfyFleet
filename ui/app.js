@@ -98,8 +98,14 @@ function isRunning(instance) {
 }
 
 function openTarget(instance) {
-  if (!isRunning(instance) || typeof instance.url !== "string" || !instance.url) return null;
-  return instance.url;
+  if (!isRunning(instance)) return null;
+  const port = Number(instance.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  const hostname = window.location.hostname;
+  if (!hostname) return null;
+  const host = hostname.indexOf(":") === -1 ? hostname : "[" + hostname + "]";
+  const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+  return protocol + "//" + host + ":" + String(port) + "/";
 }
 
 function instanceCard(instance) {

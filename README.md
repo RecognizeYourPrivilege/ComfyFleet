@@ -177,11 +177,9 @@ On a host with more than one GPU, create asks which GPU or GPUs to attach. A sin
 
 ### Open links
 
-`COMFYFLEET_PUBLIC_HOST` is the hostname or IP baked into Open URLs (`http://<that-host>:<port>`). Set it to the LAN address browsers use.
+**Open Comfy** uses the host you already used to open the manager, plus that instance’s published port: the same scheme as the manager page, `window.location.hostname`, and the port from the API. Tailscale and LAN follow whichever host loaded `:9100`. The API does not return a baked absolute host, and `COMFYFLEET_PUBLIC_HOST` is not used for that button.
 
-When it is unset, Open uses the request `Host` header with the control port removed, if that value is a safe hostname or IP. `0.0.0.0`, empty values, and values with spaces or slashes are ignored. An invalid `COMFYFLEET_PUBLIC_HOST` stops the control server at startup.
-
-From another machine, the ComfyUI page is `http://<public-host>:<port>`. Inside the instance, ComfyUI listens on `0.0.0.0` port `8188`. The manager publishes that as a host port starting at **8188**.
+The link is `http(s)://<page-host>:<published-port>/` with a trailing slash so ComfyUI’s relative assets resolve. Inside the instance, ComfyUI listens on `0.0.0.0` port `8188`. The manager publishes that as a host port starting at **8188**. **Open** (the shell) stays on this manager at `/terminal.html`.
 
 ## Optional CLI inside the manager
 
@@ -330,7 +328,7 @@ The UI and the API are same-origin. This server does not send CORS headers. Do n
 | `POST` | `/api/logout` | no | Clears the session cookie and the server session |
 | `GET` | `/login` | no | Sign-in page |
 | `GET` | `/api/gpus` | yes | Detected GPUs (`index`, `name`, `memory`). **503** when `nvidia-smi` is missing or fails |
-| `GET` | `/api/instances` | yes | `name`, `status`, `port`, `gpus`, and `url` when `status` is `running` |
+| `GET` | `/api/instances` | yes | `name`, `status`, `port`, `gpus`. The browser builds Open Comfy from the page host and `port` |
 | `POST` | `/api/instances` | yes | Create. Requires an uploaded workflow JSON or `workflow_path`. Requires `gpu` or `gpus`. `start` defaults to false |
 | `POST` | `/api/instances/{name}/start` | yes | Start without rebuilding the image |
 | `POST` | `/api/instances/{name}/stop` | yes | Stop without destroying the container |

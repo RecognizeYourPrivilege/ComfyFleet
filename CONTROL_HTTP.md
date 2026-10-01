@@ -158,7 +158,6 @@ Query strings are ignored. Send create options in the body so a workflow path is
       "status": "running",
       "port": 8188,
       "gpus": [0],
-      "url": "http://192.168.1.20:8188",
       "launch": {
         "vram": "--lowvram",
         "attention": "",
@@ -181,12 +180,11 @@ An empty fleet is `{"ok": true, "instances": []}`. That is not an error.
 |---|---|---|
 | `name` | string | Instance name. |
 | `status` | string | Docker status: `running`, `created`, `exited`, `missing`, or another Docker state. Treat **only** `running` as running. `created` means the container exists and has not been started. |
-| `port` | number | Host port reserved for this instance (from 8188 up). Present even when stopped. |
+| `port` | number | Host port reserved for this instance (from 8188 up). Present even when stopped. The fleet page opens Comfy at `<page-scheme>//<window.location.hostname>:<port>/`. |
 | `gpus` | number[] | GPU indexes chosen at create. |
-| `url` | string or null | Open target. A string **only while `status` is `running`**. Otherwise `null`. |
 | `launch` | object | Flags chosen at create. `argv` is what is appended after `--listen 0.0.0.0 --port 8188`. Empty `argv` means stock ComfyUI. |
 
-`url` is `http://<open-host>:<port>`. `<open-host>` is `COMFYFLEET_PUBLIC_HOST` when that variable is a hostname or IP (port suffix stripped). Otherwise it is the `Host` header the browser used to reach this control server, with the control port removed, when that header is a safe hostname or IP. A phone that opened `http://192.168.1.20:9100/` gets `http://192.168.1.20:8188` for a running instance. Set `COMFYFLEET_PUBLIC_HOST=192.168.1.20` when Open links should stay on that LAN name even if a request arrives with a different Host. Empty values, `0.0.0.0`, `::`, and values with spaces or slashes are not used; the server then falls back to `127.0.0.1` when it is bound on all interfaces. An invalid `COMFYFLEET_PUBLIC_HOST` is an error when the server starts. Open that URL in a new tab. When `url` is null, Open is disabled. Stop does not destroy the container or the workflow file.
+The API does not return an Open URL. `COMFYFLEET_PUBLIC_HOST` is not used for Open Comfy. The browser builds the link from the host that loaded this manager and the published `port`, with a trailing slash. A phone that opened the manager at `http://192.168.1.20:9100/` opens Comfy at `http://192.168.1.20:8188/`. The shell **Open** button stays on `/terminal.html`. Stop does not destroy the container or the workflow file.
 
 ### `POST /api/instances`
 
@@ -237,8 +235,7 @@ Maximum body size is 32 MiB (`413` above that). Clients must send `Content-Lengt
     "name": "portrait",
     "status": "created",
     "port": 8188,
-    "gpus": [0],
-    "url": null
+    "gpus": [0]
   }
 }
 ```
@@ -258,8 +255,7 @@ A failed `start: true` can still leave a created instance behind (same as the CL
     "name": "portrait",
     "status": "running",
     "port": 8188,
-    "gpus": [0],
-    "url": "http://192.168.1.20:8188"
+    "gpus": [0]
   }
 }
 ```
@@ -275,8 +271,7 @@ Starting an instance that is already running returns 200 and the running instanc
     "name": "portrait",
     "status": "exited",
     "port": 8188,
-    "gpus": [0],
-    "url": null
+    "gpus": [0]
   }
 }
 ```
@@ -299,7 +294,7 @@ Force-stops the container if it is running, removes **only** that container, and
 
 WebSocket upgrade. The manager runs `docker exec -it <name> /bin/bash` and copies bytes to the socket. The instance must already be running and must be a fleet record. The browser does not receive the Docker socket and cannot choose the command. A GET without `Upgrade: websocket` is **400**.
 
-Open in the fleet UI loads `/terminal.html?name=<name>`. Open Comfy is the separate `url` link.
+Open in the fleet UI loads `/terminal.html?name=<name>`. Open Comfy is a separate link built in the browser from `location.hostname`, `location.protocol`, and the published `port`.
 
 ## Errors
 

@@ -423,7 +423,7 @@ class ManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(created["instance"]["name"], "portrait")
         self.assertEqual(created["instance"]["status"], "created")
         self.assertEqual(created["instance"]["port"], 8188)
-        self.assertIsNone(created["instance"]["url"])
+        self.assertNotIn("url", created["instance"])
         self.assertTrue((self.layout.files / "portrait" / "default_workflow.json").is_file())
 
         args = self.docker.containers["portrait"]["args"]
@@ -438,7 +438,9 @@ class ManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(status, 200, raw)
         started = json.loads(raw.decode("utf-8"))
         self.assertEqual(started["instance"]["status"], "running")
-        self.assertEqual(started["instance"]["url"], "http://192.168.1.20:8188")
+        self.assertEqual(started["instance"]["port"], 8188)
+        self.assertNotIn("url", started["instance"])
+        self.assertNotIn("192.168.1.20", raw.decode("utf-8"))
         self.assertIn(("start", "portrait"), self.docker.calls)
         self.assertNotIn("build", [call[0] for call in self.docker.calls])
 
@@ -446,10 +448,10 @@ class ManagerLifecycleTests(unittest.TestCase):
         self.assertEqual(status, 200, raw)
         stopped = json.loads(raw.decode("utf-8"))
         self.assertEqual(stopped["instance"]["status"], "exited")
-        self.assertIsNone(stopped["instance"]["url"])
+        self.assertNotIn("url", stopped["instance"])
         self.assertIn("portrait", self.docker.containers)
 
-    def test_dispatch_uses_public_host_for_open_url(self):
+    def test_dispatch_ignores_public_host_for_open(self):
         body, content_type = _multipart("Still.json", _workflow(), [("gpus", "0"), ("start", "true")])
         response = dispatch(
             self.ctx,
@@ -460,9 +462,12 @@ class ManagerLifecycleTests(unittest.TestCase):
             content_type,
             {"Authorization": f"Bearer {PASSWORD}"},
         )
-        payload = json.loads(response.body.decode("utf-8"))
+        text = response.body.decode("utf-8")
+        payload = json.loads(text)
         self.assertEqual(response.status, 200)
-        self.assertEqual(payload["instance"]["url"], "http://192.168.1.20:8188")
+        self.assertEqual(payload["instance"]["port"], 8188)
+        self.assertNotIn("url", payload["instance"])
+        self.assertNotIn("192.168.1.20", text)
 
 
 if __name__ == "__main__":

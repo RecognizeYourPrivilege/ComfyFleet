@@ -54,12 +54,7 @@ from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
 from comfyfleet.launch import parse_launch, split_flag_field
 from comfyfleet.paths import FleetLayout
-from comfyfleet.public_host import (
-    PUBLIC_HOST_ENV,
-    configured_public_host,
-    open_host,
-    request_host,
-)
+from comfyfleet.public_host import PUBLIC_HOST_ENV
 
 DEFAULT_BIND_HOST = "0.0.0.0"
 DEFAULT_BIND_PORT = 9100
@@ -302,7 +297,6 @@ def serve(
         detect_gpus = default_detect_gpus
     # port_in_use None: comfyfleet.control snapshots Docker-published ports
     # and host listeners. Do not bind-check inside this process only.
-    public_host = configured_public_host()
     context = ApiContext(
         layout=layout,
         docker=docker,
@@ -310,8 +304,6 @@ def serve(
         port_in_use=port_in_use,
         ui_dir=resolve_ui_dir(ui_dir),
         use_env_limit=use_env_limit,
-        host_fallback="127.0.0.1" if host in {"0.0.0.0", "::"} else host,
-        public_host=public_host,
         password=password,
         sessions=SessionStore(),
         login_guard=LoginGuard(fail_delay_s=login_fail_delay()),
@@ -335,17 +327,11 @@ def serve(
         "if you need HTTPS. Do not expose this port to the public internet.",
         file=sys.stderr,
     )
-    if public_host:
-        print(
-            f"comfyfleet: Open links use http://{public_host}:<instance-port> ({PUBLIC_HOST_ENV}).",
-            file=sys.stderr,
-        )
-    else:
-        print(
-            "comfyfleet: Open links use the request Host header when it is a safe "
-            f"hostname or IP. Set {PUBLIC_HOST_ENV} to pin the LAN name.",
-            file=sys.stderr,
-        )
+    print(
+        "comfyfleet: Open Comfy is built in the browser from the page host and the "
+        f"instance port. {PUBLIC_HOST_ENV} is not used for that link.",
+        file=sys.stderr,
+    )
     if context.ui_dir is None:
         print("comfyfleet: no ui/ directory; / is a placeholder.", file=sys.stderr)
     else:
@@ -558,15 +544,15 @@ def _fleet(
     body: bytes,
     content_type: str | None,
 ) -> Response:
-    host = open_host(host_header, context.host_fallback, context.public_host)
+    del host_header  # Open Comfy does not use the request host or a pinned public host.
     if path == "/api/gpus":
         _require_method(method, "GET")
         return _gpus(context)
     if path == "/api/instances":
         if method == "GET":
-            return _list(context, host)
+            return _list(context)
         if method == "POST":
-            return _create(context, host, body, content_type)
+            return _create(context, body, content_type)
         raise HTTPStatusError(405, "method not allowed")
     action = _instance_action(path)
     if action is not None:
@@ -576,11 +562,11 @@ def _fleet(
             raise HTTPStatusError(400, "terminal requires a websocket upgrade")
         _require_method(method, "POST")
         if verb == "start":
-            return _start(context, host, name)
+            return _start(context, name)
         if verb == "stop":
-            return _stop(context, host, name)
+            return _stop(context, name)
         if verb == "force-stop":
-            return _force_stop(context, host, name)
+            return _force_stop(context, name)
         if verb == "delete":
             return _delete(context, name)
         raise HTTPStatusError(404, "not found")
@@ -753,20 +739,20 @@ def _gpus(context: ApiContext) -> Response:
     )
 
 
-def _list(context: ApiContext, host: str) -> Response:
+def _list(context: ApiContext) -> Response:
     rows = list_instances(context.layout, context.docker)
     return _json(
         200,
         {
             "ok": True,
             "instances": [
-                _instance_json(instance, status, host) for instance, status in rows
+                _instance_json(instance, status) for instance, status in rows
             ],
         },
     )
 
 
-def _create(context: ApiContext, host: str, body: bytes, content_type: str | None) -> Response:
+def _create(context: ApiContext, body: bytes, content_type: str | None) -> Response:
     form = _parse_create_form(body, content_type)
     if form.upload is None and not form.workflow_path:
         raise FleetError(_MISSING_WORKFLOW)
@@ -813,12 +799,12 @@ def _create(context: ApiContext, host: str, body: bytes, content_type: str | Non
             "ok": True,
             "started": result.started,
             "warning": result.warning,
-            "instance": _instance_json(result.instance, status, host),
+            "instance": _instance_json(result.instance, status),
         },
     )
 
 
-def _start(context: ApiContext, host: str, name: str) -> Response:
+def _start(context: ApiContext, name: str) -> Response:
     result = start_instance(
         name,
         layout=context.layout,
@@ -834,21 +820,21 @@ def _start(context: ApiContext, host: str, name: str) -> Response:
             "ok": True,
             "started": result.started,
             "warning": result.warning,
-            "instance": _instance_json(result.instance, status, host),
+            "instance": _instance_json(result.instance, status),
         },
     )
 
 
-def _stop(context: ApiContext, host: str, name: str) -> Response:
+def _stop(context: ApiContext, name: str) -> Response:
     instance = stop_instance(name, layout=context.layout, docker=context.docker)
     status = context.docker.status(instance.name) or "missing"
-    return _json(200, {"ok": True, "instance": _instance_json(instance, status, host)})
+    return _json(200, {"ok": True, "instance": _instance_json(instance, status)})
 
 
-def _force_stop(context: ApiContext, host: str, name: str) -> Response:
+def _force_stop(context: ApiContext, name: str) -> Response:
     instance = force_stop_instance(name, layout=context.layout, docker=context.docker)
     status = context.docker.status(instance.name) or "missing"
-    return _json(200, {"ok": True, "instance": _instance_json(instance, status, host)})
+    return _json(200, {"ok": True, "instance": _instance_json(instance, status)})
 
 
 def _delete(context: ApiContext, name: str) -> Response:
@@ -856,14 +842,12 @@ def _delete(context: ApiContext, name: str) -> Response:
     return _json(200, {"ok": True, "deleted": instance.name})
 
 
-def _instance_json(instance: Instance, status: str, host: str) -> dict:
-    running = status == "running"
+def _instance_json(instance: Instance, status: str) -> dict:
     return {
         "name": instance.name,
         "status": status,
         "port": instance.port,
         "gpus": list(instance.gpus),
-        "url": f"http://{host}:{instance.port}" if running else None,
         "launch": {**instance.launch.to_json(), "argv": instance.launch.argv()},
     }
 

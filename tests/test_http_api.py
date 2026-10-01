@@ -22,8 +22,8 @@ from comfyfleet.http_api import (
     ApiContext,
     dispatch,
     make_server,
-    request_host,
 )
+from comfyfleet.public_host import request_host
 from comfyfleet.paths import FleetLayout
 
 
@@ -239,7 +239,7 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(instance["status"], "created")
         self.assertEqual(instance["port"], 8188)
         self.assertEqual(instance["gpus"], [0])
-        self.assertIsNone(instance["url"])
+        self.assertNotIn("url", instance)
         # create reserves ports through list_instances, which calls authorize("list").
         self.assertEqual(seen, ["create", "list"])
         self.assertNotIn(("start", "portrait"), self.docker.calls)
@@ -260,7 +260,7 @@ class HttpApiTests(unittest.TestCase):
         status, raw = self._open("GET", "/api/instances")
         listed = self._body(status, raw)["instances"]
         self.assertEqual(len(listed), 1)
-        self.assertIsNone(listed[0]["url"])
+        self.assertNotIn("url", listed[0])
         self.assertEqual(listed[0]["status"], "created")
 
         status, raw = self._open("POST", "/api/instances/portrait/start")
@@ -268,7 +268,9 @@ class HttpApiTests(unittest.TestCase):
         started = self._body(status, raw)
         self.assertTrue(started["started"])
         self.assertEqual(started["instance"]["status"], "running")
-        self.assertEqual(started["instance"]["url"], "http://127.0.0.1:8188")
+        self.assertEqual(started["instance"]["port"], 8188)
+        self.assertNotIn("url", started["instance"])
+        self.assertNotIn("127.0.0.1", raw.decode("utf-8"))
         self.assertIn(("start", "portrait"), self.docker.calls)
         self.assertNotIn("build", [call[0] for call in self.docker.calls])
 
@@ -281,13 +283,16 @@ class HttpApiTests(unittest.TestCase):
             None,
             {"Authorization": f"Bearer {PASSWORD}"},
         )
-        listed = json.loads(viewed.body.decode("utf-8"))["instances"]
-        self.assertEqual(listed[0]["url"], "http://phone.lan:8188")
+        listed_body = viewed.body.decode("utf-8")
+        listed = json.loads(listed_body)["instances"]
+        self.assertEqual(listed[0]["port"], 8188)
+        self.assertNotIn("url", listed[0])
+        self.assertNotIn("phone.lan", listed_body)
 
         status, raw = self._open("POST", "/api/instances/portrait/stop")
         stopped = self._body(status, raw)
         self.assertEqual(stopped["instance"]["status"], "exited")
-        self.assertIsNone(stopped["instance"]["url"])
+        self.assertNotIn("url", stopped["instance"])
         self.assertEqual(stopped["instance"]["port"], 8188)
         self.assertNotIn(("rm", "portrait"), self.docker.calls)
         self.assertTrue((root / "files" / "portrait" / "comfyfleet.json").is_file())
@@ -313,7 +318,8 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(started["instance"]["gpus"], [1])
         self.assertTrue(started["started"])
         self.assertEqual(started["instance"]["status"], "running")
-        self.assertEqual(started["instance"]["url"], "http://127.0.0.1:8189")
+        self.assertEqual(started["instance"]["port"], 8189)
+        self.assertNotIn("url", started["instance"])
         create_args = self.docker.containers["background"]["args"]
         self.assertEqual(create_args[create_args.index("--gpus") + 1], "device=1")
 
