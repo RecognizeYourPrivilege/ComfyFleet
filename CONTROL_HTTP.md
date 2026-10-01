@@ -112,6 +112,9 @@ There is no delete route. Control has no destroy API. There is no HTTP restart r
 | `POST` | `/api/instances` | yes | `create_instance` | The instance just created |
 | `POST` | `/api/instances/{name}/start` | yes | `start_instance` | That instance, running |
 | `POST` | `/api/instances/{name}/stop` | yes | `stop_instance` | That instance, not running |
+| `POST` | `/api/instances/{name}/force-stop` | yes | `force_stop_instance` | Hard stop (`docker kill`) of that instance only |
+| `POST` | `/api/instances/{name}/delete` | yes | `delete_instance` | Container removed and fleet record dropped |
+| `GET` | `/api/instances/{name}/terminal` | yes | websocket `docker exec` | Shell proxy. Upgrade required. The Docker socket is not sent to the browser |
 | `GET` | `/login` | no | `ui/login.html` | Sign-in page |
 | `GET` | `/` and other non-API paths | yes, except login assets | static files under `ui/` | Fleet UI. If `ui/` is missing, an authenticated `/` is a short placeholder |
 
@@ -155,7 +158,17 @@ Query strings are ignored. Send create options in the body so a workflow path is
       "status": "running",
       "port": 8188,
       "gpus": [0],
-      "url": "http://192.168.1.20:8188"
+      "launch": {
+        "vram": "--lowvram",
+        "attention": "",
+        "flags": ["--disable-dynamic-vram"],
+        "reserve_vram": null,
+        "vram_headroom": null,
+        "preview_method": "",
+        "preview_size": null,
+        "extra_args": "",
+        "argv": ["--lowvram", "--disable-dynamic-vram"]
+      }
     }
   ]
 }
@@ -167,11 +180,11 @@ An empty fleet is `{"ok": true, "instances": []}`. That is not an error.
 |---|---|---|
 | `name` | string | Instance name. |
 | `status` | string | Docker status: `running`, `created`, `exited`, `missing`, or another Docker state. Treat **only** `running` as running. `created` means the container exists and has not been started. |
-| `port` | number | Host port reserved for this instance (from 8188 up). Present even when stopped. |
+| `port` | number | Host port reserved for this instance (from 8188 up). Present even when stopped. The fleet page opens Comfy at `<page-scheme>//<window.location.hostname>:<port>/`. |
 | `gpus` | number[] | GPU indexes chosen at create. |
-| `url` | string or null | Open target. A string **only while `status` is `running`**. Otherwise `null`. |
+| `launch` | object | Flags chosen at create. `argv` is what is appended after `--listen 0.0.0.0 --port 8188`. Empty `argv` means stock ComfyUI. |
 
-`url` is `http://<open-host>:<port>`. `<open-host>` is `COMFYFLEET_PUBLIC_HOST` when that variable is a hostname or IP (port suffix stripped). Otherwise it is the `Host` header the browser used to reach this control server, with the control port removed, when that header is a safe hostname or IP. A phone that opened `http://192.168.1.20:9100/` gets `http://192.168.1.20:8188` for a running instance. Set `COMFYFLEET_PUBLIC_HOST=192.168.1.20` when Open links should stay on that LAN name even if a request arrives with a different Host. Empty values, `0.0.0.0`, `::`, and values with spaces or slashes are not used; the server then falls back to `127.0.0.1` when it is bound on all interfaces. An invalid `COMFYFLEET_PUBLIC_HOST` is an error when the server starts. Open that URL in a new tab. When `url` is null, Open is disabled. Stop does not destroy the container or the workflow file.
+The API does not return an Open URL. `COMFYFLEET_PUBLIC_HOST` is not used for Open Comfy. The browser builds the link from the host that loaded this manager and the published `port`, with a trailing slash. A phone that opened the manager at `http://192.168.1.20:9100/` opens Comfy at `http://192.168.1.20:8188/`. The shell **Open** button stays on `/terminal.html`. Stop does not destroy the container or the workflow file.
 
 ### `POST /api/instances`
 
@@ -194,6 +207,14 @@ The JSON body is **create options**, not the Comfy graph. Posting a workflow obj
 | `gpus` | one of `gpu` / `gpus` | `"0,1"` or `"all"`. |
 | `start` | no | Default **false**. `true` creates and starts that one instance. Leave false to create many and run few. |
 | `force` | no | Default **false**. Replace a **stopped** instance with the same name. Refuses while it is running. |
+| `vram` | no | One of `lowvram`, `novram`, `highvram`. Omit for stock VRAM. Not combinable with `--cpu` or `--gpu-only`. |
+| `attention` | no | One attention backend, for example `use-sage-attention`. |
+| `flags` | no | Comma-separated toggles, or a JSON array of strings: `disable-smart-memory`, `disable-dynamic-vram`, `force-fp16`, `cuda-malloc`, and the other panel flags. Mutually exclusive pairs are rejected. |
+| `reserve_vram` | no | GB passed to `--reserve-vram`. Omit to leave ComfyUI's default. |
+| `vram_headroom` | no | GB passed to `--vram-headroom`. |
+| `preview_method` | no | `auto`, `latent2rgb`, `taesd`, or `none`. |
+| `preview_size` | no | Positive integer for `--preview-size`. |
+| `extra_args` | no | Free-text `main.py` arguments for flags that are not in the panel. Appended last. `--listen` and `--port` are stripped. |
 
 `start` and `force` accept JSON booleans and the strings `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`.
 
@@ -214,13 +235,12 @@ Maximum body size is 32 MiB (`413` above that). Clients must send `Content-Lengt
     "name": "portrait",
     "status": "created",
     "port": 8188,
-    "gpus": [0],
-    "url": null
+    "gpus": [0]
   }
 }
 ```
 
-`warning` is a string when control would have printed a concurrency warning, otherwise `null`. `started` is true only when this call started the container. `status` is read back from Docker after control returns.
+`warning` is a string when control would have printed a concurrency warning, otherwise `null`. `started` is true only when this call started the container. `status` is read back from Docker after control returns. The instance object includes `launch`, same as `GET /api/instances`. `argv` is appended after `--listen 0.0.0.0 --port 8188` inside the container. Listen stays `0.0.0.0`.
 
 A failed `start: true` can still leave a created instance behind (same as the CLI). Refresh the list.
 
@@ -235,8 +255,7 @@ A failed `start: true` can still leave a created instance behind (same as the CL
     "name": "portrait",
     "status": "running",
     "port": 8188,
-    "gpus": [0],
-    "url": "http://192.168.1.20:8188"
+    "gpus": [0]
   }
 }
 ```
@@ -252,13 +271,34 @@ Starting an instance that is already running returns 200 and the running instanc
     "name": "portrait",
     "status": "exited",
     "port": 8188,
-    "gpus": [0],
-    "url": null
+    "gpus": [0]
   }
 }
 ```
 
 Stopping an already stopped instance returns 200. The container, mounts, and workflow file stay.
+
+### `POST /api/instances/{name}/force-stop`
+
+`docker kill` on that instance container (SIGKILL). It does not remove the container or the fleet record. A container that is already stopped returns 200 and is left as it is.
+
+### `POST /api/instances/{name}/delete`
+
+Force-stops the container if it is running, removes **only** that container, and deletes `comfyfleet.json`. Host workflow, input, output, and custom-node files are kept. The UI asks for confirmation before calling this.
+
+```json
+{"ok": true, "deleted": "portrait"}
+```
+
+### `POST /api/instances/{name}/launch`
+
+JSON body with the same launch fields as create (`vram`, `attention`, `flags`, `reserve_vram`, `vram_headroom`, `preview_method`, `preview_size`, `extra_args`). Stops the instance if it is running, removes that container, and creates it again with the same name, host port, GPU set, workflow file, and mount paths. Only the arguments after `--listen 0.0.0.0 --port 8188` change. If it was running, it is started again. The previous container is removed before the replacement is created.
+
+### `GET /api/instances/{name}/terminal`
+
+WebSocket upgrade. The manager runs `docker exec -it <name> /bin/bash` and copies bytes to the socket. The instance must already be running and must be a fleet record. The browser does not receive the Docker socket and cannot choose the command. A GET without `Upgrade: websocket` is **400**.
+
+Open in the fleet UI loads `/terminal.html?name=<name>`. Open Comfy is a separate link built in the browser from `location.hostname`, `location.protocol`, and the published `port`.
 
 ## Errors
 
