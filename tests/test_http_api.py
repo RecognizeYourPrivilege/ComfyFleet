@@ -374,6 +374,78 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(payload["instance"]["name"], "my_flow")
         self.assertFalse(payload["started"])
 
+    def test_launch_flags_reach_docker_create_and_strip_listen(self):
+        path = Path(self.tmp.name) / "Portrait.json"
+        path.write_bytes(_workflow("flags"))
+        created = self._post_json(
+            {
+                "workflow_path": str(path),
+                "gpu": "0",
+                "vram": "lowvram",
+                "attention": "use-flash-attention",
+                "flags": ["disable-dynamic-vram", "disable-xformers"],
+                "reserve_vram": 1.5,
+                "extra_args": "--listen 127.0.0.1 --port 1 --cache-none",
+            }
+        )
+        argv = created["instance"]["launch"]["argv"]
+        self.assertEqual(
+            argv,
+            [
+                "--lowvram",
+                "--use-flash-attention",
+                "--disable-dynamic-vram",
+                "--disable-xformers",
+                "--reserve-vram",
+                "1.5",
+                "--cache-none",
+            ],
+        )
+        args = self.docker.containers["portrait"]["args"]
+        self.assertEqual(args[args.index("comfyfleet:phase1") + 1 :], argv)
+        self.assertNotIn("--listen", args)
+
+        body, content_type = _multipart(
+            [
+                ("workflow_path", str(path)),
+                ("gpu", "0"),
+                ("force", "true"),
+                ("vram", "--novram"),
+                ("flags", "--disable-xformers"),
+                ("extra_args", "--listen=0.0.0.0 --mmap-torch-files"),
+            ],
+            [],
+        )
+        status, raw = self._open(
+            "POST",
+            "/api/instances",
+            data=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 200, raw)
+        replaced = self._body(status, raw)
+        self.assertEqual(
+            replaced["instance"]["launch"]["argv"],
+            ["--novram", "--disable-xformers", "--mmap-torch-files"],
+        )
+
+        status, raw = self._open(
+            "POST",
+            "/api/instances",
+            data=json.dumps(
+                {
+                    "workflow_path": str(path),
+                    "gpu": "0",
+                    "force": True,
+                    "vram": "lowvram",
+                    "flags": "--cpu",
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 400, raw)
+        self.assertIn("cannot be combined", json.loads(raw.decode("utf-8"))["error"])
+
     def test_collision_and_force(self):
         path = Path(self.tmp.name) / "Portrait.json"
         path.write_bytes(_workflow("v1"))

@@ -155,7 +155,18 @@ Query strings are ignored. Send create options in the body so a workflow path is
       "status": "running",
       "port": 8188,
       "gpus": [0],
-      "url": "http://192.168.1.20:8188"
+      "url": "http://192.168.1.20:8188",
+      "launch": {
+        "vram": "--lowvram",
+        "attention": "",
+        "flags": ["--disable-dynamic-vram"],
+        "reserve_vram": null,
+        "vram_headroom": null,
+        "preview_method": "",
+        "preview_size": null,
+        "extra_args": "",
+        "argv": ["--lowvram", "--disable-dynamic-vram"]
+      }
     }
   ]
 }
@@ -170,6 +181,7 @@ An empty fleet is `{"ok": true, "instances": []}`. That is not an error.
 | `port` | number | Host port reserved for this instance (from 8188 up). Present even when stopped. |
 | `gpus` | number[] | GPU indexes chosen at create. |
 | `url` | string or null | Open target. A string **only while `status` is `running`**. Otherwise `null`. |
+| `launch` | object | Flags chosen at create. `argv` is what is appended after `--listen 0.0.0.0 --port 8188`. Empty `argv` means stock ComfyUI. |
 
 `url` is `http://<open-host>:<port>`. `<open-host>` is `COMFYFLEET_PUBLIC_HOST` when that variable is a hostname or IP (port suffix stripped). Otherwise it is the `Host` header the browser used to reach this control server, with the control port removed, when that header is a safe hostname or IP. A phone that opened `http://192.168.1.20:9100/` gets `http://192.168.1.20:8188` for a running instance. Set `COMFYFLEET_PUBLIC_HOST=192.168.1.20` when Open links should stay on that LAN name even if a request arrives with a different Host. Empty values, `0.0.0.0`, `::`, and values with spaces or slashes are not used; the server then falls back to `127.0.0.1` when it is bound on all interfaces. An invalid `COMFYFLEET_PUBLIC_HOST` is an error when the server starts. Open that URL in a new tab. When `url` is null, Open is disabled. Stop does not destroy the container or the workflow file.
 
@@ -194,6 +206,14 @@ The JSON body is **create options**, not the Comfy graph. Posting a workflow obj
 | `gpus` | one of `gpu` / `gpus` | `"0,1"` or `"all"`. |
 | `start` | no | Default **false**. `true` creates and starts that one instance. Leave false to create many and run few. |
 | `force` | no | Default **false**. Replace a **stopped** instance with the same name. Refuses while it is running. |
+| `vram` | no | One of `lowvram`, `novram`, `highvram`. Omit for stock VRAM. Not combinable with `--cpu` or `--gpu-only`. |
+| `attention` | no | One attention backend, for example `use-sage-attention`. |
+| `flags` | no | Comma-separated toggles, or a JSON array of strings: `disable-smart-memory`, `disable-dynamic-vram`, `force-fp16`, `cuda-malloc`, and the other panel flags. Mutually exclusive pairs are rejected. |
+| `reserve_vram` | no | GB passed to `--reserve-vram`. Omit to leave ComfyUI's default. |
+| `vram_headroom` | no | GB passed to `--vram-headroom`. |
+| `preview_method` | no | `auto`, `latent2rgb`, `taesd`, or `none`. |
+| `preview_size` | no | Positive integer for `--preview-size`. |
+| `extra_args` | no | Free-text `main.py` arguments for flags that are not in the panel. Appended last. `--listen` and `--port` are stripped. |
 
 `start` and `force` accept JSON booleans and the strings `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`.
 
@@ -220,7 +240,7 @@ Maximum body size is 32 MiB (`413` above that). Clients must send `Content-Lengt
 }
 ```
 
-`warning` is a string when control would have printed a concurrency warning, otherwise `null`. `started` is true only when this call started the container. `status` is read back from Docker after control returns.
+`warning` is a string when control would have printed a concurrency warning, otherwise `null`. `started` is true only when this call started the container. `status` is read back from Docker after control returns. The instance object includes `launch`, same as `GET /api/instances`. `argv` is appended after `--listen 0.0.0.0 --port 8188` inside the container. Listen stays `0.0.0.0`.
 
 A failed `start: true` can still leave a created instance behind (same as the CLI). Refresh the list.
 

@@ -84,6 +84,117 @@
       <div id="gpus" class="gpu-row" role="group" aria-labelledby="gpu-label"></div>
       <p id="gpu-note" class="hint"></p>
 
+      <div class="flag-panel" role="group" aria-labelledby="flags-label">
+        <p class="field-label" id="flags-label">Launch flags</p>
+        <p class="hint">Nothing selected starts ComfyUI with only <code>--listen 0.0.0.0</code> and the container port. Those two stay locked. On NVIDIA, <code>--lowvram</code> does nothing while dynamic VRAM is on — also check <code>--disable-dynamic-vram</code> for a 12GB card.</p>
+
+        <p class="flag-sub" id="vram-label">VRAM</p>
+        <div class="choice-col" role="radiogroup" aria-labelledby="vram-label">
+          <label class="choice">
+            <input type="radio" name="vram" value="" checked>
+            <span>Default<small>No VRAM flag.</small></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="vram" value="--lowvram">
+            <span>--lowvram<small>Text encoders on CPU when dynamic VRAM is off.</small></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="vram" value="--novram">
+            <span>--novram<small>When lowvram is not enough.</small></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="vram" value="--highvram">
+            <span>--highvram<small>Keep models in GPU memory.</small></span>
+          </label>
+        </div>
+
+        <p class="flag-sub" id="attention-label">Attention</p>
+        <div class="choice-col" role="radiogroup" aria-labelledby="attention-label">
+          <label class="choice">
+            <input type="radio" name="attention" value="" checked>
+            <span>Default<small>No attention flag.</small></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="attention" value="--use-pytorch-cross-attention">
+            <span>--use-pytorch-cross-attention</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="attention" value="--use-sage-attention">
+            <span>--use-sage-attention</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="attention" value="--use-flash-attention">
+            <span>--use-flash-attention</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="attention" value="--use-split-cross-attention">
+            <span>--use-split-cross-attention</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="attention" value="--use-quad-cross-attention">
+            <span>--use-quad-cross-attention</span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="attention" value="--use-ck-attention">
+            <span>--use-ck-attention</span>
+          </label>
+        </div>
+
+        <p class="flag-sub">Dtype</p>
+        <label class="check"><input type="checkbox" name="flag" value="--force-fp16" data-exclusive="fp"><span>--force-fp16<small>Also forces the UNet to fp16.</small></span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--force-fp32" data-exclusive="fp"><span>--force-fp32</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fp16-unet" data-exclusive="unet"><span>--fp16-unet</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--bf16-unet" data-exclusive="unet"><span>--bf16-unet</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fp32-unet" data-exclusive="unet"><span>--fp32-unet</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fp8_e4m3fn-unet" data-exclusive="unet"><span>--fp8_e4m3fn-unet</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fp8_e5m2-unet" data-exclusive="unet"><span>--fp8_e5m2-unet</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fp8_e8m0fnu-unet" data-exclusive="unet"><span>--fp8_e8m0fnu-unet</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fp16-vae" data-exclusive="vae"><span>--fp16-vae</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fp32-vae" data-exclusive="vae"><span>--fp32-vae</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--bf16-vae" data-exclusive="vae"><span>--bf16-vae</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fp8_e4m3fn-text-enc" data-exclusive="textenc"><span>--fp8_e4m3fn-text-enc</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fp8_e5m2-text-enc" data-exclusive="textenc"><span>--fp8_e5m2-text-enc</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fp16-text-enc" data-exclusive="textenc"><span>--fp16-text-enc</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fp32-text-enc" data-exclusive="textenc"><span>--fp32-text-enc</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--bf16-text-enc" data-exclusive="textenc"><span>--bf16-text-enc</span></label>
+
+        <p class="flag-sub">Memory</p>
+        <label class="check"><input type="checkbox" name="flag" value="--cpu" data-exclusive="vram"><span>--cpu<small>Use the CPU for everything (slow).</small></span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--gpu-only" data-exclusive="vram"><span>--gpu-only<small>Keep text encoders and CLIP on the GPU.</small></span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--disable-smart-memory"><span>--disable-smart-memory</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--disable-dynamic-vram" data-exclusive="dynvram"><span>--disable-dynamic-vram</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--enable-dynamic-vram" data-exclusive="dynvram"><span>--enable-dynamic-vram</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--cuda-malloc" data-exclusive="cudamalloc"><span>--cuda-malloc</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--disable-cuda-malloc" data-exclusive="cudamalloc"><span>--disable-cuda-malloc</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--disable-xformers"><span>--disable-xformers</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--disable-pinned-memory"><span>--disable-pinned-memory</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--fast-disk" data-exclusive="fastdisk"><span>--fast-disk</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--disable-fast-disk" data-exclusive="fastdisk"><span>--disable-fast-disk</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--cpu-vae"><span>--cpu-vae</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--deterministic"><span>--deterministic</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--force-channels-last"><span>--force-channels-last</span></label>
+        <label class="check"><input type="checkbox" name="flag" value="--supports-fp8-compute"><span>--supports-fp8-compute</span></label>
+
+        <label class="field-label" for="reserve-vram">Reserve VRAM (GB)</label>
+        <input id="reserve-vram" class="text-input" type="number" min="0" step="any" inputmode="decimal" placeholder="empty = omit">
+        <label class="field-label" for="vram-headroom">VRAM headroom (GB)</label>
+        <input id="vram-headroom" class="text-input" type="number" min="0" step="any" inputmode="decimal" placeholder="empty = omit">
+        <label class="field-label" for="preview-method">Preview method</label>
+        <select id="preview-method" class="text-input">
+          <option value="">Default (omit)</option>
+          <option value="auto">auto</option>
+          <option value="latent2rgb">latent2rgb</option>
+          <option value="taesd">taesd</option>
+          <option value="none">none</option>
+        </select>
+        <label class="field-label" for="preview-size">Preview size</label>
+        <input id="preview-size" class="text-input" type="number" min="1" max="8192" step="1" inputmode="numeric" placeholder="empty = omit">
+
+        <label class="field-label" for="extra-args">Extra args</label>
+        <textarea id="extra-args" class="text-input" rows="3" spellcheck="false" autocomplete="off" placeholder="--cache-none"></textarea>
+        <p class="hint">Appended last, after the selected flags. Pasted <code>--listen</code> and <code>--port</code> are removed. Replace a stopped instance to change flags.</p>
+      </div>
+
       <label class="switch">
         <input id="force" type="checkbox">
         <span>Replace a stopped instance with the same name</span>

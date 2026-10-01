@@ -22,6 +22,11 @@ const fileInput = document.querySelector("#workflow-file");
 const fileName = document.querySelector("#file-name");
 const pathInput = document.querySelector("#workflow-path");
 const forceInput = document.querySelector("#force");
+const reserveInput = document.querySelector("#reserve-vram");
+const headroomInput = document.querySelector("#vram-headroom");
+const previewMethodInput = document.querySelector("#preview-method");
+const previewSizeInput = document.querySelector("#preview-size");
+const extraArgsInput = document.querySelector("#extra-args");
 
 document.querySelector("#refresh").addEventListener("click", () => refresh());
 document.querySelector("#logout").addEventListener("click", () => logout());
@@ -114,6 +119,13 @@ function instanceCard(instance) {
     className: "meta",
     text: `Port ${instance.port} · GPU ${gpuText} · ${instance.status}`,
   }));
+  const launchArgv = instance.launch && instance.launch.argv;
+  if (Array.isArray(launchArgv) && launchArgv.length) {
+    card.append(el("p", {
+      className: "meta",
+      text: `Comfy --listen 0.0.0.0 --port 8188 ${launchArgv.join(" ")}`,
+    }));
+  }
   if (url) {
     card.append(el("p", { className: "url-line", text: url }));
   }
@@ -253,12 +265,26 @@ async function submitCreate(start) {
     showSheetError(state.gpuError || "Select at least one GPU.");
     return;
   }
+  const launch = readLaunch();
+  const conflict = launchConflict(launch);
+  if (conflict) {
+    showSheetError(conflict);
+    return;
+  }
   const body = new FormData();
   if (file) body.append("workflow", file, file.name);
   if (workflowPath) body.append("workflow_path", workflowPath);
   body.append("gpus", chosen.join(","));
   body.append("start", start ? "true" : "false");
   body.append("force", forceInput.checked ? "true" : "false");
+  body.append("vram", launch.vram);
+  body.append("attention", launch.attention);
+  body.append("flags", launch.flags.join(","));
+  body.append("reserve_vram", reserveInput.value.trim());
+  body.append("vram_headroom", headroomInput.value.trim());
+  body.append("preview_method", previewMethodInput.value);
+  body.append("preview_size", previewSizeInput.value.trim());
+  body.append("extra_args", extraArgsInput.value.trim());
   state.busy = true;
   setCreatePending(true, start);
   const result = await call("/api/instances", { method: "POST", body });
@@ -275,10 +301,54 @@ async function submitCreate(start) {
   fileName.textContent = "No file chosen";
   pathInput.value = "";
   forceInput.checked = false;
+  resetLaunch();
   closeSheet();
   showToast(`${mode}: ${instance.name} · port ${instance.port}.${warning}`);
   hide(banner);
   await refresh();
+}
+
+function readLaunch() {
+  const vram = document.querySelector('input[name="vram"]:checked');
+  const attention = document.querySelector('input[name="attention"]:checked');
+  const flags = [...document.querySelectorAll('input[name="flag"]:checked')];
+  return {
+    vram: vram ? vram.value : "",
+    attention: attention ? attention.value : "",
+    flags: flags.map((node) => node.value),
+    nodes: flags,
+  };
+}
+
+function launchConflict(launch) {
+  const buckets = new Map();
+  function add(group, flag) {
+    if (!group || !flag) return;
+    const list = buckets.get(group) || [];
+    list.push(flag);
+    buckets.set(group, list);
+  }
+  add("vram", launch.vram);
+  for (const node of launch.nodes) add(node.dataset.exclusive || "", node.value);
+  for (const flags of buckets.values()) {
+    if (flags.length > 1) {
+      return `${flags.join(", ")} cannot be combined. ComfyUI accepts only one of that group.`;
+    }
+  }
+  return "";
+}
+
+function resetLaunch() {
+  const vram = document.querySelector('input[name="vram"][value=""]');
+  const attention = document.querySelector('input[name="attention"][value=""]');
+  if (vram) vram.checked = true;
+  if (attention) attention.checked = true;
+  for (const node of document.querySelectorAll('input[name="flag"]')) node.checked = false;
+  reserveInput.value = "";
+  headroomInput.value = "";
+  previewMethodInput.value = "";
+  previewSizeInput.value = "";
+  extraArgsInput.value = "";
 }
 
 function setCreatePending(pending, start) {
