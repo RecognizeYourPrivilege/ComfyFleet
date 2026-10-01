@@ -28,6 +28,11 @@ const headroomInput = document.querySelector("#vram-headroom");
 const previewMethodInput = document.querySelector("#preview-method");
 const previewSizeInput = document.querySelector("#preview-size");
 const extraArgsInput = document.querySelector("#extra-args");
+const gitUrlsInput = document.querySelector("#custom-node-git-urls");
+const zipInput = document.querySelector("#custom-nodes-zip");
+const zipName = document.querySelector("#zip-name");
+const installMissingInput = document.querySelector("#install-missing-from-workflow");
+const flagsDisclosure = document.querySelector("#comfy-flags");
 
 document.querySelector("#refresh").addEventListener("click", () => refresh());
 document.querySelector("#logout").addEventListener("click", () => logout());
@@ -37,6 +42,10 @@ document.querySelector("#create-start").addEventListener("click", () => submitCr
 fileInput.addEventListener("change", () => {
   const file = fileInput.files && fileInput.files[0];
   fileName.textContent = file ? file.name : "No file chosen";
+});
+zipInput.addEventListener("change", () => {
+  const file = zipInput.files && zipInput.files[0];
+  zipName.textContent = file ? file.name : "No zip chosen";
 });
 sheet.addEventListener("click", (event) => {
   if (event.target.closest("[data-close]")) closeSheet();
@@ -115,11 +124,17 @@ function instanceCard(instance) {
   const card = el("article", { className: "card glass" });
   const top = el("div", { className: "card-top" });
   top.append(el("h2", { text: instance.name }));
+  const trailing = el("div", { className: "card-trailing" });
   const pill = el("span", {
     className: `pill ${running ? "running" : "stopped"}`,
     text: running ? "Running" : "Stopped",
   });
-  top.append(pill);
+  const remove = el("button", { className: "icon-btn trash-btn", type: "button" });
+  remove.setAttribute("aria-label", `Delete ${instance.name}`);
+  remove.append(trashIcon());
+  remove.addEventListener("click", () => confirmDelete(instance.name, remove));
+  trailing.append(pill, remove);
+  top.append(trailing);
   card.append(top);
   const gpuText = (instance.gpus || []).join(", ") || "none";
   card.append(el("p", {
@@ -155,9 +170,7 @@ function instanceCard(instance) {
   const copy = el("button", { className: "btn secondary", type: "button", text: "Copy URL" });
   copy.disabled = !url;
   copy.addEventListener("click", () => copyUrl(url));
-  const remove = el("button", { className: "btn danger", type: "button", text: "Delete" });
-  remove.addEventListener("click", () => confirmDelete(instance.name, remove));
-  actions.append(start, stop, kill, open, comfy, copy, remove);
+  actions.append(start, stop, kill, open, comfy, copy);
   card.append(actions);
   card.append(instanceFlagEditor(instance));
   const details = el("details");
@@ -168,13 +181,16 @@ function instanceCard(instance) {
 }
 
 async function mutate(name, action, button, pending) {
-  const previous = button.textContent;
+  const icon = button.querySelector("svg");
+  const previous = icon ? button.getAttribute("aria-label") : button.textContent;
   state.busy = true;
   button.disabled = true;
-  button.textContent = pending;
+  if (icon) button.setAttribute("aria-label", pending);
+  else button.textContent = pending;
   const result = await call(`/api/instances/${encodeURIComponent(name)}/${action}`, { method: "POST" });
   state.busy = false;
-  button.textContent = previous;
+  if (icon) button.setAttribute("aria-label", previous);
+  else button.textContent = previous;
   if (!result.ok) {
     showBanner(result.error);
     await refresh();
@@ -345,7 +361,14 @@ async function submitCreate(start) {
   body.append("vram_headroom", headroomInput.value.trim());
   body.append("preview_method", previewMethodInput.value);
   body.append("preview_size", previewSizeInput.value.trim());
-  body.append("extra_args", extraArgsInput.value.trim());
+  body.append("extra_args", "");
+  body.append("comfy_extra_args", extraArgsInput.value.trim());
+  for (const url of gitUrlLines(gitUrlsInput.value)) {
+    body.append("custom_node_git_urls", url);
+  }
+  const zip = zipInput.files && zipInput.files[0];
+  if (zip) body.append("custom_nodes_zip", zip, zip.name);
+  body.append("install_missing_from_workflow", installMissingInput.checked ? "true" : "false");
   state.busy = true;
   setCreatePending(true, start);
   const result = await call("/api/instances", { method: "POST", body });
@@ -357,16 +380,64 @@ async function submitCreate(start) {
   }
   const instance = result.payload.instance;
   const mode = result.payload.started ? "Created and started" : "Created (not started)";
-  const warning = result.payload.warning ? ` ${result.payload.warning}` : "";
+  const notices = responseNotices(result.payload);
   fileInput.value = "";
   fileName.textContent = "No file chosen";
   pathInput.value = "";
   forceInput.checked = false;
+  gitUrlsInput.value = "";
+  zipInput.value = "";
+  zipName.textContent = "No zip chosen";
+  installMissingInput.checked = true;
   resetLaunch();
+  if (flagsDisclosure) flagsDisclosure.open = false;
   closeSheet();
-  showToast(`${mode}: ${instance.name} · port ${instance.port}.${warning}`);
-  hide(banner);
+  const noticeText = notices.length ? ` ${notices.join(" ")}` : "";
+  showToast(`${mode}: ${instance.name} · port ${instance.port}.${noticeText}`);
+  if (notices.length) showBanner(notices.join(" "));
+  else hide(banner);
   await refresh();
+  if (notices.length) showBanner(notices.join(" "));
+}
+
+function gitUrlLines(value) {
+  return String(value || "")
+    .split(/[\r\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function responseNotices(payload) {
+  const items = [];
+  if (payload && payload.warning) items.push(String(payload.warning));
+  if (payload && Array.isArray(payload.warnings)) {
+    for (const item of payload.warnings) {
+      if (item) items.push(String(item));
+    }
+  }
+  return items;
+}
+
+function trashIcon() {
+  const svgNs = "http:" + "//www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNs, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  for (const d of [
+    "M4 7h16",
+    "M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2",
+    "M8 7l1 13h6l1-13",
+  ]) {
+    const path = document.createElementNS(svgNs, "path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", "currentColor");
+    path.setAttribute("stroke-width", "1.8");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.append(path);
+  }
+  return svg;
 }
 
 function readLaunch() {
