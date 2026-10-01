@@ -76,39 +76,55 @@ An open gate answers `POST /customnode/install/git_url` with **400** and `expect
 
 ## Host
 
-- Linux with Docker.
+- Linux with Docker. Arch is a fine host.
 - A working NVIDIA driver. `nvidia-smi` must succeed on the host.
 - The [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), so `docker create --gpus device=N` works.
 - Permission to create `/home/models`, `/home/custom_nodes_<name>`, and `/home/files/<name>/...`.
 
-The host does not need Debian, a CUDA toolkit, or a local image rebuild.
+The images stay Debian bookworm-slim. The host does not need its own CUDA toolkit. A local image rebuild is optional.
 
 ## Install
 
-From a checkout, replace `192.168.1.20` with the address browsers on your LAN use:
+Download the installer and run it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RecognizeYourPrivilege/ComfyFleet/main/install.sh -o install.sh && chmod +x install.sh && ./install.sh
+```
+
+Piping the script into bash works too. The questions are read from the terminal, so the pipe does not eat your answers:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RecognizeYourPrivilege/ComfyFleet/main/install.sh | bash
+```
+
+The installer asks three things:
+
+1. **Web UI password.** You type it twice. Nothing is shown as you type. If the two entries differ, it asks again. This becomes `COMFYFLEET_PASSWORD`. The manager refuses to start when it is missing or empty.
+2. **Device IP or LAN hostname.** The address of this computer on your home or office network, for example `192.168.1.20`. Other computers open `http://that-address:9100/`. This becomes `COMFYFLEET_PUBLIC_HOST`. If the installer can see a likely address, press Enter to accept it.
+3. **Prebuilt images or a local build.**
+   - **1** (press Enter): download the prebuilt GHCR images. This is the fast choice. It uses the digest pins in the Images section.
+   - **2**: build the instance image and the manager image on this computer. The instance Dockerfile installs PyTorch inside that image. This is slow and needs free disk space and a network connection. PyTorch stays inside the image.
+
+Choice 2 uses `Dockerfile` and `Dockerfile.manager` next to `install.sh`. A lone downloaded script clones the ComfyFleet source and builds that. Cloning needs `git`. The prebuilt download only needs Docker. Re-running the installer updates the manager. It does not delete workflow instances.
+
+For a script, set the values and skip the questions. With `--non-interactive`, or with no terminal at all, a missing password or address is an error. The prebuilt images are used unless you pass `--build`.
 
 ```bash
 export COMFYFLEET_PASSWORD=replace-with-a-long-secret
 export COMFYFLEET_PUBLIC_HOST=192.168.1.20
-./install.sh
+./install.sh --non-interactive
 ```
 
-Without a checkout:
+The same values can be passed into a pipe. `--non-interactive` is a script argument, so it has to come after `bash -s --`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RecognizeYourPrivilege/ComfyFleet/main/install.sh \
-  | COMFYFLEET_PASSWORD=replace-with-a-long-secret COMFYFLEET_PUBLIC_HOST=192.168.1.20 bash
+  | COMFYFLEET_PASSWORD=replace-with-a-long-secret COMFYFLEET_PUBLIC_HOST=192.168.1.20 bash -s -- --non-interactive
 ```
 
-Or Compose (the script still pulls the instance image, which is not a compose service):
+`--pull` is the same download as pressing Enter. `--build` is choice 2 without a prompt. `--compose` starts the manager with Docker Compose after the images are ready (the instance image is still not a compose service). `--pull-only` downloads and tags the prebuilt images and does not start the manager.
 
-```bash
-export COMFYFLEET_PASSWORD=replace-with-a-long-secret
-export COMFYFLEET_PUBLIC_HOST=192.168.1.20
-./install.sh --compose
-```
-
-`replace-with-a-long-secret` is a placeholder. Open `http://192.168.1.20:9100/`. The script pulls both images, tags the local names, removes an existing `comfyfleet-manager` container, and starts the manager with `--gpus all`, `-p 9100:9100`, the Docker socket, `/home`, `COMFYFLEET_PASSWORD`, `COMFYFLEET_PUBLIC_HOST`, and `COMFYFLEET_INSTANCE_IMAGE`. Re-running it updates the manager. It does not delete workflow instances.
+`replace-with-a-long-secret` is a placeholder. Open `http://192.168.1.20:9100/`. The installer removes an existing `comfyfleet-manager` container and starts the manager with `--gpus all`, `-p 9100:9100`, the Docker socket, `/home`, `COMFYFLEET_PASSWORD`, `COMFYFLEET_PUBLIC_HOST`, and `COMFYFLEET_INSTANCE_IMAGE`. A prebuilt install sets that variable to the pulled digest. A local build sets it to `comfyfleet:phase1` and runs `comfyfleet-manager:latest`.
 
 ### Manual run
 
@@ -247,7 +263,7 @@ export COMFYFLEET_MANAGER_IMAGE=comfyfleet-manager:latest
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ```
 
-`compose.build.yaml` points the manager at the local tags. The instance image is still the separate `docker build -t comfyfleet:phase1 .` above. Recreate running instances after that rebuild: stop, `create --force`, start.
+`compose.build.yaml` points the manager at the local tags. The instance image is still the separate `docker build -t comfyfleet:phase1 .` above. `./install.sh --build` runs those two builds, then starts the manager with `COMFYFLEET_INSTANCE_IMAGE=comfyfleet:phase1` and `COMFYFLEET_MANAGER_IMAGE=comfyfleet-manager:latest`. PyTorch is installed by the instance Dockerfile, inside the image. Recreate running instances after that rebuild: stop, `create --force`, start.
 
 ### Publish to GHCR
 
