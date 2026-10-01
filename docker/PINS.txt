@@ -55,6 +55,45 @@ ComfyUI-ComfyDock
   https://github.com/RecognizeYourPrivilege/ComfyUI-ComfyDock
   commit 3a9ff9eba897bf2388d6c1943b01d819ba05a0c6
 
+RES4LYF
+  https://github.com/ClownsharkBatwing/RES4LYF
+  commit 3d1d69da69ee47f7647d59e1bd0967e472fccc41
+  requirements.txt at that commit: opencv-python, matplotlib, pywavelets,
+  numpy>=1.26.4. Installed with -c /opt/comfyfleet/torch-constraints.txt.
+  The entrypoint symlinks baked_custom_nodes/RES4LYF into custom_nodes.
+
+numpy
+  numpy==2.2.6
+  Installed from PyPI before ComfyUI and custom-node requirements, then
+  written into /opt/comfyfleet/torch-constraints.txt with the torch pins.
+  PIP_CONSTRAINT points at that file. Manager's custom-node installer runs
+  `python -m pip install -U` without its own -c flag; it inherits the env
+  var, so those installs cannot replace numpy (or the CUDA 12.4 torch wheels).
+  ComfyUI v0.38.0 asks for numpy>=1.25.0. RES4LYF asks for numpy>=1.26.4.
+  opencv-python 5 asks for numpy>=2. 2.2.6 satisfies all three.
+  docker/verify_image_pins.py asserts the version during the image build.
+
+OpenCV shared libraries (Debian bookworm apt, not version-pinned)
+  libxcb1        libxcb.so.1
+  libx11-6       libX11.so.6
+  libxext6       libXext.so.6
+  libice6        libICE.so.6
+  libsm6         libSM.so.6
+  libglib2.0-0   libglib-2.0.so.0 and libgthread-2.0.so.0
+  libgl1         libGL.so.1
+  RES4LYF images.py imports cv2 at custom-node load. opencv-python is not
+  the headless distribution; requirements.txt names opencv-python, and pip
+  would still install that wheel if a headless build were substituted.
+  The wheel pip selects for CPython 3.11 on bookworm today is
+  opencv-python 5.0.0.93 manylinux_2_28. Its cv2 extension loads bundled Qt,
+  which needs libGL.so.1 and libglib-2.0.so.0 at import. The Qt xcb platform
+  plugin libqxcb.so is linked directly to libxcb.so.1 (the crash on
+  bookworm-slim), plus libX11, libXext, libSM, and libICE.
+  matplotlib's Agg backend and the PyWavelets 3.11 wheel do not add system
+  libraries beyond glibc and libstdc++ (already present via gcc).
+  The image build runs docker/verify_image_pins.py, which imports cv2 and
+  dlopens libxcb.so.1 and libqxcb.so. No display and no GPU.
+
 comfy-kitchen
   0.2.36 pure-Python wheel (eager backend): comfy_kitchen-0.2.36-py3-none-any.whl
   https://files.pythonhosted.org/packages/38/23/a6787aac01d7c28ae3cb07579ba839297a35e6fad66baac096916246cc7f/comfy_kitchen-0.2.36-py3-none-any.whl

@@ -30,6 +30,70 @@ class ImageContractTests(unittest.TestCase):
         self.assertNotIn("COPY examples", text)
         self.assertNotIn("QualitySafe", text)
 
+    def test_numpy_pin_and_res4lyf_xcb_contract(self):
+        dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        pins = (ROOT / "docker" / "PINS.txt").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        entry = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+        script = (ROOT / "docker" / "verify_image_pins.py").read_text(encoding="utf-8")
+        commit = "3d1d69da69ee47f7647d59e1bd0967e472fccc41"
+        apt_packages = (
+            "libxcb1",
+            "libx11-6",
+            "libxext6",
+            "libice6",
+            "libsm6",
+            "libglib2.0-0",
+            "libgl1",
+        )
+
+        apt_at = dockerfile.index("apt-get install -y --no-install-recommends \\\n        cuda-libraries-12-4")
+        apt_block = dockerfile[apt_at:dockerfile.index("ln -sfn /usr/local/cuda-12.4", apt_at)]
+        for package in apt_packages:
+            self.assertIn(f"\n        {package} \\\n", apt_block)
+            self.assertIn(package, pins)
+            self.assertIn(package, readme)
+
+        self.assertIn("pip install --no-cache-dir numpy==2.2.6", dockerfile)
+        self.assertIn(
+            "printf '%s\\n' 'torch==2.6.0+cu124' 'torchvision==0.21.0+cu124' 'numpy==2.2.6'",
+            dockerfile,
+        )
+        self.assertIn("PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt", dockerfile)
+        self.assertLess(
+            dockerfile.index("printf '%s\\n' 'torch==2.6.0+cu124'"),
+            dockerfile.index("ENV PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt"),
+        )
+        self.assertIn('numpy.__version__ == "2.2.6"', dockerfile)
+        self.assertIn("https://github.com/ClownsharkBatwing/RES4LYF.git", dockerfile)
+        self.assertIn(commit, dockerfile)
+        self.assertIn(
+            "-r /opt/comfyfleet/baked_custom_nodes/RES4LYF/requirements.txt",
+            dockerfile,
+        )
+        self.assertIn("python /opt/comfyfleet/verify_image_pins.py", dockerfile)
+        self.assertLess(
+            dockerfile.index("-r /opt/comfyfleet/baked_custom_nodes/RES4LYF/requirements.txt"),
+            dockerfile.index("python /opt/comfyfleet/verify_image_pins.py"),
+        )
+
+        self.assertIn('link_baked "RES4LYF"', entry)
+        self.assertLess(entry.index('link_baked "RES4LYF"'), entry.index("exec /opt/venv/bin/python main.py"))
+
+        self.assertIn('NUMPY_PIN = "2.2.6"', script)
+        self.assertIn('ctypes.CDLL("libxcb.so.1")', script)
+        self.assertIn("libqxcb.so", script)
+        self.assertIn("import cv2", script)
+        compile(script, "docker/verify_image_pins.py", "exec")
+
+        self.assertIn("numpy==2.2.6", pins)
+        self.assertIn(commit, pins)
+        self.assertIn("libxcb.so.1", pins)
+        self.assertIn("numpy==2.2.6", readme)
+        self.assertIn(commit, readme)
+        self.assertIn("libxcb.so.1", readme)
+        self.assertIn("`RES4LYF`", readme)
+
     def test_dockerignore_keeps_example_workflows_out_of_the_image(self):
         text = (ROOT / ".dockerignore").read_text(encoding="utf-8")
         self.assertIn("examples", text)
