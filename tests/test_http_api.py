@@ -22,8 +22,8 @@ from comfyfleet.http_api import (
     ApiContext,
     dispatch,
     make_server,
-    request_host,
 )
+from comfyfleet.public_host import request_host
 from comfyfleet.paths import FleetLayout
 
 
@@ -43,6 +43,10 @@ class FakeDocker:
 
     def stop(self, name):
         self.calls.append(("stop", name))
+        self.containers[name]["status"] = "exited"
+
+    def kill(self, name):
+        self.calls.append(("kill", name))
         self.containers[name]["status"] = "exited"
 
     def remove(self, name):
@@ -235,7 +239,7 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(instance["status"], "created")
         self.assertEqual(instance["port"], 8188)
         self.assertEqual(instance["gpus"], [0])
-        self.assertIsNone(instance["url"])
+        self.assertNotIn("url", instance)
         # create reserves ports through list_instances, which calls authorize("list").
         self.assertEqual(seen, ["create", "list"])
         self.assertNotIn(("start", "portrait"), self.docker.calls)
@@ -256,7 +260,7 @@ class HttpApiTests(unittest.TestCase):
         status, raw = self._open("GET", "/api/instances")
         listed = self._body(status, raw)["instances"]
         self.assertEqual(len(listed), 1)
-        self.assertIsNone(listed[0]["url"])
+        self.assertNotIn("url", listed[0])
         self.assertEqual(listed[0]["status"], "created")
 
         status, raw = self._open("POST", "/api/instances/portrait/start")
@@ -264,7 +268,9 @@ class HttpApiTests(unittest.TestCase):
         started = self._body(status, raw)
         self.assertTrue(started["started"])
         self.assertEqual(started["instance"]["status"], "running")
-        self.assertEqual(started["instance"]["url"], "http://127.0.0.1:8188")
+        self.assertEqual(started["instance"]["port"], 8188)
+        self.assertNotIn("url", started["instance"])
+        self.assertNotIn("127.0.0.1", raw.decode("utf-8"))
         self.assertIn(("start", "portrait"), self.docker.calls)
         self.assertNotIn("build", [call[0] for call in self.docker.calls])
 
@@ -277,13 +283,16 @@ class HttpApiTests(unittest.TestCase):
             None,
             {"Authorization": f"Bearer {PASSWORD}"},
         )
-        listed = json.loads(viewed.body.decode("utf-8"))["instances"]
-        self.assertEqual(listed[0]["url"], "http://phone.lan:8188")
+        listed_body = viewed.body.decode("utf-8")
+        listed = json.loads(listed_body)["instances"]
+        self.assertEqual(listed[0]["port"], 8188)
+        self.assertNotIn("url", listed[0])
+        self.assertNotIn("phone.lan", listed_body)
 
         status, raw = self._open("POST", "/api/instances/portrait/stop")
         stopped = self._body(status, raw)
         self.assertEqual(stopped["instance"]["status"], "exited")
-        self.assertIsNone(stopped["instance"]["url"])
+        self.assertNotIn("url", stopped["instance"])
         self.assertEqual(stopped["instance"]["port"], 8188)
         self.assertNotIn(("rm", "portrait"), self.docker.calls)
         self.assertTrue((root / "files" / "portrait" / "comfyfleet.json").is_file())
@@ -309,7 +318,8 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(started["instance"]["gpus"], [1])
         self.assertTrue(started["started"])
         self.assertEqual(started["instance"]["status"], "running")
-        self.assertEqual(started["instance"]["url"], "http://127.0.0.1:8189")
+        self.assertEqual(started["instance"]["port"], 8189)
+        self.assertNotIn("url", started["instance"])
         create_args = self.docker.containers["background"]["args"]
         self.assertEqual(create_args[create_args.index("--gpus") + 1], "device=1")
 
@@ -374,6 +384,114 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(payload["instance"]["name"], "my_flow")
         self.assertFalse(payload["started"])
 
+    def test_launch_flags_reach_docker_create_and_strip_listen(self):
+        path = Path(self.tmp.name) / "Portrait.json"
+        path.write_bytes(_workflow("flags"))
+        created = self._post_json(
+            {
+                "workflow_path": str(path),
+                "gpu": "0",
+                "vram": "lowvram",
+                "attention": "use-flash-attention",
+                "flags": ["disable-dynamic-vram", "disable-xformers"],
+                "reserve_vram": 1.5,
+                "extra_args": "--listen 127.0.0.1 --port 1 --mmap-torch-files",
+            }
+        )
+        argv = created["instance"]["launch"]["argv"]
+        self.assertEqual(
+            argv,
+            [
+                "--lowvram",
+                "--use-flash-attention",
+                "--disable-dynamic-vram",
+                "--disable-xformers",
+                "--reserve-vram",
+                "1.5",
+                "--mmap-torch-files",
+            ],
+        )
+        args = self.docker.containers["portrait"]["args"]
+        self.assertEqual(args[args.index("comfyfleet:phase1") + 1 :], argv)
+        self.assertNotIn("--listen", args)
+
+        body, content_type = _multipart(
+            [
+                ("workflow_path", str(path)),
+                ("gpu", "0"),
+                ("force", "true"),
+                ("vram", "--novram"),
+                ("flags", "--disable-xformers"),
+                ("extra_args", "--listen=0.0.0.0 --mmap-torch-files"),
+            ],
+            [],
+        )
+        status, raw = self._open(
+            "POST",
+            "/api/instances",
+            data=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 200, raw)
+        replaced = self._body(status, raw)
+        self.assertEqual(
+            replaced["instance"]["launch"]["argv"],
+            ["--novram", "--disable-xformers", "--mmap-torch-files"],
+        )
+
+        status, raw = self._open(
+            "POST",
+            "/api/instances",
+            data=json.dumps(
+                {
+                    "workflow_path": str(path),
+                    "gpu": "0",
+                    "force": True,
+                    "vram": "lowvram",
+                    "flags": "--cpu",
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 400, raw)
+        self.assertIn("cannot be combined", json.loads(raw.decode("utf-8"))["error"])
+
+    def test_launch_update_keeps_port_mounts_and_workflow(self):
+        path = Path(self.tmp.name) / "Portrait.json"
+        path.write_bytes(_workflow("keep"))
+        created = self._post_json(
+            {"workflow_path": str(path), "gpu": "0", "start": True, "vram": "lowvram"}
+        )
+        self.assertEqual(created["instance"]["port"], 8188)
+        workflow = (self.layout.files / "portrait" / "default_workflow.json").read_bytes()
+        first = self.docker.containers["portrait"]["args"]
+        status, raw = self._open(
+            "POST",
+            "/api/instances/portrait/launch",
+            data=json.dumps({"vram": "--novram", "flags": ["--cache-none"]}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 200, raw)
+        body = self._body(status, raw)
+        self.assertTrue(body["started"])
+        self.assertEqual(body["instance"]["port"], 8188)
+        self.assertEqual(body["instance"]["launch"]["argv"], ["--novram", "--cache-none"])
+        self.assertEqual(list(self.docker.containers), ["portrait"])
+        second = self.docker.containers["portrait"]["args"]
+        self.assertEqual(first[first.index("-p") + 1], second[second.index("-p") + 1])
+        self.assertEqual(first[first.index("--name") + 1], "portrait")
+        self.assertEqual(
+            [first[index + 1] for index, token in enumerate(first) if token == "-v"],
+            [second[index + 1] for index, token in enumerate(second) if token == "-v"],
+        )
+        self.assertEqual(
+            (self.layout.files / "portrait" / "default_workflow.json").read_bytes(),
+            workflow,
+        )
+        removed = [index for index, call in enumerate(self.docker.calls) if call[0] == "rm"]
+        created_at = [index for index, call in enumerate(self.docker.calls) if call[0] == "create"]
+        self.assertGreater(created_at[-1], removed[-1])
+
     def test_collision_and_force(self):
         path = Path(self.tmp.name) / "Portrait.json"
         path.write_bytes(_workflow("v1"))
@@ -390,6 +508,28 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(replaced["instance"]["name"], "portrait")
         self.assertIn(("rm", "portrait"), self.docker.calls)
 
+    def test_force_stop_and_delete_named_instance(self):
+        path = Path(self.tmp.name) / "Portrait.json"
+        path.write_bytes(_workflow("gone"))
+        self._post_json({"workflow_path": str(path), "gpu": "0", "start": True})
+        status, raw = self._open("POST", "/api/instances/portrait/force-stop")
+        self.assertEqual(status, 200, raw)
+        self.assertIn(("kill", "portrait"), self.docker.calls)
+        self.assertNotIn(("stop", "portrait"), self.docker.calls)
+        self.assertEqual(self.docker.status("portrait"), "exited")
+        self.assertTrue((self.layout.files / "portrait" / "comfyfleet.json").is_file())
+
+        self._open("POST", "/api/instances/portrait/start")
+        status, raw = self._open("POST", "/api/instances/portrait/delete")
+        self.assertEqual(status, 200, raw)
+        deleted = self._body(status, raw)
+        self.assertEqual(deleted["deleted"], "portrait")
+        self.assertIsNone(self.docker.status("portrait"))
+        self.assertFalse((self.layout.files / "portrait" / "comfyfleet.json").is_file())
+        self.assertTrue((self.layout.files / "portrait" / "default_workflow.json").is_file())
+        listed = self._body(*self._open("GET", "/api/instances"))["instances"]
+        self.assertEqual(listed, [])
+
     def test_unknown_instance_and_routes(self):
         status, raw = self._open("POST", "/api/instances/missing/start")
         self.assertEqual(status, 400)
@@ -397,7 +537,8 @@ class HttpApiTests(unittest.TestCase):
         status, raw = self._open("GET", "/api/instances/portrait/start")
         self.assertEqual(status, 405)
         status, raw = self._open("POST", "/api/instances/portrait/delete")
-        self.assertEqual(status, 404)
+        self.assertEqual(status, 400)
+        self.assertIn("no instance named", json.loads(raw.decode("utf-8"))["error"])
         status, raw = self._open("POST", "/api/nope")
         self.assertEqual(status, 404)
 

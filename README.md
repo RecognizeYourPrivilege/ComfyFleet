@@ -169,7 +169,7 @@ If `/home` is not a bind mount, the manager warns at startup. Directories create
 
 Open the manager URL and sign in. The password is the `COMFYFLEET_PASSWORD` value. Wrong password shows invalid credentials. Log out clears the session. After that, fleet API calls fail until you sign in again.
 
-The UI is the primary way to create an instance. Upload a workflow JSON, pick GPUs, then create. New instances stay **stopped**. Start the ones you want running and stop the others. Open is enabled only while an instance is running.
+The UI is the primary way to create an instance. Upload a workflow JSON, pick GPUs, launch flags, then create. New instances stay **stopped**. Start the ones you want running and stop the others. **Open** is a shell in that instance, proxied by the manager over a websocket (`docker exec` stays on the manager; the browser never gets the Docker socket). **Open Comfy** is the ComfyUI page and is enabled only while the instance is running. **Force stop** is `docker kill`. **Delete** asks for confirmation, then removes that container and its fleet record. Host files for the instance are kept.
 
 There is no baked default workflow. A missing or invalid workflow JSON does not create an instance.
 
@@ -177,11 +177,9 @@ On a host with more than one GPU, create asks which GPU or GPUs to attach. A sin
 
 ### Open links
 
-`COMFYFLEET_PUBLIC_HOST` is the hostname or IP baked into Open URLs (`http://<that-host>:<port>`). Set it to the LAN address browsers use.
+**Open Comfy** uses the host you already used to open the manager, plus that instance’s published port: the same scheme as the manager page, `window.location.hostname`, and the port from the API. Tailscale and LAN follow whichever host loaded `:9100`. The API does not return a baked absolute host, and `COMFYFLEET_PUBLIC_HOST` is not used for that button.
 
-When it is unset, Open uses the request `Host` header with the control port removed, if that value is a safe hostname or IP. `0.0.0.0`, empty values, and values with spaces or slashes are ignored. An invalid `COMFYFLEET_PUBLIC_HOST` stops the control server at startup.
-
-From another machine, the ComfyUI page is `http://<public-host>:<port>`. Inside the instance, ComfyUI listens on `0.0.0.0` port `8188`. The manager publishes that as a host port starting at **8188**.
+The link is `http(s)://<page-host>:<published-port>/` with a trailing slash so ComfyUI’s relative assets resolve. Inside the instance, ComfyUI listens on `0.0.0.0` port `8188`. The manager publishes that as a host port starting at **8188**. **Open** (the shell) stays on this manager at `/terminal.html`.
 
 ## Optional CLI inside the manager
 
@@ -260,10 +258,10 @@ A real directory you place at one of those names is left alone. The links point 
 ## Workflow load path
 
 1. Create copies the operator workflow to `/home/files/<name>/default_workflow.json`.
-2. Instance metadata is written to `/home/files/<name>/comfyfleet.json` (name, port, GPUs, image, workflow paths).
+2. Instance metadata is written to `/home/files/<name>/comfyfleet.json` (name, port, GPUs, image, workflow paths, and any ComfyUI launch flags chosen at create).
 3. `/home/files/<name>` is bind-mounted at `/opt/comfyfleet/instance`. Edit the workflow file in place.
 4. Every instance start runs `docker/entrypoint.sh`, which refuses to exec ComfyUI if that JSON object is missing or invalid. It then writes a new boot id to `/tmp/comfyfleet-boot-id`.
-5. ComfyUI is executed as `python main.py --listen 0.0.0.0 --port 8188`.
+5. ComfyUI is executed as `python main.py --listen 0.0.0.0 --port 8188`, then any per-instance flags saved at create (VRAM mode, attention backend, dtype and memory toggles, and extra args). `--listen` stays `0.0.0.0`. The process port stays `8188` inside the container; the host port is the Docker publish. Pasted `--listen` or `--port` in extra args are removed. On NVIDIA, `--lowvram` does nothing while dynamic VRAM is enabled, so a 12GB GPU also needs `--disable-dynamic-vram`. Changing flags is a recreate (`--force` on a stopped instance).
 6. The baked loader serves `GET /comfyfleet/default-workflow` and `GET /comfyfleet/boot`. Its frontend extension loads the operator graph after the UI comes up. A browser tab loads the file once per boot id and file mtime. If the fetch fails, the loader does not substitute another workflow.
 
 GPU changes are a recreate: stop the instance, then create again with `--force` and the new GPU set. There is no in-place GPU edit.
@@ -330,7 +328,7 @@ The UI and the API are same-origin. This server does not send CORS headers. Do n
 | `POST` | `/api/logout` | no | Clears the session cookie and the server session |
 | `GET` | `/login` | no | Sign-in page |
 | `GET` | `/api/gpus` | yes | Detected GPUs (`index`, `name`, `memory`). **503** when `nvidia-smi` is missing or fails |
-| `GET` | `/api/instances` | yes | `name`, `status`, `port`, `gpus`, and `url` when `status` is `running` |
+| `GET` | `/api/instances` | yes | `name`, `status`, `port`, `gpus`. The browser builds Open Comfy from the page host and `port` |
 | `POST` | `/api/instances` | yes | Create. Requires an uploaded workflow JSON or `workflow_path`. Requires `gpu` or `gpus`. `start` defaults to false |
 | `POST` | `/api/instances/{name}/start` | yes | Start without rebuilding the image |
 | `POST` | `/api/instances/{name}/stop` | yes | Stop without destroying the container |

@@ -6,10 +6,13 @@ from unittest import mock
 
 from comfyfleet.control import (
     create_instance,
+    delete_instance,
+    force_stop_instance,
     format_list,
     list_instances,
     start_instance,
     stop_instance,
+    terminal_argv,
 )
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
@@ -32,6 +35,10 @@ class FakeDocker:
 
     def stop(self, name):
         self.calls.append(("stop", name))
+        self.containers[name]["status"] = "exited"
+
+    def kill(self, name):
+        self.calls.append(("kill", name))
         self.containers[name]["status"] = "exited"
 
     def remove(self, name):
@@ -314,6 +321,55 @@ class ControlTests(unittest.TestCase):
                 max_concurrent=1,
             )
         self.assertEqual(self.docker.status("two"), "created")
+
+    def test_force_stop_kills_only_a_running_instance(self):
+        self._create("Portrait.json")
+        start_instance(
+            "portrait",
+            layout=self.layout,
+            docker=self.docker,
+            gpus=self.one,
+            port_in_use=lambda _port: False,
+        )
+        result = force_stop_instance("portrait", layout=self.layout, docker=self.docker)
+        self.assertEqual(result.name, "portrait")
+        self.assertIn(("kill", "portrait"), self.docker.calls)
+        self.assertNotIn(("stop", "portrait"), self.docker.calls)
+        self.assertEqual(self.docker.status("portrait"), "exited")
+        self.assertTrue((self.root / "files" / "portrait" / "comfyfleet.json").is_file())
+
+    def test_delete_removes_the_named_container_and_record_only(self):
+        self._create("Portrait.json")
+        self._create("Other.json")
+        start_instance(
+            "portrait",
+            layout=self.layout,
+            docker=self.docker,
+            gpus=self.one,
+            port_in_use=lambda _port: False,
+        )
+        workflow = self.root / "files" / "portrait" / "default_workflow.json"
+        deleted = delete_instance("portrait", layout=self.layout, docker=self.docker)
+        self.assertEqual(deleted.name, "portrait")
+        self.assertIn(("kill", "portrait"), self.docker.calls)
+        self.assertIsNone(self.docker.status("portrait"))
+        self.assertFalse((self.root / "files" / "portrait" / "comfyfleet.json").is_file())
+        self.assertTrue(workflow.is_file())
+        self.assertEqual(self.docker.status("other"), "created")
+        names = [item.name for item, _status in list_instances(self.layout, self.docker)]
+        self.assertEqual(names, ["other"])
+        with self.assertRaises(FleetError):
+            terminal_argv("other", layout=self.layout, docker=self.docker)
+        start_instance(
+            "other",
+            layout=self.layout,
+            docker=self.docker,
+            gpus=self.one,
+            port_in_use=lambda _port: False,
+        )
+        argv = terminal_argv("other", layout=self.layout, docker=self.docker)
+        self.assertEqual(argv, ["docker", "exec", "-it", "other", "/bin/bash"])
+        self.assertNotIn("docker.sock", " ".join(argv))
 
     def test_missing_workflow_argument_fails_in_the_parser(self):
         from comfyfleet.cli import build_parser
