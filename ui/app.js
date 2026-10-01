@@ -8,6 +8,7 @@ const state = {
   selected: new Set(),
   drafts: new Map(),
   openEditors: new Set(),
+  listSignature: "",
   timer: 0,
 };
 
@@ -96,11 +97,41 @@ async function refresh() {
 }
 
 function renderList(instances) {
-  list.replaceChildren();
   const rows = instances || [];
+  const signature = JSON.stringify(rows);
+  // Polling hits this every 10s. Rebuilding the cards remounts the flags
+  // panel (so it collapses) and resets window scroll. Skip that when the
+  // fleet snapshot is unchanged, and restore scroll if a real change lands.
+  if (signature === state.listSignature && list.childElementCount === rows.length) return;
+  const scrollX = window.scrollX;
+  const scrollY = window.scrollY;
+  const editorScroll = new Map();
+  for (const editor of list.querySelectorAll(".flag-editor-body")) {
+    const panel = editor.closest(".flag-editor");
+    if (panel && panel.id) editorScroll.set(panel.id, editor.scrollTop);
+  }
+  const openDetails = new Set();
+  for (const node of list.querySelectorAll("article")) {
+    const heading = node.querySelector("h2");
+    const details = node.querySelector("details");
+    if (heading && details && details.open) openDetails.add(heading.textContent);
+  }
+  state.listSignature = signature;
+  list.replaceChildren();
   empty.hidden = rows.length !== 0;
   for (const instance of rows) {
     list.append(instanceCard(instance));
+  }
+  for (const node of list.querySelectorAll("article")) {
+    const heading = node.querySelector("h2");
+    const details = node.querySelector("details");
+    if (heading && details && openDetails.has(heading.textContent)) details.open = true;
+  }
+  window.scrollTo(scrollX, scrollY);
+  for (const [id, top] of editorScroll) {
+    const panel = document.getElementById(id);
+    const body = panel && panel.querySelector(".flag-editor-body");
+    if (body) body.scrollTop = top;
   }
 }
 
@@ -570,22 +601,46 @@ const FLAG_SECTIONS = [
 function instanceFlagEditor(instance) {
   const draft = draftFor(instance);
   const box = el("div", { className: "flag-editor" });
-  box.append(el("p", { className: "flag-sub", text: "ComfyUI flags" }));
-  box.append(el("p", {
+  const body = el("div", { className: "flag-editor-body" });
+  body.append(el("p", { className: "flag-sub", text: "ComfyUI flags" }));
+  body.append(el("p", {
     className: "hint",
     text: "Click a flag to add it. × removes it. Apply stops this instance if it is running and recreates the same name, port, mounts, and workflow. Only the Comfy arguments change.",
   }));
   const applied = el("div", { className: "chip-row" });
   const catalog = el("div");
-  box.append(el("p", { className: "flag-sub", text: "VRAM" }));
-  box.append(draftRadios(draft, "vram", `vram-${instance.name}`, radioValues("vram"), applied, catalog));
-  box.append(el("p", { className: "flag-sub", text: "Attention" }));
-  box.append(draftRadios(draft, "attention", `attention-${instance.name}`, radioValues("attention"), applied, catalog));
+  body.append(el("p", { className: "flag-sub", text: "VRAM" }));
+  body.append(draftRadios(draft, "vram", `vram-${instance.name}`, radioValues("vram"), applied, catalog));
+  body.append(draftNumber(draft, "reserve", "Reserve VRAM (GB)", "--reserve-vram"));
+  body.append(draftNumber(draft, "headroom", "VRAM headroom (GB)", "--vram-headroom"));
+  body.append(el("p", { className: "flag-sub", text: "Attention" }));
+  body.append(draftRadios(draft, "attention", `attention-${instance.name}`, radioValues("attention"), applied, catalog));
   paintInstanceFlags(draft, applied, catalog);
+  body.append(applied, catalog);
   const apply = el("button", { className: "btn secondary flag-apply", type: "button", text: "Apply" });
   apply.addEventListener("click", () => applyLaunch(instance.name, apply));
-  box.append(applied, catalog, apply);
+  box.append(body, apply);
   return box;
+}
+
+function draftNumber(draft, field, label, flag) {
+  const block = el("div", { className: "flag-number" });
+  block.append(el("p", { className: "field-label", text: label }));
+  const input = document.createElement("input");
+  input.className = "text-input";
+  input.type = "number";
+  input.min = "0";
+  input.step = "any";
+  input.inputMode = "decimal";
+  input.placeholder = "empty = omit";
+  input.setAttribute("aria-label", `${label} ${flag}`);
+  input.value = draft[field] || "";
+  input.addEventListener("input", () => {
+    draft[field] = input.value.trim();
+    draft.dirty = true;
+  });
+  block.append(input);
+  return block;
 }
 
 function radioValues(name) {

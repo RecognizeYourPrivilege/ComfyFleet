@@ -127,6 +127,13 @@
           </label>
         </div>
 
+        <label class="field-label" for="reserve-vram">Reserve VRAM (GB)</label>
+        <input id="reserve-vram" class="text-input" type="number" min="0" step="any" inputmode="decimal" placeholder="empty = omit">
+        <p class="hint">Sent as <code>--reserve-vram</code>. Leave empty to omit it.</p>
+        <label class="field-label" for="vram-headroom">VRAM headroom (GB)</label>
+        <input id="vram-headroom" class="text-input" type="number" min="0" step="any" inputmode="decimal" placeholder="empty = omit">
+        <p class="hint">Sent as <code>--vram-headroom</code>. Leave empty to omit it.</p>
+
         <p class="flag-sub" id="attention-label">Attention</p>
         <div class="choice-col" role="radiogroup" aria-labelledby="attention-label">
           <label class="choice">
@@ -206,10 +213,6 @@
         <label class="check"><input type="checkbox" name="flag" value="--disable-xformers" data-section="misc"><span>--disable-xformers</span></label>
         </div>
 
-        <label class="field-label" for="reserve-vram">Reserve VRAM (GB)</label>
-        <input id="reserve-vram" class="text-input" type="number" min="0" step="any" inputmode="decimal" placeholder="empty = omit">
-        <label class="field-label" for="vram-headroom">VRAM headroom (GB)</label>
-        <input id="vram-headroom" class="text-input" type="number" min="0" step="any" inputmode="decimal" placeholder="empty = omit">
         <label class="field-label" for="preview-method">Preview method</label>
         <select id="preview-method" class="text-input">
           <option value="">Default (omit)</option>
