@@ -518,6 +518,46 @@ pre {
 
 .flag-panel code { color: var(--ink); }
 
+.flag-sources {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.chip.on { background: var(--fill); }
+
+.chip-x {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  cursor: pointer;
+}
+
 .flag-sub {
   margin: 14px 0 4px;
   font-size: 12px;
