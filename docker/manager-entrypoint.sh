@@ -46,11 +46,7 @@ if ! awk '$2 == "/home" { found = 1 } END { exit found ? 0 : 1 }' /proc/mounts; 
   echo "comfyfleet: sibling containers receive those same host paths. A /home that exists only inside the manager is not visible to them." >&2
 fi
 
-if [[ -z "${COMFYFLEET_PUBLIC_HOST:-}" ]]; then
-  echo "comfyfleet: COMFYFLEET_PUBLIC_HOST is unset. Open links use the browser Host header when it is a safe hostname or IP." >&2
-else
-  echo "comfyfleet: Open links use COMFYFLEET_PUBLIC_HOST=${COMFYFLEET_PUBLIC_HOST}." >&2
-fi
+echo "comfyfleet: Open Comfy uses the browser host and the instance port. COMFYFLEET_PUBLIC_HOST is not used for that link." >&2
 
 UI_DIR="${COMFYFLEET_UI_DIR:-/opt/comfyfleet/ui}"
 BIND_HOST="${COMFYFLEET_BIND_HOST:-0.0.0.0}"

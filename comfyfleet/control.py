@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,6 +17,7 @@ from comfyfleet.auth import AuthError, http_auth_state
 from comfyfleet.docker import DockerCLI, build_create_args
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu, select_gpus
+from comfyfleet.launch import LaunchConfig, launch_from_json, parse_launch
 from comfyfleet.naming import instance_name_from_workflow, is_instance_name
 from comfyfleet.paths import DEFAULT_IMAGE, MODEL_SUBDIRS, FleetLayout
 from comfyfleet.ports import choose_port, make_port_in_use
@@ -34,10 +35,12 @@ class Instance:
     workflow_host_path: str
     workflow_source: str
     created_at: str
+    launch: LaunchConfig = field(default_factory=LaunchConfig)
 
     def to_json(self) -> dict:
         payload = asdict(self)
         payload["schema"] = METADATA_SCHEMA
+        payload["launch"] = self.launch.to_json()
         return payload
 
     @classmethod
@@ -51,7 +54,10 @@ class Instance:
                 workflow_host_path=str(payload["workflow_host_path"]),
                 workflow_source=str(payload.get("workflow_source", "")),
                 created_at=str(payload.get("created_at", "")),
+                launch=launch_from_json(payload.get("launch"), path=str(path)),
             )
+        except FleetError:
+            raise
         except (KeyError, TypeError, ValueError) as exc:
             raise FleetError(f"instance metadata is invalid: {path}") from exc
 
@@ -73,7 +79,7 @@ def authorize(action: str) -> None:
     refuses to start when ``COMFYFLEET_PASSWORD`` is missing.
     """
 
-    if action not in {"create", "start", "stop", "restart", "list"}:
+    if action not in {"create", "start", "stop", "force-stop", "delete", "terminal", "restart", "list", "update"}:
         raise FleetError(f"unknown control action {action!r}")
     if http_auth_state() is False:
         raise AuthError("unauthorized")
@@ -95,8 +101,10 @@ def create_instance(
     port_in_use=None,
     max_concurrent: int | None = None,
     use_env_limit: bool = False,
+    launch: LaunchConfig | None = None,
 ) -> ActionResult:
     authorize("create")
+    launch = _canonicalize_launch(launch)
     image = resolve_instance_image(image)
     source = Path(workflow)
     load_operator_workflow(source)
@@ -139,6 +147,7 @@ def create_instance(
         workflow_host_path=str(dest),
         workflow_source=str(source.resolve()),
         created_at=_now(),
+        launch=launch,
     )
     _write_metadata(layout, instance)
     try:
@@ -228,6 +237,119 @@ def stop_instance(name: str, *, layout: FleetLayout, docker: DockerCLI) -> Insta
     return instance
 
 
+def force_stop_instance(name: str, *, layout: FleetLayout, docker: DockerCLI) -> Instance:
+    """SIGKILL the instance container. This is not ``docker stop``."""
+
+    authorize("force-stop")
+    _require_name(name)
+    instance = _require_instance(layout, name)
+    status = docker.status(name)
+    if status is None:
+        raise FleetError(
+            f"instance {name!r} has metadata but no container. Nothing to force-stop."
+        )
+    if status != "running":
+        return instance
+    docker.kill(name)
+    return instance
+
+
+def delete_instance(name: str, *, layout: FleetLayout, docker: DockerCLI) -> Instance:
+    """Force-stop and remove this instance container, then drop its fleet record.
+
+    Host files (workflow, input, output, custom nodes) are left in place.
+    Only the named instance is removed. Other containers are not touched.
+    """
+
+    authorize("delete")
+    _require_name(name)
+    instance = _require_instance(layout, name)
+    status = docker.status(name)
+    if status == "running":
+        docker.kill(name)
+    if docker.status(name) is not None:
+        docker.remove(name)
+    _remove_metadata(layout, name)
+    return instance
+
+
+def update_instance_launch(
+    name: str,
+    launch: LaunchConfig | None,
+    *,
+    layout: FleetLayout,
+    docker: DockerCLI,
+    gpus: list[Gpu],
+    port_in_use=None,
+    max_concurrent: int | None = None,
+    use_env_limit: bool = False,
+) -> ActionResult:
+    """Stop and recreate this instance so only Comfy argv changes.
+
+    Name, host port, GPU set, image, workflow file, and mount paths stay.
+    The previous container is removed before the replacement is created, so
+    the name is not left duplicated.
+    """
+
+    authorize("update")
+    _require_name(name)
+    launch = _canonicalize_launch(launch)
+    current = _require_instance(layout, name)
+    status = docker.status(name)
+    if status is None:
+        raise FleetError(
+            f"instance {name!r} has metadata but no container. "
+            "Nothing to recreate."
+        )
+    was_running = status == "running"
+    if was_running:
+        docker.stop(name)
+    if docker.status(name) is not None:
+        docker.remove(name)
+    updated = replace(current, launch=launch)
+    _write_metadata(layout, updated)
+    try:
+        docker.create(_create_args(layout, updated))
+    except Exception:
+        _write_metadata(layout, current)
+        if docker.status(name) is None:
+            docker.create(_create_args(layout, current))
+        raise
+    if not was_running:
+        return ActionResult(instance=updated, started=False, warning=None)
+    return start_instance(
+        name,
+        layout=layout,
+        docker=docker,
+        gpus=gpus,
+        port_in_use=port_in_use,
+        max_concurrent=max_concurrent,
+        use_env_limit=use_env_limit,
+    )
+
+
+def terminal_argv(
+    name: str,
+    *,
+    layout: FleetLayout,
+    docker: DockerCLI,
+    argv_for=None,
+) -> list[str]:
+    """Argv for a shell in one running instance. The browser does not supply it."""
+
+    from comfyfleet.terminal import terminal_exec_argv
+
+    authorize("terminal")
+    _require_name(name)
+    instance = _require_instance(layout, name)
+    if docker.status(instance.name) != "running":
+        raise FleetError(
+            f"instance {instance.name!r} is not running. Start it before opening a shell."
+        )
+    build = argv_for or terminal_exec_argv
+    return list(build(instance.name))
+
+
 def restart_instance(
     name: str,
     *,
@@ -297,6 +419,21 @@ def format_list(rows: list[tuple[Instance, str]]) -> str:
     return "\n".join(lines)
 
 
+def _canonicalize_launch(launch: LaunchConfig | None) -> LaunchConfig:
+    if launch is None:
+        return LaunchConfig()
+    return parse_launch(
+        vram=launch.vram,
+        attention=launch.attention,
+        flags=launch.flags,
+        reserve_vram=launch.reserve_vram,
+        vram_headroom=launch.vram_headroom,
+        preview_method=launch.preview_method,
+        preview_size=launch.preview_size,
+        extra_args=launch.extra_args,
+    )
+
+
 def resolve_instance_image(image: str) -> str:
     """``COMFYFLEET_INSTANCE_IMAGE`` overrides the default instance tag.
 
@@ -331,6 +468,7 @@ def _create_args(layout: FleetLayout, instance: Instance) -> list[str]:
         output_dir=str(layout.output_dir(instance.name)),
         temp_dir=str(layout.temp_dir(instance.name)),
         instance_dir=str(layout.instance_dir(instance.name)),
+        comfy_args=instance.launch.argv(),
     )
 
 

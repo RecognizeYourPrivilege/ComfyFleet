@@ -34,7 +34,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-button, input { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 
 button { touch-action: manipulation; }
 
@@ -372,6 +372,10 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
 .primary { background: var(--blue); color: white; }
 .primary:active { background: var(--blue-press); }
 .secondary { background: var(--fill); color: var(--ink); }
+.danger { background: var(--danger); color: white; }
+
+.confirm-card { width: min(480px, 100%); }
+.confirm-card p { margin: 12px 0 0; font-size: 16px; }
 
 .actions .btn { flex: 1 1 120px; }
 
@@ -499,6 +503,100 @@ pre {
 }
 
 .hint { margin: 8px 0 0; font-size: 13px; }
+
+.flag-panel {
+  margin-top: 18px;
+  padding: 12px 12px 14px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.flag-panel .field-label:first-child { margin-top: 0; }
+
+.flag-panel code { color: var(--ink); }
+
+.flag-sources {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.chip.on { background: var(--fill); }
+
+.chip-x {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.flag-sub {
+  margin: 14px 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.choice, .check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+  margin: 0;
+  padding: 6px 0;
+  font-size: 15px;
+}
+
+.choice input, .check input {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  accent-color: var(--blue);
+  flex: none;
+}
+
+.choice small, .check small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+textarea.text-input {
+  min-height: 72px;
+  padding: 12px 14px;
+  resize: vertical;
+}
 
 .gpu-row {
   display: flex;

@@ -42,19 +42,20 @@ from comfyfleet.control import (
     Instance,
     authorize,
     create_instance,
+    delete_instance,
+    force_stop_instance,
     list_instances,
     start_instance,
     stop_instance,
+    terminal_argv,
+    update_instance_launch,
 )
+from comfyfleet.terminal import accept_value, bridge_exec
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
+from comfyfleet.launch import launch_from_json, parse_launch, split_flag_field
 from comfyfleet.paths import FleetLayout
-from comfyfleet.public_host import (
-    PUBLIC_HOST_ENV,
-    configured_public_host,
-    open_host,
-    request_host,
-)
+from comfyfleet.public_host import PUBLIC_HOST_ENV
 
 DEFAULT_BIND_HOST = "0.0.0.0"
 DEFAULT_BIND_PORT = 9100
@@ -66,6 +67,22 @@ _MISSING_WORKFLOW = (
     "'workflow', or pass 'workflow_path' to a .json file this process can read. "
     "There is no baked default workflow."
 )
+_CREATE_FIELDS = (
+    "workflow_path",
+    "gpu",
+    "gpus",
+    "start",
+    "force",
+    "vram",
+    "attention",
+    "flags",
+    "reserve_vram",
+    "vram_headroom",
+    "preview_method",
+    "preview_size",
+    "extra_args",
+)
+_FLOAT_FIELDS = {"reserve_vram", "vram_headroom", "preview_size"}
 _AUTH_NOTE = (
     "Liveness only. This response has no fleet data. "
     "Fleet routes require a session cookie from POST /api/login "
@@ -197,6 +214,8 @@ class ApiContext:
     password: str | None = None
     sessions: SessionStore | None = None
     login_guard: LoginGuard | None = None
+    # Server-side only. The browser cannot replace this command.
+    terminal_argv: Callable[[str], list[str]] | None = None
 
 
 @dataclass
@@ -221,6 +240,14 @@ class _CreateForm:
     gpus: str | None
     start: bool
     force: bool
+    vram: str | None = None
+    attention: str | None = None
+    flags: str | None = None
+    reserve_vram: str | None = None
+    vram_headroom: str | None = None
+    preview_method: str | None = None
+    preview_size: str | None = None
+    extra_args: str | None = None
 
 
 def resolve_ui_dir(explicit: str | None = None) -> Path | None:
@@ -271,7 +298,6 @@ def serve(
         detect_gpus = default_detect_gpus
     # port_in_use None: comfyfleet.control snapshots Docker-published ports
     # and host listeners. Do not bind-check inside this process only.
-    public_host = configured_public_host()
     context = ApiContext(
         layout=layout,
         docker=docker,
@@ -279,8 +305,6 @@ def serve(
         port_in_use=port_in_use,
         ui_dir=resolve_ui_dir(ui_dir),
         use_env_limit=use_env_limit,
-        host_fallback="127.0.0.1" if host in {"0.0.0.0", "::"} else host,
-        public_host=public_host,
         password=password,
         sessions=SessionStore(),
         login_guard=LoginGuard(fail_delay_s=login_fail_delay()),
@@ -304,17 +328,11 @@ def serve(
         "if you need HTTPS. Do not expose this port to the public internet.",
         file=sys.stderr,
     )
-    if public_host:
-        print(
-            f"comfyfleet: Open links use http://{public_host}:<instance-port> ({PUBLIC_HOST_ENV}).",
-            file=sys.stderr,
-        )
-    else:
-        print(
-            "comfyfleet: Open links use the request Host header when it is a safe "
-            f"hostname or IP. Set {PUBLIC_HOST_ENV} to pin the LAN name.",
-            file=sys.stderr,
-        )
+    print(
+        "comfyfleet: Open Comfy is built in the browser from the page host and the "
+        f"instance port. {PUBLIC_HOST_ENV} is not used for that link.",
+        file=sys.stderr,
+    )
     if context.ui_dir is None:
         print("comfyfleet: no ui/ directory; / is a placeholder.", file=sys.stderr)
     else:
@@ -330,6 +348,11 @@ def serve(
 def make_server(host: str, port: int, context: ApiContext) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
+            path = urlsplit(self.path).path
+            upgrade = (self.headers.get("Upgrade") or "").lower()
+            if upgrade == "websocket" and _terminal_name(path) is not None:
+                self._serve_terminal(path)
+                return
             self._respond("GET")
 
         def do_POST(self) -> None:  # noqa: N802
@@ -379,6 +402,58 @@ def make_server(host: str, port: int, context: ApiContext) -> ThreadingHTTPServe
                 self.send_header(key, value)
             self.end_headers()
             self.wfile.write(payload)
+
+        def _serve_terminal(self, path: str) -> None:
+            """Proxy a shell. The Docker socket is not part of this response."""
+
+            self.close_connection = True
+            token = begin_http_request()
+            try:
+                name = _terminal_name(path)
+                headers = {key: value for key, value in self.headers.items()}
+                if name is None or not _request_authenticated(context, headers):
+                    self._json_now(401, "unauthorized")
+                    return
+                grant_http_request()
+                try:
+                    argv = terminal_argv(
+                        name,
+                        layout=context.layout,
+                        docker=context.docker,
+                        argv_for=context.terminal_argv,
+                    )
+                except AuthError as exc:
+                    self._json_now(401, exc.message)
+                    return
+                except FleetError as exc:
+                    self._json_now(400, str(exc))
+                    return
+                key = (self.headers.get("Sec-WebSocket-Key") or "").strip()
+                if not key:
+                    self._json_now(400, "websocket upgrade requires Sec-WebSocket-Key")
+                    return
+                self.send_response(101, "Switching Protocols")
+                self.send_header("Upgrade", "websocket")
+                self.send_header("Connection", "Upgrade")
+                self.send_header("Sec-WebSocket-Accept", accept_value(key))
+                self.end_headers()
+                self.wfile.flush()
+                try:
+                    bridge_exec(self.connection, argv)
+                except (ConnectionError, OSError, FleetError) as exc:
+                    print(f"comfyfleet: terminal closed: {exc}", file=sys.stderr)
+            finally:
+                end_http_request(token)
+
+        def _json_now(self, status: int, message: str) -> None:
+            body = json.dumps({"ok": False, "error": message}).encode("utf-8") + b"\n"
+            self.send_response(status)
+            self.send_header("Content-Type", _JSON)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
 
     class ControlHTTPServer(ThreadingHTTPServer):
         allow_reuse_address = True
@@ -470,23 +545,34 @@ def _fleet(
     body: bytes,
     content_type: str | None,
 ) -> Response:
-    host = open_host(host_header, context.host_fallback, context.public_host)
+    del host_header  # Open Comfy does not use the request host or a pinned public host.
     if path == "/api/gpus":
         _require_method(method, "GET")
         return _gpus(context)
     if path == "/api/instances":
         if method == "GET":
-            return _list(context, host)
+            return _list(context)
         if method == "POST":
-            return _create(context, host, body, content_type)
+            return _create(context, body, content_type)
         raise HTTPStatusError(405, "method not allowed")
     action = _instance_action(path)
     if action is not None:
         name, verb = action
+        if verb == "terminal":
+            _require_method(method, "GET")
+            raise HTTPStatusError(400, "terminal requires a websocket upgrade")
         _require_method(method, "POST")
         if verb == "start":
-            return _start(context, host, name)
-        return _stop(context, host, name)
+            return _start(context, name)
+        if verb == "stop":
+            return _stop(context, name)
+        if verb == "force-stop":
+            return _force_stop(context, name)
+        if verb == "delete":
+            return _delete(context, name)
+        if verb == "launch":
+            return _update_launch(context, name, body, content_type)
+        raise HTTPStatusError(404, "not found")
     raise HTTPStatusError(404, "not found")
 
 
@@ -530,7 +616,9 @@ def _protected_action(method: str, path: str) -> str | None:
     prefix = "/api/instances/"
     if path.startswith(prefix):
         _name, sep, verb = path[len(prefix) :].partition("/")
-        if sep == "/" and verb in {"start", "stop"}:
+        if sep == "/" and verb == "launch":
+            return "update"
+        if sep == "/" and verb in {"start", "stop", "force-stop", "delete", "terminal"}:
             return verb
         return "list"
     return None
@@ -656,20 +744,20 @@ def _gpus(context: ApiContext) -> Response:
     )
 
 
-def _list(context: ApiContext, host: str) -> Response:
+def _list(context: ApiContext) -> Response:
     rows = list_instances(context.layout, context.docker)
     return _json(
         200,
         {
             "ok": True,
             "instances": [
-                _instance_json(instance, status, host) for instance, status in rows
+                _instance_json(instance, status) for instance, status in rows
             ],
         },
     )
 
 
-def _create(context: ApiContext, host: str, body: bytes, content_type: str | None) -> Response:
+def _create(context: ApiContext, body: bytes, content_type: str | None) -> Response:
     form = _parse_create_form(body, content_type)
     if form.upload is None and not form.workflow_path:
         raise FleetError(_MISSING_WORKFLOW)
@@ -695,6 +783,16 @@ def _create(context: ApiContext, host: str, body: bytes, content_type: str | Non
             force=form.force,
             port_in_use=context.port_in_use,
             use_env_limit=context.use_env_limit,
+            launch=parse_launch(
+                vram=form.vram,
+                attention=form.attention,
+                flags=split_flag_field(form.flags),
+                reserve_vram=form.reserve_vram,
+                vram_headroom=form.vram_headroom,
+                preview_method=form.preview_method,
+                preview_size=form.preview_size,
+                extra_args=form.extra_args,
+            ),
         )
     finally:
         if cleanup is not None:
@@ -706,12 +804,12 @@ def _create(context: ApiContext, host: str, body: bytes, content_type: str | Non
             "ok": True,
             "started": result.started,
             "warning": result.warning,
-            "instance": _instance_json(result.instance, status, host),
+            "instance": _instance_json(result.instance, status),
         },
     )
 
 
-def _start(context: ApiContext, host: str, name: str) -> Response:
+def _start(context: ApiContext, name: str) -> Response:
     result = start_instance(
         name,
         layout=context.layout,
@@ -727,26 +825,81 @@ def _start(context: ApiContext, host: str, name: str) -> Response:
             "ok": True,
             "started": result.started,
             "warning": result.warning,
-            "instance": _instance_json(result.instance, status, host),
+            "instance": _instance_json(result.instance, status),
         },
     )
 
 
-def _stop(context: ApiContext, host: str, name: str) -> Response:
+def _stop(context: ApiContext, name: str) -> Response:
     instance = stop_instance(name, layout=context.layout, docker=context.docker)
     status = context.docker.status(instance.name) or "missing"
-    return _json(200, {"ok": True, "instance": _instance_json(instance, status, host)})
+    return _json(200, {"ok": True, "instance": _instance_json(instance, status)})
 
 
-def _instance_json(instance: Instance, status: str, host: str) -> dict:
-    running = status == "running"
+def _force_stop(context: ApiContext, name: str) -> Response:
+    instance = force_stop_instance(name, layout=context.layout, docker=context.docker)
+    status = context.docker.status(instance.name) or "missing"
+    return _json(200, {"ok": True, "instance": _instance_json(instance, status)})
+
+
+def _delete(context: ApiContext, name: str) -> Response:
+    instance = delete_instance(name, layout=context.layout, docker=context.docker)
+    return _json(200, {"ok": True, "deleted": instance.name})
+
+
+def _update_launch(context: ApiContext, name: str, body: bytes, content_type: str | None) -> Response:
+    media = (content_type or "").split(";", 1)[0].strip().lower()
+    if media != "application/json":
+        raise FleetError("launch update requires application/json")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise FleetError("launch update is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise FleetError("launch update must be a JSON object")
+    result = update_instance_launch(
+        name,
+        launch_from_json(payload, path=name),
+        layout=context.layout,
+        docker=context.docker,
+        gpus=context.detect_gpus(),
+        port_in_use=context.port_in_use,
+        use_env_limit=context.use_env_limit,
+    )
+    status = context.docker.status(result.instance.name) or "missing"
+    return _json(
+        200,
+        {
+            "ok": True,
+            "started": result.started,
+            "warning": result.warning,
+            "instance": _instance_json(result.instance, status),
+        },
+    )
+
+
+def _instance_json(instance: Instance, status: str) -> dict:
     return {
         "name": instance.name,
         "status": status,
         "port": instance.port,
         "gpus": list(instance.gpus),
-        "url": f"http://{host}:{instance.port}" if running else None,
+        "launch": {**instance.launch.to_json(), "argv": instance.launch.argv()},
     }
+
+
+def _terminal_name(path: str) -> str | None:
+    action = None
+    try:
+        action = _instance_action(path)
+    except FleetError:
+        return None
+    if action is None:
+        return None
+    name, verb = action
+    if verb != "terminal":
+        return None
+    return name
 
 
 def _instance_action(path: str) -> tuple[str, str] | None:
@@ -757,7 +910,7 @@ def _instance_action(path: str) -> tuple[str, str] | None:
     name, sep, verb = rest.partition("/")
     if sep != "/" or not name or not verb or "/" in verb:
         return None
-    if verb not in {"start", "stop"}:
+    if verb not in {"start", "stop", "force-stop", "delete", "terminal", "launch"}:
         return None
     decoded = unquote(name)
     if (
@@ -836,6 +989,14 @@ def _parse_create_form(body: bytes, content_type: str | None) -> _CreateForm:
         gpus=_optional_str(fields.get("gpus")),
         start=_as_bool(fields.get("start"), default=False),
         force=_as_bool(fields.get("force"), default=False),
+        vram=_optional_str(fields.get("vram")),
+        attention=_optional_str(fields.get("attention")),
+        flags=_optional_str(fields.get("flags")),
+        reserve_vram=_optional_str(fields.get("reserve_vram")),
+        vram_headroom=_optional_str(fields.get("vram_headroom")),
+        preview_method=_optional_str(fields.get("preview_method")),
+        preview_size=_optional_str(fields.get("preview_size")),
+        extra_args=_optional_str(fields.get("extra_args")),
     )
 
 
@@ -845,15 +1006,26 @@ def _json_fields(body: bytes) -> dict[str, str]:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise FleetError(f"request body is not valid JSON: {exc}") from exc
     if not isinstance(payload, dict):
-        raise FleetError("JSON body must be an object with workflow_path, gpu, gpus, start, and force.")
+        raise FleetError(
+            "JSON body must be an object with workflow_path, gpu, gpus, start, force, "
+            "and optional launch fields (vram, attention, flags, reserve_vram, "
+            "vram_headroom, preview_method, preview_size, extra_args)."
+        )
     fields: dict[str, str] = {}
-    for key in ("workflow_path", "gpu", "gpus", "start", "force"):
+    for key in _CREATE_FIELDS:
         if key not in payload or payload[key] is None:
             continue
         value = payload[key]
+        if key == "flags" and isinstance(value, list):
+            if not all(isinstance(item, str) for item in value):
+                raise FleetError("field 'flags' must be a string or a list of strings")
+            fields[key] = ",".join(value)
+            continue
         if isinstance(value, bool):
             fields[key] = "true" if value else "false"
         elif isinstance(value, int) and not isinstance(value, bool):
+            fields[key] = str(value)
+        elif isinstance(value, float) and key in _FLOAT_FIELDS:
             fields[key] = str(value)
         elif isinstance(value, str):
             fields[key] = value
@@ -871,7 +1043,7 @@ def _urlencoded_fields(body: bytes) -> dict[str, str]:
         raise FleetError("form body is not UTF-8") from exc
     parsed = parse_qs(text, keep_blank_values=True)
     fields: dict[str, str] = {}
-    for key in ("workflow_path", "gpu", "gpus", "start", "force"):
+    for key in _CREATE_FIELDS:
         values = parsed.get(key)
         if not values:
             continue
@@ -898,7 +1070,7 @@ def _multipart_fields(content_type: str, body: bytes) -> tuple[dict[str, str], _
                 raise FleetError("duplicate workflow upload")
             upload = _Upload(filename=safe, data=data)
             continue
-        if name not in {"workflow_path", "gpu", "gpus", "start", "force"}:
+        if name not in _CREATE_FIELDS:
             continue
         if name in fields:
             raise FleetError(f"duplicate form field {name!r}")

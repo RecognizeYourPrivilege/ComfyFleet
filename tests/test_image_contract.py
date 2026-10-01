@@ -38,6 +38,14 @@ class ImageContractTests(unittest.TestCase):
         script = ROOT / "docker" / "entrypoint.sh"
         text = script.read_text(encoding="utf-8")
         self.assertIn("--listen 0.0.0.0", text)
+        self.assertIn('comfy_args=(--listen 0.0.0.0 --port 8188)', text)
+        self.assertIn('exec /opt/venv/bin/python main.py "${comfy_args[@]}"', text)
+        locked = text.index('comfy_args=(--listen 0.0.0.0 --port 8188)')
+        self.assertLess(locked, text.index('exec /opt/venv/bin/python main.py "${comfy_args[@]}"'))
+        # The locked pair is assigned once. Later args are appended, never a replacement.
+        self.assertEqual(text.count("comfy_args=("), 1)
+        self.assertIn("comfy_args+=", text)
+        self.assertLess(locked, text.index("comfy_args+="))
         self.assertIn("/opt/comfyfleet/instance/default_workflow.json", text)
         env = os.environ.copy()
         env["COMFYFLEET_WORKFLOW_PATH"] = "/no/such/comfyfleet-operator-workflow.json"

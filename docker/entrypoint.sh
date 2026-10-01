@@ -119,7 +119,29 @@ export COMFYFLEET_TRUSTED_INSTALL=1
 /opt/venv/bin/python /opt/comfyfleet/seed_manager_config.py
 
 echo "comfyfleet: loading operator workflow ${WF}"
-echo "comfyfleet: ComfyUI --listen 0.0.0.0 --port 8188"
 echo "comfyfleet: COMFYFLEET_TRUSTED_INSTALL=${COMFYFLEET_TRUSTED_INSTALL}"
+# Locked first. Extra arguments come from `docker create` (the instance
+# launch flags). A pasted --listen or --port is dropped so it cannot
+# replace this pair. The published host port is Docker's -p mapping;
+# ComfyUI itself always listens on 8188 inside the container.
+comfy_args=(--listen 0.0.0.0 --port 8188)
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --listen|--port)
+      shift
+      if [[ $# -gt 0 && "$1" != --* ]]; then
+        shift
+      fi
+      ;;
+    --listen=*|--port=*)
+      shift
+      ;;
+    *)
+      comfy_args+=("$1")
+      shift
+      ;;
+  esac
+done
+echo "comfyfleet: ComfyUI ${comfy_args[*]}"
 cd /opt/ComfyUI
-exec /opt/venv/bin/python main.py --listen 0.0.0.0 --port 8188
+exec /opt/venv/bin/python main.py "${comfy_args[@]}"
