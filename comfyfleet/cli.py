@@ -27,8 +27,8 @@ from comfyfleet.docker import DockerCLI
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import detect_gpus
 from comfyfleet.http_api import DEFAULT_BIND_HOST, DEFAULT_BIND_PORT, serve
-from comfyfleet.launch import parse_launch
-from comfyfleet.paths import CONTAINER_PORT, DEFAULT_IMAGE, FleetLayout
+from comfyfleet.launch import main_argv, parse_launch
+from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
 from comfyfleet.public_host import PUBLIC_HOST_ENV, open_host
 
 
@@ -208,11 +208,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
     print(f"  url:      {_open_url(instance.port)}")
     print(f"  gpus:     {','.join(str(index) for index in instance.gpus)}")
     print(f"  image:    {instance.image}")
-    extra = " ".join(instance.launch.argv())
-    comfy = f"--listen 0.0.0.0 --port {CONTAINER_PORT}"
-    if extra:
-        comfy = f"{comfy} {extra}"
-    print(f"  comfy:    {comfy}")
+    print(f"  comfy:    {' '.join(main_argv(instance.launch))}")
     if not result.started:
         print(f"Start it with: comfyfleet start {instance.name}")
     return 0

@@ -13,8 +13,11 @@ import shlex
 from dataclasses import dataclass, field
 
 from comfyfleet.errors import FleetError
+from comfyfleet.paths import CONTAINER_PORT
 
-# Radios. Empty string means "do not pass a flag" (stock ComfyUI).
+# VRAM presets. Exactly these three, mutually exclusive. Empty means no
+# VRAM flag at all (not --normalvram). They are appended after the locked
+# ``--listen 0.0.0.0 --port <container port>`` pair.
 VRAM_FLAGS = ("--lowvram", "--novram", "--highvram")
 ATTENTION_FLAGS = (
     "--use-pytorch-cross-attention",
@@ -137,6 +140,18 @@ class LaunchConfig:
             "preview_size": self.preview_size,
             "extra_args": self.extra_args,
         }
+
+
+def main_argv(launch: LaunchConfig | None = None) -> list[str]:
+    """``main.py`` arguments. Locked listen and container port, then presets.
+
+    The published host port is not an argument. Docker ``-p`` maps that host
+    port onto ``CONTAINER_PORT``. Extra flags are already inside ``launch.argv``
+    and cannot replace ``--listen`` or ``--port``.
+    """
+
+    body = [] if launch is None else launch.argv()
+    return ["--listen", "0.0.0.0", "--port", str(CONTAINER_PORT), *body]
 
 
 def parse_launch(
