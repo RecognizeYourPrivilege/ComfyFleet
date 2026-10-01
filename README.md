@@ -152,6 +152,10 @@ Create writes workflow files and directories on `/home` inside the manager, then
 
 Create creates any of those directories that are missing, including the usual ComfyUI model subfolders under `/home/models`.
 
+Create can also seed that instance's `custom_nodes` volume. Leave the git URL list and the zip blank to skip them; create still requires a workflow and does not fail because those fields were empty. `install_missing_from_workflow` defaults to true and installs only nodes referenced by **that** workflow JSON that are not already in the baked image or on the volume, via Manager's git-URL install (`COMFYFLEET_TRUSTED_INSTALL`). It does not install the Manager registry. A failed clone, extract, or install is a `warnings` entry on the create response; the instance is still created. No new instance image is published for this. The manager image includes `git` (and `unzip`) so clones run where create runs. Field names, allowed URL schemes, and timeouts are in [CONTROL_HTTP.md](CONTROL_HTTP.md).
+
+Delete remains `POST /api/instances/{name}/delete`. That removes the container and the fleet record. Host mounts, including `custom_nodes`, stay.
+
 `/home/models` is shared by every instance and is read-write. Two running instances that write the same model file can corrupt it.
 
 If `/home` is not a bind mount, the manager warns at startup. Directories created only inside the manager filesystem are not the directories sibling containers mount.

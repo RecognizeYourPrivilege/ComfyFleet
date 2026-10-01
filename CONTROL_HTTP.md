@@ -98,7 +98,7 @@ Do not expose port 9100 to the public internet. The default bind is every interf
 
 The UI and the API should be same-origin. Load the UI from `http://<host>:9100/` and call `/api/...` on that origin. This server does not send `Access-Control-Allow-Origin`. A page on another origin will not be able to call the API from a browser.
 
-There is no delete route. Control has no destroy API. There is no HTTP restart route; stop and start, or use `comfyfleet restart` on the CLI. Start and stop do not rebuild the image.
+Delete is `POST /api/instances/{name}/delete`. It removes that container and the fleet record. Host mounts, including `custom_nodes` and workflow files, stay. There is no `DELETE` method and no purge flag. `DELETE /api/instances/{name}/delete` is **405** and does not remove the container. There is no HTTP restart route; stop and start, or use `comfyfleet restart` on the CLI. Start and stop do not rebuild the image.
 
 ## Endpoints
 
@@ -215,6 +215,10 @@ The JSON body is **create options**, not the Comfy graph. Posting a workflow obj
 | `preview_method` | no | `auto`, `latent2rgb`, `taesd`, or `none`. |
 | `preview_size` | no | Positive integer for `--preview-size`. |
 | `extra_args` | no | Free-text `main.py` arguments for flags that are not in the panel. Appended last. `--listen` and `--port` are stripped. |
+| `comfy_extra_args` | no | Same channel as `extra_args`. A string or a JSON array of strings. Appended after `extra_args` when both are set. `--listen` and `--port` are stripped. Blank is ignored. |
+| `custom_node_git_urls` | no | HTTPS or SSH git URLs cloned into this instance's `custom_nodes` volume. JSON array, a newline- or comma-separated string, or repeated form fields. Blank entries are ignored. |
+| `custom_nodes_zip` | no | Multipart file only. Extracted into the same `custom_nodes` volume. Absent or empty is a no-op. |
+| `install_missing_from_workflow` | no | Default **true** when the field is omitted. Install custom nodes referenced by this workflow that are not already present. `false` skips that step. |
 
 `start` and `force` accept JSON booleans and the strings `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`.
 
@@ -231,6 +235,7 @@ Maximum body size is 32 MiB (`413` above that). Clients must send `Content-Lengt
   "ok": true,
   "started": false,
   "warning": null,
+  "warnings": [],
   "instance": {
     "name": "portrait",
     "status": "created",
@@ -240,7 +245,21 @@ Maximum body size is 32 MiB (`413` above that). Clients must send `Content-Lengt
 }
 ```
 
-`warning` is a string when control would have printed a concurrency warning, otherwise `null`. `started` is true only when this call started the container. `status` is read back from Docker after control returns. The instance object includes `launch`, same as `GET /api/instances`. `argv` is appended after `--listen 0.0.0.0 --port 8188` inside the container. Listen stays `0.0.0.0`.
+`warning` is a string when control would have printed a concurrency warning, otherwise `null`. `warnings` is an array of strings. It is empty when optional custom-node steps were skipped or all succeeded. A failed clone, zip extract, or missing-node install appends a message here and create still returns **200**. Those failures are not HTTP 5xx. `started` is true only when this call left the container running because `start` was true. `status` is read back from Docker after control returns. The instance object includes `launch`, same as `GET /api/instances`. `argv` is appended after `--listen 0.0.0.0 --port 8188` inside the container. Listen stays `0.0.0.0`.
+
+#### Optional custom nodes
+
+Blank or absent `custom_node_git_urls` and `custom_nodes_zip` do nothing. Create still requires a workflow. It does not fail because those fields were empty. Nothing is baked into a new instance image. Files land on the host mount `/home/custom_nodes_<name>` (container `/opt/ComfyUI/custom_nodes`).
+
+Allowed git schemes are `https://`, `ssh://`, and scp-style `git@host:path`. Other schemes (`http://`, `file://`, `git://`) are skipped and listed in `warnings`. Each accepted URL is `git clone --depth 1` into its own subdirectory (the repository name, without `.git`). `git` runs on the manager, with no shell. The clone timeout is **120** seconds (`COMFYFLEET_GIT_CLONE_TIMEOUT`). `GIT_TERMINAL_PROMPT=0` and SSH `BatchMode` are set so a credential prompt cannot hang the request.
+
+`custom_nodes_zip` is a multipart file. The archive is rejected, and nothing from it is written, when any member is absolute, contains `..`, contains NUL, is a symlink, or is encrypted. A malformed zip is a warning. Extraction is in-process (the manager image also includes `unzip` for operators).
+
+`install_missing_from_workflow` defaults to **true**. It reads only the workflow JSON from this create. A node is a candidate when it has an embedded git URL or `aux_id` (`owner/repo`, installed as `https://github.com/owner/repo`), or when its class name is in `COMFYFLEET_EXTENSION_NODE_MAP` (a JSON file of class name → git URL, or Manager's extension-node-map object). Class names the workflow does not reference are not installed. Nodes already present are skipped: a `NODE_CLASS_MAPPINGS` entry on the volume, a pack directory already in that volume, or a baked pack (`ComfyUI-Manager`, `ComfyUI-Pixaroma`, `ComfyUI-ComfyDock`, `RES4LYF`, `comfyfleet_default_workflow`). Core nodes with no git URL and no map entry are left alone. This does not install the Manager registry.
+
+When at least one URL is missing, create starts the instance if it is stopped, waits up to **180** seconds for ComfyUI (`COMFYFLEET_NODE_READY_TIMEOUT`), and posts each URL to `POST http://127.0.0.1:8188/customnode/install/git_url` **inside** the instance (`docker exec`), where `COMFYFLEET_TRUSTED_INSTALL=1`. Each install times out after **180** seconds (`COMFYFLEET_NODE_INSTALL_TIMEOUT`). A successful install restarts the instance so Comfy registers the new nodes. If `start` was false, the instance is then stopped. The container and the volume remain. Git clones and zip extracts that happen before the first start are loaded on that first start; they do not by themselves restart a container that was left stopped.
+
+The manager image includes `git` for these clones. A process without `git` still creates the instance and records a warning.
 
 A failed `start: true` can still leave a created instance behind (same as the CLI). Refresh the list.
 
@@ -284,7 +303,7 @@ Stopping an already stopped instance returns 200. The container, mounts, and wor
 
 ### `POST /api/instances/{name}/delete`
 
-Force-stops the container if it is running, removes **only** that container, and deletes `comfyfleet.json`. Host workflow, input, output, and custom-node files are kept. The UI asks for confirmation before calling this.
+Force-stops the container if it is running, removes **only** that container, and deletes `comfyfleet.json`. Host workflow, input, output, and custom-node files are kept (`/home/custom_nodes_<name>` and `/home/files/<name>` stay). The UI asks for confirmation before calling this. `DELETE` on this path is **405** and does not remove the container. There is no second delete API and no purge of host mounts.
 
 ```json
 {"ok": true, "deleted": "portrait"}
@@ -340,7 +359,15 @@ curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
 curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
   -F "workflow=@./examples/workflow.example.json;type=application/json" \
   -F "gpu=0" \
+  -F "custom_node_git_urls=https://github.com/ltdrdata/ComfyUI-Impact-Pack" \
+  -F "custom_node_git_urls=ssh://git@github.com/example/Another-Node.git" \
+  -F "custom_nodes_zip=@./nodes.zip;type=application/zip" \
+  -F "install_missing_from_workflow=true" \
+  -F "comfy_extra_args=--mmap-torch-files" \
   http://127.0.0.1:9100/api/instances
+
+curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
+  -X POST http://127.0.0.1:9100/api/instances/portrait/delete
 
 curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
   -H 'Content-Type: application/json' \
