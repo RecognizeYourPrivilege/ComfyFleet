@@ -41,10 +41,14 @@ class KitchenCu130Tests(unittest.TestCase):
         self.assertIn("python3-dev", pins)
         self.assertIn("Failed to find C compiler", pins)
         self.assertIn("0 active drivers", pins)
-        self.assertNotIn("llama-cpp-python", dockerfile)
-        self.assertIn("llama-cpp-python", readme)
+        self.assertIn("llama-cpp-python==0.3.36", dockerfile)
+        self.assertIn("https://abetlen.github.io/llama-cpp-python/whl/cu130", dockerfile)
+        self.assertNotIn("https://abetlen.github.io/llama-cpp-python/whl/cu124", dockerfile)
+        self.assertIn("llama-cpp-python==0.3.36", readme)
         self.assertIn("https://abetlen.github.io/llama-cpp-python/whl/cu130", readme)
+        self.assertNotIn("pip install llama-cpp-python", readme)
         self.assertIn("https://abetlen.github.io/llama-cpp-python/whl/cu130", pins)
+        self.assertIn("llama-cpp-python==0.3.36", pins)
 
 
 if __name__ == "__main__":

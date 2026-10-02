@@ -73,6 +73,10 @@ PIN_PROFILES = {
 # names is missing from the pre-install pip list snapshot.
 MANAGER_PYTORCH_MISSING_LOG = "[ComfyUI-Manager] PyTorch is not installed"
 
+# JoyCaption imports llama_cpp. Both CUDA lines bake this abetlen wheel.
+# pip list normalizes dashes to underscores.
+LLAMA_PIP_PIN = ("llama_cpp_python", "0.3.36")
+
 # RES4LYF images.py and Impact modules/impact/utils.py both import cv2.
 # The wheel must be opencv-python. opencv-python-headless replaces that module.
 CV2_SOURCES = (
@@ -148,6 +152,27 @@ def manager_torch_pin_errors(versions: Mapping[str, str]) -> list[str]:
     return errors
 
 
+def llama_pin_errors(versions: Mapping[str, str]) -> list[str]:
+    """Fail when the baked llama-cpp-python wheel is missing or drifted."""
+
+    name, pin = LLAMA_PIP_PIN
+    got = versions.get(name)
+    if got != pin:
+        return [f"llama-cpp-python {got!r} != {pin!r}"]
+    return []
+
+
+def assert_llama_import() -> None:
+    """Run the class import. The smoke script deletes any driver stub it builds."""
+
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llama_import_smoke.py")
+    if not os.path.isfile(script):
+        sys.exit(f"comfyfleet: llama import smoke missing: {script}")
+    completed = subprocess.run([sys.executable, script], check=False)
+    if completed.returncode != 0:
+        sys.exit('comfyfleet: from llama_cpp import Llama failed')
+
+
 def opencv_distribution_errors(versions: Mapping[str, str]) -> list[str]:
     """Fail when the headless wheel is installed or opencv-python is absent.
 
@@ -214,6 +239,7 @@ def main() -> None:
     versions = parse_manager_pip_list(pip_list_text())
     pin_errors = manager_torch_pin_errors(versions)
     pin_errors.extend(opencv_distribution_errors(versions))
+    pin_errors.extend(llama_pin_errors(versions))
     if pin_errors:
         sys.exit("comfyfleet: " + "; ".join(pin_errors))
 
@@ -242,11 +268,13 @@ def main() -> None:
     import_errors = missing_cv2_imports(BAKED_ROOT)
     if import_errors:
         sys.exit("comfyfleet: " + "; ".join(import_errors))
+    assert_llama_import()
     print(
         "comfyfleet: "
         f"numpy {numpy.__version__} cv2 {cv2.__version__} libxcb ok "
         f"torch {versions['torch']} torchvision {versions['torchvision']} "
-        f"torchaudio {versions['torchaudio']}",
+        f"torchaudio {versions['torchaudio']} "
+        f"llama-cpp-python {versions['llama_cpp_python']}",
         flush=True,
     )
 
