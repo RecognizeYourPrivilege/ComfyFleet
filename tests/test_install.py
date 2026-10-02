@@ -9,8 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-INSTANCE = "ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75"
-MANAGER = "ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:766e70fb3b70650269c8d2cac495f85b1ccba5390eafa14a2cf9767d309c5e2a"
+INSTANCE = "ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2032db1691256959cd619108376a7227f68d54e0135073dd941f1dc8d41d032e"
+INSTANCE_CU124 = "ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:d2a5e55fcc348c0550e3d2e918bf36579a5a092d498070d63391cebffad71b76"
+MANAGER = "ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a26f075d8b31c44cbd080de0557ebe29a6617c2f848b5b244f461b6ac42b2cb8"
 
 
 class InstallScriptTests(unittest.TestCase):
@@ -54,6 +55,7 @@ class InstallScriptTests(unittest.TestCase):
         )
         self.assertEqual(help_run.returncode, 0, help_run.stderr)
         self.assertIn(INSTANCE, help_run.stdout)
+        self.assertIn(INSTANCE_CU124, help_run.stdout)
         self.assertIn(MANAGER, help_run.stdout)
         self.assertIn("--compose", help_run.stdout)
 
@@ -136,13 +138,13 @@ class InstallScriptTests(unittest.TestCase):
             )
             self.assertEqual(chosen.returncode, 0, chosen.stderr)
             pulled = log.read_text(encoding="utf-8")
-            self.assertIn("pull ghcr.io/recognizeyourprivilege/comfyfleet:cu124\n", pulled)
+            self.assertIn(f"pull {INSTANCE_CU124}\n", pulled)
             self.assertIn(
-                "tag ghcr.io/recognizeyourprivilege/comfyfleet:cu124 comfyfleet:cu124\n",
+                f"tag {INSTANCE_CU124} comfyfleet:cu124\n",
                 pulled,
             )
             self.assertIn(
-                "tag ghcr.io/recognizeyourprivilege/comfyfleet:cu124 comfyfleet:phase1\n",
+                f"tag {INSTANCE_CU124} comfyfleet:phase1\n",
                 pulled,
             )
             self.assertIn("comfyfleet:cu124", chosen.stdout)
@@ -389,6 +391,7 @@ class InstallScriptTests(unittest.TestCase):
         tail = readme[dev_at:]
         self.assertLess(head.index("install.sh"), head.index("docker run"))
         self.assertIn(INSTANCE, head)
+        self.assertIn(INSTANCE_CU124, head)
         self.assertIn(MANAGER, head)
         self.assertIn("COMFYFLEET_INSTANCE_IMAGE", head)
         self.assertIn("--shm-size 8g", head)
