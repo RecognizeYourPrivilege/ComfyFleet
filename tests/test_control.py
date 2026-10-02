@@ -119,6 +119,8 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(args[args.index("--restart") + 1], "no")
         self.assertIn("--gpus", args)
         self.assertEqual(args[args.index("--gpus") + 1], "device=0")
+        self.assertEqual(args[args.index("--shm-size") + 1], "8g")
+        self.assertLess(args.index("--shm-size"), args.index(result.instance.image))
         self.assertIn("-p", args)
         self.assertEqual(args[args.index("-p") + 1], "8188:8188")
         self.assertTrue((self.root / "files" / "portrait" / "default_workflow.json").is_file())
