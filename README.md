@@ -2,7 +2,7 @@
 
 # ComfyFleet
 
-Two Docker images. The **manager** serves the control UI and talks to the host Docker engine. The **instance** image is ComfyUI. The manager starts sibling instance containers. It does not run a Docker daemon of its own.
+The **manager** image serves the control UI and talks to the host Docker engine. Two **instance** images run ComfyUI, one for each CUDA line. The manager starts sibling instance containers. It does not run a Docker daemon of its own.
 
 The Docker socket mounted into the manager is **root-equivalent** on the host. Run the manager only on a machine you trust. `COMFYFLEET_PASSWORD` is required. If it is missing or empty, the manager refuses to start. Sign in in the browser, or send `Authorization: Bearer` with the same value. A trusted LAN is still recommended. Do not publish port **9100** or the ComfyUI ports (8188 and up) on the public internet. ComfyUI is not behind this login.
 
@@ -17,19 +17,19 @@ Two primary instance lines, plus the manager. [`.github/workflows/publish-images
 | `comfyfleet:cu130` | **CUDA 13.0** | Default. ComfyUI v0.37.4, CPython 3.14.7, torch `2.13.0+cu130`. |
 | `comfyfleet:cu124` | **CUDA 12.4** | ComfyUI v0.38.0, Debian bookworm CPython 3.11, torch `2.6.0+cu124`. |
 
-`install.sh` asks which line to pull: **cu130**, **cu124**, or **both**. A non-interactive run (no TTY, empty answer) defaults to **cu130** only and does not pull both. **both** pulls and tags each instance image. The manager `COMFYFLEET_CUDA_TAG` stays **cu130** unless this install already pointed `COMFYFLEET_INSTANCE_IMAGE` at the cu124 line. The create form can pick either line when that image is on the host engine. A mismatched line can fail when the instance starts. Match the host driver major.
+`install.sh` asks which line to pull: **cu130**, **cu124**, or **both**. The choice is the TTY prompt, `--cuda-tag`, or `COMFYFLEET_CUDA_TAG` (the flag wins). When none of those set a choice, including a non-interactive run, the pull is **cu130** only and does not include the cu124 image. **both** pulls and tags each instance image. The manager `COMFYFLEET_CUDA_TAG` stays **cu130** unless `COMFYFLEET_INSTANCE_IMAGE` is already a cu124 ref and `COMFYFLEET_INSTANCE_DIGEST` is unset. Create can pick either line when that image is on the host engine. A mismatched line can fail when the instance starts. Match the host driver major.
 
 Changing the CUDA line on an instance that already exists is a **recreate** (stop, then create with replace / `--force`, then start). `start`, `restart`, and Flags Apply keep the line stored at create. They do not swap tags.
 
 Every instance create uses `--shm-size 8g` (Compose `shm_size: '8g'`), on both lines. Docker's 64MB `/dev/shm` is too small for ComfyUI.
 
-Optional aliases, same digests as the primary tags when publish retags them: `:latest` → cu130, `:phase1` → cu124. A floating tag does not move a digest-pinned install.
+Primary tags are `cu130` and `cu124`. Aliases are the same published digests, and `install.sh` applies them as local tags too: `:latest` → cu130, `:phase1` → cu124. A floating tag does not move a digest-pinned install.
 
 | Image | Pull | Local tag from `install.sh` | Role |
 |---|---|---|---|
 | Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a26f075d8b31c44cbd080de0557ebe29a6617c2f848b5b244f461b6ac42b2cb8` | `comfyfleet-manager:latest` | Control HTTP and web UI. No CUDA stack. Includes `git` and `unzip` for create-time node seeding. |
-| Instance cu130 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2032db1691256959cd619108376a7227f68d54e0135073dd941f1dc8d41d032e` | `comfyfleet:cu130` | ComfyUI v0.37.4. Python 3.14.7, CUDA 13.0 runtime, torch `2.13.0+cu130`. Host driver CUDA 13.0. |
-| Instance cu124 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:d2a5e55fcc348c0550e3d2e918bf36579a5a092d498070d63391cebffad71b76` | `comfyfleet:cu124` | ComfyUI v0.38.0. CPython 3.11, CUDA 12.4 runtime, torch `2.6.0+cu124`. Host driver CUDA 12.4. |
+| Instance cu130 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2032db1691256959cd619108376a7227f68d54e0135073dd941f1dc8d41d032e` | `comfyfleet:cu130`, `comfyfleet:latest` | ComfyUI v0.37.4. Python 3.14.7, CUDA 13.0 runtime, torch `2.13.0+cu130`. Host driver CUDA 13.0. |
+| Instance cu124 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:d2a5e55fcc348c0550e3d2e918bf36579a5a092d498070d63391cebffad71b76` | `comfyfleet:cu124`, `comfyfleet:phase1` | ComfyUI v0.38.0. CPython 3.11, CUDA 12.4 runtime, torch `2.6.0+cu124`. Host driver CUDA 12.4. |
 
 Each publish also tags the git SHA (`<sha>` and `<sha>-cu130` for cu130, `<sha>-cu124` for cu124).
 
@@ -41,7 +41,7 @@ export COMFYFLEET_INSTANCE_DIGEST=sha256:<instance-digest>
 export COMFYFLEET_MANAGER_DIGEST=sha256:<manager-digest>
 ```
 
-`COMFYFLEET_INSTANCE_IMAGE` and `COMFYFLEET_MANAGER_IMAGE` replace the full ref when you are not also passing `--cuda-tag`. The manager default, when `COMFYFLEET_INSTANCE_IMAGE` is unset, is `comfyfleet:cu130`. `install.sh` pulls the cu130 or cu124 digest above and tags that local name so a manager started without the variable still finds the image. The instance tag has to exist in the **host** engine before create, because sibling containers are started by that engine.
+`COMFYFLEET_INSTANCE_IMAGE` and `COMFYFLEET_MANAGER_IMAGE` replace the full ref when you are not also passing `--cuda-tag`. The manager default, when `COMFYFLEET_INSTANCE_IMAGE` is unset, is `comfyfleet:cu130`. `install.sh` pulls the cu130 or cu124 digest above, or both instance digests when the choice is **both**, and tags the local names so a manager started without the variable still finds the image. The instance tag has to exist in the **host** engine before create, because sibling containers are started by that engine.
 
 `install.sh`, `compose.yaml`, and the digests in the table pin an image by digest. A floating tag does not move a digest-pinned install.
 
@@ -152,9 +152,12 @@ From a checkout, replace `192.168.1.20` with the address browsers on your LAN us
 export COMFYFLEET_PASSWORD=replace-with-a-long-secret
 export COMFYFLEET_PUBLIC_HOST=192.168.1.20
 ./install.sh
+# ./install.sh --cuda-tag cu124
+# ./install.sh --cuda-tag both
+# COMFYFLEET_CUDA_TAG=cu124 ./install.sh
 ```
 
-On a terminal, the script asks `cu130` (host driver CUDA 13.0), `cu124` (host driver CUDA 12.4), or `both` (pull each line). Enter, or omit the choice when stdin is not a terminal, and the line is **cu130** only. `./install.sh --cuda-tag cu124` or `COMFYFLEET_CUDA_TAG=cu124` selects one line without a prompt. `--cuda-tag both` or `COMFYFLEET_CUDA_TAG=both` pulls both images; the manager default stays cu130.
+On a terminal the prompt is `CUDA tag [cu130]:` with **cu130** (host driver CUDA 13.0), **cu124** (host driver CUDA 12.4), or **both** (pull each instance image). Enter, or a run that never sets the choice, pulls **cu130** only. `--cuda-tag` and `COMFYFLEET_CUDA_TAG` skip the prompt (`cu130`, `cu124`, or `both`). The flag wins. **both** pulls and tags each instance image (`comfyfleet:cu130` and `comfyfleet:latest`, `comfyfleet:cu124` and `comfyfleet:phase1`). The manager `COMFYFLEET_CUDA_TAG` stays **cu130** unless `COMFYFLEET_INSTANCE_IMAGE` is already a cu124 ref and `COMFYFLEET_INSTANCE_DIGEST` is unset. Create can pick either line.
 
 Without a checkout:
 
@@ -163,7 +166,9 @@ curl -fsSL https://raw.githubusercontent.com/RecognizeYourPrivilege/ComfyFleet/m
   | COMFYFLEET_PASSWORD=replace-with-a-long-secret COMFYFLEET_PUBLIC_HOST=192.168.1.20 bash
 ```
 
-Or Compose (the script still pulls the instance image, which is not a compose service):
+That pipe is not a terminal, so it pulls **cu130** only. Pass a line with `bash -s -- --cuda-tag cu124` or `bash -s -- --cuda-tag both`, or set `COMFYFLEET_CUDA_TAG` on the same command.
+
+Or Compose (the script still pulls the instance image, or both instance images when the tag is **both**; neither is a compose service):
 
 ```bash
 export COMFYFLEET_PASSWORD=replace-with-a-long-secret
@@ -171,16 +176,17 @@ export COMFYFLEET_PUBLIC_HOST=192.168.1.20
 ./install.sh --compose
 ```
 
-`replace-with-a-long-secret` is a placeholder. Open `http://192.168.1.20:9100/`. The script pulls the manager and the chosen instance line, tags the local names, removes an existing `comfyfleet-manager` container, and starts the manager with `--gpus all`, `-p 9100:9100`, the Docker socket, `/home`, `COMFYFLEET_PASSWORD`, `COMFYFLEET_PUBLIC_HOST`, `COMFYFLEET_INSTANCE_IMAGE`, and `COMFYFLEET_CUDA_TAG`. Re-running it updates the manager. It does not delete workflow instances. To wipe instances and install again, see [WIPE_AND_FRESH_INSTALL.md](WIPE_AND_FRESH_INSTALL.md).
+`replace-with-a-long-secret` is a placeholder. Open `http://192.168.1.20:9100/`. The script pulls the manager and the chosen instance line (both instance images when the choice is **both**), tags the local names, removes an existing `comfyfleet-manager` container, and starts the manager with `--gpus all`, `-p 9100:9100`, the Docker socket, `/home`, `COMFYFLEET_PASSWORD`, `COMFYFLEET_PUBLIC_HOST`, `COMFYFLEET_INSTANCE_IMAGE`, and `COMFYFLEET_CUDA_TAG`. Re-running it updates the manager. It does not delete workflow instances. To wipe instances and install again, see [WIPE_AND_FRESH_INSTALL.md](WIPE_AND_FRESH_INSTALL.md).
 
 ### Manual run
 
-Same start without the script. Pull both digests, tag the local names, then run the manager:
+Same start without the script, for the cu130 default. Pull that instance digest and the manager digest, tag the local names (including the `latest` alias), then run the manager:
 
 ```bash
 docker pull ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2032db1691256959cd619108376a7227f68d54e0135073dd941f1dc8d41d032e
 docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a26f075d8b31c44cbd080de0557ebe29a6617c2f848b5b244f461b6ac42b2cb8
 docker tag ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2032db1691256959cd619108376a7227f68d54e0135073dd941f1dc8d41d032e comfyfleet:cu130
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2032db1691256959cd619108376a7227f68d54e0135073dd941f1dc8d41d032e comfyfleet:latest
 docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a26f075d8b31c44cbd080de0557ebe29a6617c2f848b5b244f461b6ac42b2cb8 comfyfleet-manager:latest
 
 docker run -d --name comfyfleet-manager \
@@ -196,7 +202,7 @@ docker run -d --name comfyfleet-manager \
   ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a26f075d8b31c44cbd080de0557ebe29a6617c2f848b5b244f461b6ac42b2cb8
 ```
 
-For a CUDA 12.4 host, pull `ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:d2a5e55fcc348c0550e3d2e918bf36579a5a092d498070d63391cebffad71b76`, tag `comfyfleet:cu124`, and set `COMFYFLEET_CUDA_TAG=cu124` with that ref as `COMFYFLEET_INSTANCE_IMAGE`.
+For a CUDA 12.4 host, pull `ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:d2a5e55fcc348c0550e3d2e918bf36579a5a092d498070d63391cebffad71b76`, tag `comfyfleet:cu124` and `comfyfleet:phase1`, and set `COMFYFLEET_CUDA_TAG=cu124` with that ref as `COMFYFLEET_INSTANCE_IMAGE`. To mirror `--cuda-tag both`, pull and tag that image as well and leave `COMFYFLEET_CUDA_TAG=cu130`.
 
 [compose.yaml](compose.yaml) is the same service. It does not pull the instance image:
 
@@ -326,7 +332,7 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 | `ghcr.io/recognizeyourprivilege/comfyfleet` | `cu130`, `cu124`, `latest` (alias of cu130), `phase1` (alias of cu124), `<git sha>`, `<git sha>-cu130`, `<git sha>-cu124` |
 | `ghcr.io/recognizeyourprivilege/comfyfleet-manager` | `latest`, `<git sha>` |
 
-The workflow logs in with `GITHUB_TOKEN` (`packages: write`). The job summary prints both digests. Those digests are not committed automatically. When a publish should move the install pin, copy them into this file, `install.sh`, and `compose.yaml`.
+The workflow logs in with `GITHUB_TOKEN` (`packages: write`). The job summary prints the manager digest and one instance-matrix digest. Copy the cu130 and cu124 digests from the instance job logs. Those digests are not committed automatically. When a publish should move the install pin, copy them into this file, `install.sh`, and `compose.yaml`.
 
 Before operators can pull:
 
