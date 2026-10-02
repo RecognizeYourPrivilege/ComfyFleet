@@ -67,15 +67,7 @@ Pinned ComfyUI-Manager does not import torch to decide that PyTorch is installed
 
 ComfyUI v0.37.4 installs `comfy-kitchen==0.2.35`. On Python 3.14 that resolves to the cp312-abi3 manylinux wheel (the CUDA build). Torch 2.13 accepts PEP 585 `list[int]` / `list[bool]` custom-op annotations, so the torch 2.6 rewrite (`patch_comfy_kitchen_torch26.py`) is not in this image. The Triton backend in torch 2.13.0+cu130 (`triton==3.7.1`) JIT-compiles `driver.c`, which includes `Python.h`. Without `gcc` that compile raises `Failed to find C compiler. Please specify via CC environment variable.` The official 3.14.7 image ships `Python.h`. The image does not install Debian `python3-dev` (bookworm's headers are CPython 3.11), `g++`, `build-essential`, or `cuda-nvcc`. The image build does not `import comfy_kitchen`.
 
-`llama-cpp-python` is not baked into this image. An optional later install into this venv uses the cu130 binary index, not cu124:
-
-```bash
-unset CXX CC CMAKE_ARGS
-/opt/venv/bin/python -m pip install llama-cpp-python --only-binary=:all: --force-reinstall \
-  --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu130
-```
-
-Check with `/opt/venv/bin/python -c "from llama_cpp import Llama; print('ok')"`. A failure of that optional install is not a base-image failure.
+Both instance images include abetlen `llama-cpp-python==0.3.36` binary wheels for JoyCaption: the cu130 index on `:cu130` (`https://abetlen.github.io/llama-cpp-python/whl/cu130`), and the cu124 index on `:cu124` (`https://abetlen.github.io/llama-cpp-python/whl/cu124`). Operators do not pip-install it. A source build is not supported.
 
 Baked custom nodes (also `docker/PINS.txt`):
 
@@ -114,15 +106,7 @@ SAM checkpoints belong in the shared host directory `/home/models/sams` (contain
 
 The same baked custom nodes as the cu130 line (Manager `14b5aaab`, Pixaroma, ComfyDock, RES4LYF, ComfyUI-Impact-Pack `429d0159ad429e64d2b3916e6e7be9c22d025c3c`, ComfyUI-Impact-Subpack `50c7b71a6a224734cc9b21963c6d1926816a97f1`). `opencv-python` is kept and `opencv-python-headless` is not installed, on this line as well. Impact's sam2 git dependency is installed with `--no-build-isolation` so its build uses the already installed `torch==2.6.0+cu124` instead of resolving `torch>=2.5.1` against PyPI. That venv is given `wheel` and `setuptools>=70.1` first so `bdist_wheel` exists (bookworm's ensurepip setuptools 66 does not provide it). `SAM2_BUILD_CUDA=0` skips the CUDA extension. The cu124 torch pin is unchanged. `comfy-kitchen==0.2.36` is the pure-Python wheel, then `docker/patch_comfy_kitchen_torch26.py` rewrites annotations that torch 2.6 rejects. That patch is not applied on the cu130 line. Trusted install (`COMFYFLEET_TRUSTED_INSTALL`) is the same patch on both lines. All three torch packages are in `pip list`.
 
-An optional llama install on this line uses the cu124 index, not cu130:
-
-```bash
-unset CXX CC CMAKE_ARGS
-/opt/venv/bin/python -m pip install llama-cpp-python --only-binary=:all: --force-reinstall \
-  --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
-```
-
-That package is not baked. A failed optional install is not a base-image failure.
+`llama-cpp-python==0.3.36` on this line is the abetlen cu124 wheel from the note above. Operators do not pip-install it. A source build is not supported.
 
 There is no baked default workflow. Omitting the workflow fails create. `examples/workflow.example.json` is documentation only. `.dockerignore` excludes `examples/`.
 

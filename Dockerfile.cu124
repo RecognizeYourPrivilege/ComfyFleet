@@ -9,6 +9,9 @@
 # to start when that file is missing.
 #
 # Pins are duplicated in docker/PINS.cu124.txt and the README.
+# llama-cpp-python==0.3.36 is baked from the abetlen cu124 index (binary
+# wheel only) so JoyCaption does not source-build it. The cu130 index is
+# not used in this file.
 #
 # RES4LYF imports cv2 while the custom node loads. The opencv-python wheel
 # (not the headless build; that is the name in RES4LYF requirements.txt)
@@ -80,14 +83,18 @@ RUN mkdir -p /opt/comfyfleet \
     && pip install --no-cache-dir numpy==2.2.6 \
     && python -c 'import numpy; assert numpy.__version__ == "2.2.6", numpy.__version__' \
     && printf '%s\n' 'torch==2.6.0+cu124' 'torchvision==0.21.0+cu124' 'torchaudio==2.6.0+cu124' 'numpy==2.2.6' > /opt/comfyfleet/torch-constraints.txt \
-    && printf '%s\n' 'opencv-python-headless<0' >> /opt/comfyfleet/torch-constraints.txt
+    && printf '%s\n' 'opencv-python-headless<0' >> /opt/comfyfleet/torch-constraints.txt \
+    && printf '%s\n' 'llama-cpp-python==0.3.36' >> /opt/comfyfleet/torch-constraints.txt
 
 # Manager installs run `python -m pip install <pkg>` and do not pass -c
 # (pinned 14b5aaab does not pass -U either). PIP_CONSTRAINT is the same file,
-# so those installs cannot replace torch, torchvision, torchaudio, or numpy.
+# so those installs cannot replace torch, torchvision, torchaudio, numpy,
+# or llama-cpp-python. PIP_ONLY_BINARY refuses a PyPI sdist for that package
+# (0.3.36 on PyPI is source-only; the CUDA wheel is the abetlen index).
 # Afterwards PIPFixer.fix_broken reads `pip list` and logs
 # "PyTorch is not installed" if any of those three torch packages is absent.
-ENV PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt
+ENV PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt \
+    PIP_ONLY_BINARY=llama-cpp-python
 
 # Impact requirements name opencv-python-headless. This filter drops that
 # line (and a second opencv-python pin) so RES4LYF's opencv-python wheel
@@ -151,6 +158,20 @@ RUN pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt \
     && COMFYUI_PATH=/opt/ComfyUI COMFYUI_MODEL_PATH=/opt/ComfyUI/models python /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Subpack/install.py \
     && rm -f /opt/comfyfleet/baked_custom_nodes/skip_download_model \
     && python /opt/comfyfleet/impact_bake.py --check-weights
+
+# JoyCaption imports llama_cpp. PyPI 0.3.36 is an sdist, and this image has
+# no g++. The abetlen cu124 wheel is py3-none manylinux. CXX, CC, and
+# CMAKE_ARGS are cleared so pip cannot take a compile path.
+# --only-binary=:all: fails the build if the wheel is absent.
+# libggml-cuda needs libcuda.so.1 (the host driver, not in this image).
+# docker/llama_import_smoke.py imports Llama with a temporary gcc stub and
+# deletes that stub in the same step. It is not on the runtime linker path.
+COPY docker/llama_import_smoke.py /opt/comfyfleet/llama_import_smoke.py
+RUN unset CXX CC CMAKE_ARGS \
+    && /opt/venv/bin/python -m pip install --no-cache-dir 'llama-cpp-python==0.3.36' \
+        --only-binary=:all: \
+        --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 \
+    && /opt/venv/bin/python /opt/comfyfleet/llama_import_smoke.py
 
 COPY docker/PINS.cu124.txt /opt/comfyfleet/PINS.txt
 COPY docker/patch_comfy_kitchen_torch26.py /opt/comfyfleet/patch_comfy_kitchen_torch26.py

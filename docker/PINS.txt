@@ -165,14 +165,30 @@ comfy-kitchen
   container (libcuda.so).
 
 llama-cpp-python
-  Not installed in this image.
-  Optional later install into this cu130 venv (a cu124 index does not match
-  this stack):
-    unset CXX CC CMAKE_ARGS
-    /opt/venv/bin/python -m pip install llama-cpp-python --only-binary=:all: --force-reinstall \
-      --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu130
-  Check: /opt/venv/bin/python -c "from llama_cpp import Llama; print('ok')"
-  A failed optional install must not be treated as a base-image failure.
+  llama-cpp-python==0.3.36
+  Baked into this image for JoyCaption. Operators do not pip-install it.
+  A source build is not supported. There is no create-time install and no
+  runtime escape hatch.
+  Wheel: llama_cpp_python-0.3.36-py3-none-manylinux_2_35_x86_64.whl
+    linux x86_64 only. The win_amd64 sibling on the same index is not used.
+  Index: https://abetlen.github.io/llama-cpp-python/whl/cu130
+    The cu124 index is not used on this line.
+  py3-none is required. This image is CPython 3.14.7, and abetlen does not
+  publish a cp314-specific build of this pin. The cu124 line uses the same
+  version with that line's index.
+  The image build clears CXX, CC, and CMAKE_ARGS, then installs with
+  --only-binary=:all:. PyPI 0.3.36 is an sdist. g++, cmake, and a llama.cpp
+  checkout are not added.
+  /opt/comfyfleet/torch-constraints.txt includes llama-cpp-python==0.3.36.
+  PIP_ONLY_BINARY=llama-cpp-python, so a later Manager pip install of
+  llama-cpp-python (JoyCaption requirements) cannot download that sdist.
+  libggml-cuda in the wheel needs libcuda.so.1. That file is the host
+  driver and is not in the image. docker build has no driver. The image
+  verify compiles a temporary gcc stub for the undefined driver symbols,
+  runs `from llama_cpp import Llama`, and deletes the stub in that same
+  step. The stub is not on the runtime linker path. The import does not
+  load a model and does not need a GPU.
+  docker/verify_image_pins.py checks the pip list version and the import.
 
 ComfyUI-Impact-Pack
   https://github.com/ltdrdata/ComfyUI-Impact-Pack
