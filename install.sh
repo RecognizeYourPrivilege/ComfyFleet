@@ -13,10 +13,11 @@ OWNER="$(printf '%s' "${COMFYFLEET_GHCR_OWNER:-recognizeyourprivilege}" | tr '[:
 INSTANCE_REPO="${REGISTRY}/${OWNER}/comfyfleet"
 MANAGER_REPO="${REGISTRY}/${OWNER}/comfyfleet-manager"
 LOCAL_MANAGER_TAG="comfyfleet-manager:latest"
-# Published cu130 digest. cu124 has no digest until the first :cu124 publish.
-CU130_PIN="sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75"
-CU124_PIN=""
-MANAGER_PIN="sha256:766e70fb3b70650269c8d2cac495f85b1ccba5390eafa14a2cf9767d309c5e2a"
+# Published primary-tag digests. Aliases (:latest → cu130, :phase1 → cu124)
+# are the same images and are not pinned separately.
+CU130_PIN="sha256:2032db1691256959cd619108376a7227f68d54e0135073dd941f1dc8d41d032e"
+CU124_PIN="sha256:d2a5e55fcc348c0550e3d2e918bf36579a5a092d498070d63391cebffad71b76"
+MANAGER_PIN="sha256:a26f075d8b31c44cbd080de0557ebe29a6617c2f848b5b244f461b6ac42b2cb8"
 CUDA_TAG=""
 CUDA_TAG_EXPLICIT=0
 NAME="${COMFYFLEET_CONTAINER_NAME:-comfyfleet-manager}"
@@ -40,8 +41,7 @@ CUDA line (pick the one that matches the host NVIDIA driver major):
           (stdin is not a terminal, or the choice is left empty).
           ${INSTANCE_REPO}:cu130@${CU130_PIN}
   cu124   host driver CUDA 12.4.
-          ${INSTANCE_REPO}:cu124
-          No digest pin yet. The tag is published by publish-images.yml.
+          ${INSTANCE_REPO}:cu124@${CU124_PIN}
           A wrong line can fail when an instance starts.
 
 Default images when the line is cu130:
