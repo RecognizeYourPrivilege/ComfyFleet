@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Seed ComfyUI-Manager config.ini for a ComfyFleet instance.
 
-Pinned ComfyUI v0.37.4 (8ff6dc38) has ``folder_paths.get_system_user_directory``,
+Pinned ComfyUI (v0.37.4 on the cu130 line, v0.38.0 on the cu124 line)
+has ``folder_paths.get_system_user_directory``,
 so pinned Manager 14b5aaab resolves its files through
 ``get_manager_path(user_dir)`` to ``<user directory>/__manager``. The default
 user directory is ``<ComfyUI>/user``. The instance entrypoint does not pass

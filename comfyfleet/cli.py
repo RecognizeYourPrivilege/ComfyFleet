@@ -28,7 +28,7 @@ from comfyfleet.errors import FleetError
 from comfyfleet.gpu import detect_gpus
 from comfyfleet.http_api import DEFAULT_BIND_HOST, DEFAULT_BIND_PORT, serve
 from comfyfleet.launch import combine_extra_args, main_argv, parse_launch
-from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
+from comfyfleet.paths import DEFAULT_CUDA_TAG, DEFAULT_IMAGE, FleetLayout
 from comfyfleet.public_host import PUBLIC_HOST_ENV, open_host
 
 
@@ -64,7 +64,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create.add_argument("--gpu", help="One GPU index (non-interactive), for example 0")
     create.add_argument("--gpus", help="GPU indices, for example 0,1 or all")
-    create.add_argument("--image", default=DEFAULT_IMAGE, help=f"Image tag (default {DEFAULT_IMAGE})")
+    create.add_argument("--image", default=DEFAULT_IMAGE, help=f"Image ref override (default {DEFAULT_IMAGE})")
+    create.add_argument(
+        "--cuda-tag",
+        choices=["cu130", "cu124"],
+        default=None,
+        help=(
+            "CUDA line for this instance. cu130 needs a host driver that supports "
+            "CUDA 13.0. cu124 needs CUDA 12.4. "
+            f"Default is COMFYFLEET_CUDA_TAG, or {DEFAULT_CUDA_TAG} when that is unset. "
+            "Changing the line on an existing instance requires --force recreate. "
+            "start, restart, and launch Apply keep the line from create."
+        ),
+    )
     create.add_argument(
         "--start",
         action="store_true",
@@ -219,6 +231,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
         interactive=sys.stdin.isatty(),
         prompt=input,
         image=args.image,
+        cuda_tag=args.cuda_tag,
         start=args.start,
         force=args.force,
         use_env_limit=True,
@@ -247,6 +260,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
     print(f"  url:      {_open_url(instance.port)}")
     print(f"  gpus:     {','.join(str(index) for index in instance.gpus)}")
     print(f"  image:    {instance.image}")
+    print(f"  cuda:     {instance.cuda_tag or '(custom ref)'}")
     print(f"  comfy:    {' '.join(main_argv(instance.launch))}")
     if not result.started:
         print(f"Start it with: comfyfleet start {instance.name}")

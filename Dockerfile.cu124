@@ -1,22 +1,14 @@
-# ComfyFleet cu130 instance line. Primary tag: comfyfleet:cu130.
-# Peer line: Dockerfile.cu124 (comfyfleet:cu124).
-# Official CPython 3.14.7 on Debian bookworm-slim, plus the NVIDIA CUDA 13.0
-# runtime libraries (not the devel toolkit). Bookworm's python3 is 3.11 and
-# is not installed. /opt/venv is created from this interpreter. The build
-# fails unless sys.version_info[:3] is (3, 14, 7).
-#
-# gcc is the host C compiler Triton 3.7.1 (torch 2.13.0+cu130) needs to
-# JIT-compile cuda_utils. That compile runs when the top-level kitchen
-# package loads the Triton backend. Python.h comes from this image
-# (/usr/local/include/python3.14). Debian python3-dev is CPython 3.11 and
-# is not installed. g++ and the CUDA compiler are not installed.
-#
+# ComfyFleet cu124 instance line. Primary tag: comfyfleet:cu124.
+# Slim Debian bookworm + NVIDIA CUDA 12.4 runtime libraries (not the devel toolkit).
+# Host driver: CUDA 12.4. Every instance create still passes --shm-size 8g.
+# gcc and python3-dev are the host C compiler and Python.h that Triton 3.2
+# (torch 2.6.0+cu124's dependency) needs to JIT-compile cuda_utils. That
+# compile runs when the top-level kitchen package loads the Triton backend.
 # No workflow JSON is copied into this image. The operator file is bind-mounted
 # at /opt/comfyfleet/instance/default_workflow.json and the entrypoint refuses
 # to start when that file is missing.
 #
-# Pins are duplicated in docker/PINS.txt and the README.
-# The optional llama package is not baked into this image.
+# Pins are duplicated in docker/PINS.cu124.txt and the README.
 #
 # RES4LYF imports cv2 while the custom node loads. The opencv-python wheel
 # (not the headless build; that is the name in RES4LYF requirements.txt)
@@ -24,14 +16,12 @@
 # that library, which is the "cannot open shared object file" crash.
 # libxcb1, libx11-6, libxext6, libice6, libsm6, libglib2.0-0, and libgl1
 # cover that plugin plus the libGL and libglib imports cv2 itself performs.
-# numpy==2.3.2 is written into torch-constraints.txt next to the torch pins.
-# 2.2.6 has no cp314 manylinux wheel; 2.3.2 is the first release that does.
-# torchaudio==2.11.0+cu130 is installed with torch and torchvision. There is
-# no torchaudio 2.13 on the cu130 index. Pinned ComfyUI-Manager logs
-# "PyTorch is not installed" when pip list is missing any of the three; it
-# does not import torch. See docker/PINS.txt.
+# numpy==2.2.6 is written into torch-constraints.txt next to the torch pins.
+# torchaudio==2.6.0+cu124 is installed with torch and torchvision. Pinned
+# ComfyUI-Manager logs "PyTorch is not installed" when pip list is missing
+# any of the three; it does not import torch. See docker/PINS.txt.
 
-FROM python:3.14.7-slim-bookworm
+FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -39,8 +29,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    CUDA_VERSION=13.0.3 \
-    COMFYFLEET_CUDA_TAG=cu130 \
+    CUDA_VERSION=12.4.1 \
+    COMFYFLEET_CUDA_TAG=cu124 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     PATH=/opt/venv/bin:/usr/local/cuda/bin:${PATH} \
@@ -55,12 +45,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm /tmp/cuda-keyring.deb \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        cuda-libraries-13-0=13.0.3-1 \
-        cuda-cudart-13-0=13.0.96-1 \
-        libcudnn9-cuda-13=9.20.0.48-1 \
+        cuda-libraries-12-4=12.4.1-1 \
+        cuda-cudart-12-4=12.4.127-1 \
+        libcudnn9-cuda-12=9.1.0.70-1 \
         bash \
         gcc \
+        python3-dev \
         git \
+        python3 \
+        python3-venv \
+        python3-pip \
         libxcb1 \
         libx11-6 \
         libxext6 \
@@ -68,25 +62,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsm6 \
         libglib2.0-0 \
         libgl1 \
-    && ln -sfn /usr/local/cuda-13.0 /usr/local/cuda \
-    && apt-mark hold cuda-libraries-13-0 cuda-cudart-13-0 libcudnn9-cuda-13 \
+    && ln -sfn /usr/local/cuda-12.4 /usr/local/cuda \
+    && apt-mark hold cuda-libraries-12-4 cuda-cudart-12-4 libcudnn9-cuda-12 \
     && rm -rf /var/lib/apt/lists/* \
-    && python3 -c 'import sys; assert sys.version_info[:3] == (3, 14, 7), sys.version'
+    && python3 -c 'import sys; assert sys.version_info[:2] == (3, 11), sys.version'
 
 RUN mkdir -p /opt/comfyfleet \
     && python3 -m venv /opt/venv \
-    && /opt/venv/bin/python -c 'import sys; assert sys.version_info[:3] == (3, 14, 7), sys.version' \
     && pip install --no-cache-dir \
-        torch==2.13.0+cu130 \
-        torchvision==0.28.0+cu130 \
-        torchaudio==2.11.0+cu130 \
-        --index-url https://download.pytorch.org/whl/cu130 \
+        torch==2.6.0+cu124 \
+        torchvision==0.21.0+cu124 \
+        torchaudio==2.6.0+cu124 \
+        --index-url https://download.pytorch.org/whl/cu124 \
         --extra-index-url https://pypi.org/simple \
-    && python -c 'import torch; v = torch.__version__; assert v.startswith("2.13.0") and "cu130" in v, v' \
-    && python -c 'import importlib.metadata as metadata; expected = (("torch", "2.13.0+cu130"), ("torchvision", "0.28.0+cu130"), ("torchaudio", "2.11.0+cu130")); mismatches = {name: metadata.version(name) for name, pin in expected if metadata.version(name) != pin}; assert not mismatches, mismatches' \
-    && pip install --no-cache-dir --only-binary=numpy numpy==2.3.2 \
-    && python -c 'import numpy; assert numpy.__version__ == "2.3.2", numpy.__version__' \
-    && printf '%s\n' 'torch==2.13.0+cu130' 'torchvision==0.28.0+cu130' 'torchaudio==2.11.0+cu130' 'numpy==2.3.2' > /opt/comfyfleet/torch-constraints.txt
+    && python -c 'import torch; v = torch.__version__; assert v.startswith("2.6.0") and "cu124" in v, v' \
+    && python -c 'import importlib.metadata as metadata; expected = (("torch", "2.6.0+cu124"), ("torchvision", "0.21.0+cu124"), ("torchaudio", "2.6.0+cu124")); mismatches = {name: metadata.version(name) for name, pin in expected if metadata.version(name) != pin}; assert not mismatches, mismatches' \
+    && pip install --no-cache-dir numpy==2.2.6 \
+    && python -c 'import numpy; assert numpy.__version__ == "2.2.6", numpy.__version__' \
+    && printf '%s\n' 'torch==2.6.0+cu124' 'torchvision==0.21.0+cu124' 'torchaudio==2.6.0+cu124' 'numpy==2.2.6' > /opt/comfyfleet/torch-constraints.txt
 
 # Manager installs run `python -m pip install <pkg>` and do not pass -c
 # (pinned 14b5aaab does not pass -U either). PIP_CONSTRAINT is the same file,
@@ -95,15 +88,19 @@ RUN mkdir -p /opt/comfyfleet \
 # "PyTorch is not installed" if any of those three torch packages is absent.
 ENV PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt
 
+# Pure-Python comfy-kitchen (eager backend). The manylinux wheel targets CUDA 13.
+# Install this wheel before ComfyUI requirements so comfy-kitchen==0.2.36 is
+# already satisfied and pip does not select the CUDA 13 wheel. Torch 2.6
+# infer_schema still rejects this release's list[int]/list[bool] custom-op
+# annotations; the rewrite below the requirements install fixes that.
+ARG COMFY_KITCHEN_WHEEL=https://files.pythonhosted.org/packages/38/23/a6787aac01d7c28ae3cb07579ba839297a35e6fad66baac096916246cc7f/comfy_kitchen-0.2.36-py3-none-any.whl
+RUN pip install --no-cache-dir "${COMFY_KITCHEN_WHEEL}"
+
 # Full upstream checkouts. Pixaroma's workflow-browser examples stay inside that
 # custom node; the entrypoint never uses them as the instance default.
-# ComfyUI v0.37.4 requirements install comfy-kitchen==0.2.35. On CPython 3.14
-# pip selects the cp312-abi3 manylinux wheel (CUDA build). The image does not
-# override that with the pure-Python wheel, and it does not rewrite
-# annotations: torch 2.13 accepts PEP 585 list[...] custom-op schemas.
 RUN git config --global --add safe.directory '*' \
     && git clone https://github.com/Comfy-Org/ComfyUI.git /opt/ComfyUI \
-    && git -C /opt/ComfyUI checkout 8ff6dc384ba5c410266b40e137799e049459d4f2 \
+    && git -C /opt/ComfyUI checkout 6b747c0428c343e1417219641db93a4fb7cb69ae \
     && git clone https://github.com/Comfy-Org/ComfyUI-Manager.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Manager \
     && git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Manager checkout 14b5aaab711ad1f1306d420732a923fb058c44d7 \
     && git clone https://github.com/pixaroma/ComfyUI-Pixaroma.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Pixaroma \
@@ -122,24 +119,28 @@ RUN pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt \
         -r /opt/comfyfleet/baked_custom_nodes/ComfyUI-Pixaroma/requirements.txt \
         -r /opt/comfyfleet/baked_custom_nodes/ComfyUI-ComfyDock/requirements.txt \
         -r /opt/comfyfleet/baked_custom_nodes/RES4LYF/requirements.txt \
-    && python -c 'import sys; assert sys.version_info[:3] == (3, 14, 7), sys.version' \
-    && python -c 'import torch; assert "cu130" in torch.__version__, torch.__version__' \
-    && python -c 'import numpy; assert numpy.__version__ == "2.3.2", numpy.__version__'
+    && python -c 'import torch; assert "cu124" in torch.__version__, torch.__version__' \
+    && python -c 'import numpy; assert numpy.__version__ == "2.2.6", numpy.__version__'
 
-COPY docker/PINS.txt /opt/comfyfleet/PINS.txt
+COPY docker/PINS.cu124.txt /opt/comfyfleet/PINS.txt
+COPY docker/patch_comfy_kitchen_torch26.py /opt/comfyfleet/patch_comfy_kitchen_torch26.py
 COPY docker/verify_image_pins.py /opt/comfyfleet/verify_image_pins.py
 
-# Requirements install comfy-kitchen==0.2.35. The image build does not import
-# the top-level kitchen package: that import loads the Triton backend, and
-# Triton raises "0 active drivers" when the build has no NVIDIA driver.
-# GPU selection at runtime does not provide a driver during docker build.
+# Requirements leave an already-installed 0.2.36 in place. Reinstall the
+# pure-Python wheel anyway so a resolver that picked the manylinux build cannot
+# survive into the image, then rewrite custom-op annotations for torch 2.6.
+# The patch script registers those eager custom ops through infer_schema.
+# It does not load the top-level kitchen package: that import loads the Triton
+# backend, and Triton raises "0 active drivers" when the build has no NVIDIA
+# driver. GPU selection at runtime does not provide a driver during docker build.
 # On a GPU host the same import reaches triton/runtime/build.py and compiles
-# cuda_utils (driver.c, which includes Python.h). Without gcc that step
-# raises "Failed to find C compiler. Please specify via CC environment
-# variable." gcc is installed above. Python.h is the 3.14 header from the
-# base image. Triton ships cuda.h in its wheel; this image does not install
-# nvcc or g++.
-RUN python /opt/comfyfleet/verify_image_pins.py
+# cuda_utils (driver.c, which includes Python.h). bookworm-slim has no gcc, so
+# that step raised "Failed to find C compiler. Please specify via CC
+# environment variable." gcc and python3-dev above are what that compile uses.
+# Triton ships cuda.h in its wheel; this image does not install nvcc or g++.
+RUN pip install --no-cache-dir --force-reinstall --no-deps "${COMFY_KITCHEN_WHEEL}" \
+    && python /opt/comfyfleet/patch_comfy_kitchen_torch26.py \
+    && python /opt/comfyfleet/verify_image_pins.py
 COPY docker/comfyfleet_default_workflow /opt/comfyfleet/baked_custom_nodes/comfyfleet_default_workflow
 
 # Fleet patch of the baked Manager. Stock is_dedicated_install_allowed

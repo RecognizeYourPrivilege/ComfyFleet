@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,10 +14,12 @@ from comfyfleet.control import (
     start_instance,
     stop_instance,
     terminal_argv,
+    update_instance_launch,
 )
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
-from comfyfleet.paths import FleetLayout
+from comfyfleet.launch import parse_launch
+from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
 
 
 class FakeDocker:
@@ -126,6 +129,73 @@ class ControlTests(unittest.TestCase):
         self.assertTrue((self.root / "files" / "portrait" / "default_workflow.json").is_file())
         self.assertTrue((self.root / "files" / "portrait" / "comfyfleet.json").is_file())
         self.assertTrue((self.root / "models" / "checkpoints").is_dir())
+        self.assertEqual(result.instance.cuda_tag, "cu130")
+        self.assertEqual(result.instance.image, DEFAULT_IMAGE)
+        self.assertIn("comfyfleet.cuda_tag=cu130", args)
+
+    def test_cuda_tag_picker_persists_and_keeps_shm(self):
+        created = self._create("Portrait.json", cuda_tag="cu124")
+        self.assertEqual(created.instance.cuda_tag, "cu124")
+        self.assertEqual(created.instance.image, "comfyfleet:cu124")
+        args = self.docker.containers["portrait"]["args"]
+        self.assertEqual(args[args.index("--shm-size") + 1], "8g")
+        self.assertLess(args.index("--shm-size"), args.index("comfyfleet:cu124"))
+        self.assertIn("comfyfleet.cuda_tag=cu124", args)
+        stored = json.loads((self.root / "files" / "portrait" / "comfyfleet.json").read_text())
+        self.assertEqual(stored["cuda_tag"], "cu124")
+        self.assertEqual(stored["image"], "comfyfleet:cu124")
+        text = format_list(list_instances(self.layout, self.docker))
+        self.assertIn("cu124", text)
+
+        with self.assertRaises(FleetError) as bad:
+            self._create("Other.json", cuda_tag="cu128")
+        self.assertIn("cu130 or cu124", str(bad.exception))
+
+        switched = self._create(
+            "Portrait.json",
+            force=True,
+            cuda_tag="cu130",
+            port_in_use=lambda _port: False,
+        )
+        self.assertEqual(switched.instance.cuda_tag, "cu130")
+        self.assertEqual(switched.instance.image, DEFAULT_IMAGE)
+        replaced = self.docker.containers["portrait"]["args"]
+        self.assertEqual(replaced[replaced.index("--shm-size") + 1], "8g")
+
+    def test_force_keeps_a_different_line_and_apply_does_not_swap(self):
+        self._create("Portrait.json", cuda_tag="cu124")
+        with mock.patch.dict(os.environ, {"COMFYFLEET_INSTANCE_IMAGE": "comfyfleet:cu130", "COMFYFLEET_CUDA_TAG": "cu130"}):
+            kept = self._create("Portrait.json", force=True, port_in_use=lambda _port: False)
+        self.assertEqual(kept.instance.cuda_tag, "cu124")
+        self.assertEqual(kept.instance.image, "comfyfleet:cu124")
+
+        digest = "ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:bbbb"
+        with mock.patch.dict(
+            os.environ,
+            {"COMFYFLEET_INSTANCE_IMAGE": digest, "COMFYFLEET_CUDA_TAG": "cu124"},
+        ):
+            refreshed = self._create("Portrait.json", force=True, port_in_use=lambda _port: False)
+        self.assertEqual(refreshed.instance.image, digest)
+        self.assertEqual(refreshed.instance.cuda_tag, "cu124")
+
+        self.docker.start("portrait")
+        with mock.patch.dict(
+            os.environ,
+            {"COMFYFLEET_INSTANCE_IMAGE": "comfyfleet:cu130", "COMFYFLEET_CUDA_TAG": "cu130"},
+        ):
+            updated = update_instance_launch(
+                "portrait",
+                parse_launch(vram="lowvram"),
+                layout=self.layout,
+                docker=self.docker,
+                gpus=self.one,
+                port_in_use=lambda _port: False,
+            )
+        self.assertEqual(updated.instance.image, digest)
+        self.assertEqual(updated.instance.cuda_tag, "cu124")
+        args = self.docker.containers["portrait"]["args"]
+        self.assertEqual(args[args.index("--shm-size") + 1], "8g")
+        self.assertLess(args.index("--shm-size"), args.index(digest))
 
     def test_second_instance_gets_next_port_and_create_does_not_start(self):
         self._create("Alpha.json")

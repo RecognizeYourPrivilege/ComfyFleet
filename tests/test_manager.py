@@ -172,7 +172,8 @@ class ManagerImageContractTests(unittest.TestCase):
         self.assertIn("COMFYFLEET_PUBLIC_HOST", compose)
         self.assertIn("COMFYFLEET_PASSWORD", compose)
         self.assertNotIn("replace-with-a-long-secret", compose)
-        self.assertIn("comfyfleet:phase1", compose)
+        self.assertIn("comfyfleet:cu130", compose)
+        self.assertIn("COMFYFLEET_CUDA_TAG", compose)
 
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         dev_at = readme.lower().index("development / optional")

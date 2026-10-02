@@ -756,6 +756,7 @@ textarea.text-input {
   resize: vertical;
 }
 
+.cuda-row,
 .gpu-row {
   display: flex;
   flex-wrap: wrap;

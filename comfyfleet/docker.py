@@ -46,6 +46,7 @@ def build_create_args(
     temp_dir: str,
     instance_dir: str,
     comfy_args: list[str] | None = None,
+    cuda_tag: str = "",
 ) -> list[str]:
     """Arguments after ``docker``. Restart policy is ``no`` until ``start``.
 
@@ -54,7 +55,7 @@ def build_create_args(
     ``--listen 0.0.0.0`` and ``--port`` (the container port).
 
     ``--shm-size`` is a create flag, before the image name. Every instance
-    gets ``INSTANCE_SHM_SIZE`` (``8g``).
+    gets ``INSTANCE_SHM_SIZE`` (``8g``), on both the cu130 and cu124 lines.
     """
 
     gpu_list = ",".join(str(index) for index in gpus)
@@ -94,8 +95,10 @@ def build_create_args(
         f"comfyfleet.port={port}",
         "--label",
         f"comfyfleet.gpus={gpu_list}",
-        image,
     ]
+    if cuda_tag:
+        args.extend(["--label", f"comfyfleet.cuda_tag={cuda_tag}"])
+    args.append(image)
     if comfy_args:
         args.extend(comfy_args)
     return args

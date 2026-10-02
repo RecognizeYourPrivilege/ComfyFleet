@@ -1,7 +1,9 @@
 # Optional local manager build. Not the operator install path.
 # Build the instance image first (it is not a compose service):
-#   docker build -t comfyfleet:phase1 .
+#   docker build -f Dockerfile -t comfyfleet:cu130 .
+#   docker build -f Dockerfile.cu124 -t comfyfleet:cu124 .
 #   docker compose -f compose.yaml -f compose.build.yaml up -d --build
+# COMFYFLEET_CUDA_TAG selects which local tag the manager uses by default.
 services:
   manager:
     image: comfyfleet-manager:latest
@@ -9,4 +11,5 @@ services:
       context: .
       dockerfile: Dockerfile.manager
     environment:
-      COMFYFLEET_INSTANCE_IMAGE: comfyfleet:phase1
+      COMFYFLEET_INSTANCE_IMAGE: ${COMFYFLEET_INSTANCE_IMAGE:-comfyfleet:cu130}
+      COMFYFLEET_CUDA_TAG: ${COMFYFLEET_CUDA_TAG:-cu130}

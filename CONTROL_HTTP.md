@@ -182,7 +182,11 @@ An empty fleet is `{"ok": true, "instances": []}`. That is not an error.
 | `status` | string | Docker status: `running`, `created`, `exited`, `missing`, or another Docker state. Treat **only** `running` as running. `created` means the container exists and has not been started. |
 | `port` | number | Host port reserved for this instance (from 8188 up). Present even when stopped. The fleet page opens Comfy at `<page-scheme>//<window.location.hostname>:<port>/`. |
 | `gpus` | number[] | GPU indexes chosen at create. |
+| `image` | string | Image ref used at create. |
+| `cuda_tag` | string | `cu130` or `cu124` when the line is known. Empty when the ref does not name a line. |
 | `launch` | object | Flags chosen at create. `argv` is what is appended after `--listen 0.0.0.0 --port 8188`. Empty `argv` means stock ComfyUI. |
+
+Every create runs `docker create --shm-size 8g` (Compose `shm_size: '8g'`) before the image name, on both CUDA lines. The list shows `cuda_tag` so the UI can label the line. `start`, `stop`, `restart`, and `POST .../launch` do not change `image` or `cuda_tag`.
 
 The API does not return an Open URL. `COMFYFLEET_PUBLIC_HOST` is not used for Open Comfy. The browser builds the link from the host that loaded this manager and the published `port`, with a trailing slash. A phone that opened the manager at `http://192.168.1.20:9100/` opens Comfy at `http://192.168.1.20:8188/`. The shell **Open** button stays on `/terminal.html`. Stop does not destroy the container or the workflow file.
 
@@ -207,6 +211,8 @@ The JSON body is **create options**, not the Comfy graph. Posting a workflow obj
 | `gpus` | one of `gpu` / `gpus` | `"0,1"` or `"all"`. |
 | `start` | no | Default **false**. `true` creates and starts that one instance. Leave false to create many and run few. |
 | `force` | no | Default **false**. Replace a **stopped** instance with the same name. Refuses while it is running. |
+| `cuda_tag` | no | `cu130` or `cu124`. `cu130` needs a host driver that supports CUDA 13.0. `cu124` needs CUDA 12.4. Omitted uses `COMFYFLEET_CUDA_TAG`, or `cu130` when that is unset. A wrong line can fail when the instance starts. On `--force` / `force: true`, omitting it keeps a different stored line instead of swapping because the install default changed. The same line follows a new `COMFYFLEET_INSTANCE_IMAGE` digest. |
+| `instance_image` | no | Full image ref override. The tag must already be on the host engine. When it names `cu130` or `cu124`, it has to agree with `cuda_tag`. |
 | `vram` | no | One of `lowvram`, `novram`, `highvram`. Omit for stock VRAM. Not combinable with `--cpu` or `--gpu-only`. |
 | `attention` | no | One attention backend, for example `use-sage-attention`. |
 | `flags` | no | Comma-separated toggles, or a JSON array of strings: `disable-smart-memory`, `disable-dynamic-vram`, `force-fp16`, `cuda-malloc`, and the other panel flags. Mutually exclusive pairs are rejected. |
@@ -221,6 +227,8 @@ The JSON body is **create options**, not the Comfy graph. Posting a workflow obj
 | `install_missing_from_workflow` | no | Default **true** when the field is omitted. Install custom nodes referenced by this workflow that are not already present. `false` skips that step. |
 
 `start` and `force` accept JSON booleans and the strings `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`.
+
+Changing `cu130` versus `cu124` on an instance that already exists requires this create call with `force: true` (the container must be stopped). `POST /api/instances/{name}/launch` recreates Comfy arguments only and keeps the CUDA line. `start` and `restart` do not swap it either. Every create still passes `--shm-size 8g`.
 
 Content types:
 
@@ -311,7 +319,7 @@ Force-stops the container if it is running, removes **only** that container, and
 
 ### `POST /api/instances/{name}/launch`
 
-JSON body with the same launch fields as create (`vram`, `attention`, `flags`, `reserve_vram`, `vram_headroom`, `preview_method`, `preview_size`, `extra_args`). Stops the instance if it is running, removes that container, and creates it again with the same name, host port, GPU set, workflow file, and mount paths. Only the arguments after `--listen 0.0.0.0 --port 8188` change. If it was running, it is started again. The previous container is removed before the replacement is created.
+JSON body with the same launch fields as create (`vram`, `attention`, `flags`, `reserve_vram`, `vram_headroom`, `preview_method`, `preview_size`, `extra_args`). Stops the instance if it is running, removes that container, and creates it again with the same name, host port, GPU set, image, CUDA line, workflow file, and mount paths. Only the arguments after `--listen 0.0.0.0 --port 8188` change. `cuda_tag` in this body is ignored; changing the line is `POST /api/instances` with `force: true`. If it was running, it is started again. The previous container is removed before the replacement is created. `--shm-size 8g` is set again.
 
 ### `GET /api/instances/{name}/terminal`
 

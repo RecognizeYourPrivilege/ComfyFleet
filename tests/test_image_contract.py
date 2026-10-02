@@ -154,5 +154,42 @@ class ImageContractTests(unittest.TestCase):
         self.assertIn("FR-W5", spec)
 
 
+class Cu124ImageContractTests(unittest.TestCase):
+    def test_dockerfile_pins_the_cuda_124_line(self):
+        text = (ROOT / "Dockerfile.cu124").read_text(encoding="utf-8")
+        pins = (ROOT / "docker" / "PINS.cu124.txt").read_text(encoding="utf-8")
+        script = (ROOT / "docker" / "verify_image_pins.py").read_text(encoding="utf-8")
+        self.assertIn("FROM debian:bookworm-slim", text)
+        self.assertIn("sys.version_info[:2] == (3, 11)", text)
+        self.assertIn("COMFYFLEET_CUDA_TAG=cu124", text)
+        self.assertIn("cuda-libraries-12-4=12.4.1-1", text)
+        self.assertIn("cuda-cudart-12-4=12.4.127-1", text)
+        self.assertIn("libcudnn9-cuda-12=9.1.0.70-1", text)
+        self.assertIn("https://download.pytorch.org/whl/cu124", text)
+        self.assertIn("torch==2.6.0+cu124", text)
+        self.assertIn("torchvision==0.21.0+cu124", text)
+        self.assertIn("torchaudio==2.6.0+cu124", text)
+        self.assertIn("numpy==2.2.6", text)
+        self.assertIn("6b747c0428c343e1417219641db93a4fb7cb69ae", text)
+        self.assertIn("comfy_kitchen-0.2.36", text)
+        self.assertIn("patch_comfy_kitchen_torch26.py", text)
+        self.assertIn("python /opt/comfyfleet/verify_image_pins.py", text)
+        self.assertIn("docker/PINS.cu124.txt", text)
+        for name in (
+            "torch==2.6.0+cu124",
+            "torchvision==0.21.0+cu124",
+            "torchaudio==2.6.0+cu124",
+            "numpy==2.2.6",
+            "CUDA 12.4",
+            "6b747c0428c343e1417219641db93a4fb7cb69ae",
+        ):
+            self.assertIn(name, pins)
+        self.assertIn('"cu124"', script)
+        self.assertIn('"2.6.0+cu124"', script)
+        self.assertIn('"2.2.6"', script)
+        self.assertIn("configure_pins", script)
+        compile(script, "docker/verify_image_pins.py", "exec")
+
+
 if __name__ == "__main__":
     unittest.main()
