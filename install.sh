@@ -15,15 +15,14 @@ OWNER="$(printf '%s' "${COMFYFLEET_GHCR_OWNER:-recognizeyourprivilege}" | tr '[:
 INSTANCE_REPO="${REGISTRY}/${OWNER}/comfyfleet"
 MANAGER_REPO="${REGISTRY}/${OWNER}/comfyfleet-manager"
 LOCAL_MANAGER_TAG="comfyfleet-manager:latest"
-# Published primary-tag digests. Aliases (:latest → cu130, :phase1 → cu124)
-# are the same images and are not pinned separately.
-# Digest pins are the last GHCR publish. Impact Pack on both instance lines
-# and the manager Host menu / fix-owner API are in this tree. Do not replace
-# these with placeholders. Bump them after the next GHCR publish of cu130,
-# cu124, and the manager image.
-CU130_PIN="sha256:2032db1691256959cd619108376a7227f68d54e0135073dd941f1dc8d41d032e"
-CU124_PIN="sha256:d2a5e55fcc348c0550e3d2e918bf36579a5a092d498070d63391cebffad71b76"
-MANAGER_PIN="sha256:a26f075d8b31c44cbd080de0557ebe29a6617c2f848b5b244f461b6ac42b2cb8"
+# Published primary-tag digests from GHCR publish run 37051412900
+# (main a11f0c0e). Aliases (:latest → cu130, :phase1 → cu124) are the same
+# images and are not pinned separately. Do not replace these with
+# placeholders. Bump them after the next GHCR publish of cu130, cu124, and
+# the manager image.
+CU130_PIN="sha256:2735a1bcccce1932d8180793340dd8342e86d4fff094ac7bc49805d23bb1db87"
+CU124_PIN="sha256:d8eaa73135490896c491e98ad84d9b5fff750117ee6bd7ad2e2741c2a4ca7be5"
+MANAGER_PIN="sha256:c843418f18cbe37e24bee1e16951ccce9328d2fbca4d82ed3c6e76d52e21ed73"
 CUDA_TAG=""
 CUDA_TAG_EXPLICIT=0
 NAME="${COMFYFLEET_CONTAINER_NAME:-comfyfleet-manager}"
