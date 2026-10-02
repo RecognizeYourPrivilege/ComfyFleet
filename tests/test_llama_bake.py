@@ -16,9 +16,9 @@ WHEEL = "llama_cpp_python-0.3.36-py3-none-manylinux_2_35_x86_64.whl"
 CU130_INDEX = "https://abetlen.github.io/llama-cpp-python/whl/cu130"
 CU124_INDEX = "https://abetlen.github.io/llama-cpp-python/whl/cu124"
 DIGESTS = (
-    "sha256:2735a1bcccce1932d8180793340dd8342e86d4fff094ac7bc49805d23bb1db87",
-    "sha256:d8eaa73135490896c491e98ad84d9b5fff750117ee6bd7ad2e2741c2a4ca7be5",
-    "sha256:c843418f18cbe37e24bee1e16951ccce9328d2fbca4d82ed3c6e76d52e21ed73",
+    "sha256:25b0f209abc1075ab2631505d513d2c919d5a9704d91c4a45a631cac65531591",
+    "sha256:807f1b782147bd663c17352a5ecfc80b0eed0b992d63344f72671cc2d90ed462",
+    "sha256:271970754272baf770cc226f6208e2934587b9e9dd4619f6af061950f6893379",
 )
 
 NM_SAMPLE = """\
