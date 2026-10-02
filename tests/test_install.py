@@ -93,6 +93,7 @@ class InstallScriptTests(unittest.TestCase):
         )
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn("cu130 or cu124", rejected.stderr)
+        self.assertIn("both", rejected.stderr)
         self.assertIn("CUDA 13.0", rejected.stderr)
         self.assertNotIn("docker pull", rejected.stderr)
 
@@ -146,6 +147,174 @@ class InstallScriptTests(unittest.TestCase):
             )
             self.assertIn("comfyfleet:cu124", chosen.stdout)
             self.assertIn("CUDA 12.4", (ROOT / "install.sh").read_text(encoding="utf-8"))
+            self.assertIn("both   pull cu130 and cu124", (ROOT / "install.sh").read_text(encoding="utf-8"))
+
+            log.write_text("", encoding="utf-8")
+            both = subprocess.run(
+                ["bash", str(ROOT / "install.sh"), "--pull-only", "--cuda-tag", "both"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=base,
+            )
+            self.assertEqual(both.returncode, 0, both.stderr)
+            pulled = log.read_text(encoding="utf-8")
+            self.assertIn(f"pull {INSTANCE}", pulled)
+            self.assertIn(f"tag {INSTANCE} comfyfleet:cu130", pulled)
+            self.assertIn(f"tag {INSTANCE} comfyfleet:latest", pulled)
+            self.assertIn("pull ghcr.io/recognizeyourprivilege/comfyfleet:cu124\n", pulled)
+            self.assertIn(
+                "tag ghcr.io/recognizeyourprivilege/comfyfleet:cu124 comfyfleet:cu124\n",
+                pulled,
+            )
+            self.assertIn(
+                "tag ghcr.io/recognizeyourprivilege/comfyfleet:cu124 comfyfleet:phase1\n",
+                pulled,
+            )
+            self.assertIn("manager default cu130", both.stdout)
+            self.assertNotIn("manager default both", both.stdout)
+
+            log.write_text("", encoding="utf-8")
+            started = subprocess.run(
+                ["bash", str(ROOT / "install.sh"), "--cuda-tag", "both"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **base,
+                    "COMFYFLEET_PASSWORD": "not-printed",
+                    "COMFYFLEET_PUBLIC_HOST": "192.168.1.20",
+                },
+            )
+            self.assertEqual(started.returncode, 0, started.stderr)
+            started_log = log.read_text(encoding="utf-8")
+            self.assertIn("COMFYFLEET_CUDA_TAG=cu130", started_log)
+            self.assertNotIn("COMFYFLEET_CUDA_TAG=both", started_log)
+            self.assertIn(f"pull {INSTANCE}", started_log)
+            self.assertIn("pull ghcr.io/recognizeyourprivilege/comfyfleet:cu124\n", started_log)
+            self.assertNotIn("not-printed", started.stdout + started.stderr)
+
+            log.write_text("", encoding="utf-8")
+            from_env = subprocess.run(
+                ["bash", str(ROOT / "install.sh"), "--pull-only"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**base, "COMFYFLEET_CUDA_TAG": "both"},
+            )
+            self.assertEqual(from_env.returncode, 0, from_env.stderr)
+            self.assertIn("manager default cu130", from_env.stdout)
+            self.assertIn(":cu124", log.read_text(encoding="utf-8"))
+
+            log.write_text("", encoding="utf-8")
+            kept = subprocess.run(
+                ["bash", str(ROOT / "install.sh"), "--pull-only"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **base,
+                    "COMFYFLEET_CUDA_TAG": "both",
+                    "COMFYFLEET_INSTANCE_IMAGE": "ghcr.io/recognizeyourprivilege/comfyfleet:cu124",
+                },
+            )
+            self.assertEqual(kept.returncode, 0, kept.stderr)
+            pulled = log.read_text(encoding="utf-8")
+            self.assertIn(f"pull {INSTANCE}", pulled)
+            self.assertIn(f"tag {INSTANCE} comfyfleet:cu130", pulled)
+            self.assertIn(f"tag {INSTANCE} comfyfleet:latest", pulled)
+            self.assertIn("pull ghcr.io/recognizeyourprivilege/comfyfleet:cu124\n", pulled)
+            self.assertIn(
+                "tag ghcr.io/recognizeyourprivilege/comfyfleet:cu124 comfyfleet:phase1\n",
+                pulled,
+            )
+            self.assertIn("manager default cu124", kept.stdout)
+            self.assertNotIn("COMFYFLEET_CUDA_TAG=both", kept.stdout + kept.stderr)
+
+    def test_tty_prompt_offers_both_and_empty_stays_cu130(self):
+        import pty
+        import select
+        import time
+
+        def run_tty(answer: str) -> tuple[int, str, str]:
+            with tempfile.TemporaryDirectory() as tmp:
+                bin_dir = Path(tmp) / "bin"
+                bin_dir.mkdir()
+                log = Path(tmp) / "docker.log"
+                fake = bin_dir / "docker"
+                fake.write_text(
+                    "#!/bin/sh\n"
+                    "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+                    "exit 0\n",
+                    encoding="utf-8",
+                )
+                fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+                master, slave = pty.openpty()
+                proc = subprocess.Popen(
+                    ["bash", str(ROOT / "install.sh"), "--pull-only"],
+                    stdin=slave,
+                    stdout=slave,
+                    stderr=slave,
+                    env={
+                        "PATH": f"{bin_dir}{os.pathsep}/usr/bin:/bin",
+                        "DOCKER_LOG": str(log),
+                        "TERM": "xterm",
+                    },
+                    close_fds=True,
+                )
+                os.close(slave)
+                os.write(master, answer.encode("utf-8"))
+                chunks: list[bytes] = []
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline:
+                    if proc.poll() is not None:
+                        while True:
+                            ready, _, _ = select.select([master], [], [], 0.05)
+                            if not ready:
+                                break
+                            try:
+                                data = os.read(master, 4096)
+                            except OSError:
+                                data = b""
+                            if not data:
+                                break
+                            chunks.append(data)
+                        break
+                    ready, _, _ = select.select([master], [], [], 0.2)
+                    if not ready:
+                        continue
+                    try:
+                        data = os.read(master, 4096)
+                    except OSError:
+                        break
+                    if not data:
+                        break
+                    chunks.append(data)
+                if proc.poll() is None:
+                    proc.kill()
+                code = proc.wait(timeout=5)
+                os.close(master)
+                text = b"".join(chunks).decode("utf-8", errors="replace")
+                return code, text, log.read_text(encoding="utf-8")
+
+        empty_code, empty_text, empty_log = run_tty("\n")
+        self.assertEqual(empty_code, 0, empty_text)
+        self.assertIn("cu130", empty_text)
+        self.assertIn("cu124", empty_text)
+        self.assertIn("both", empty_text)
+        self.assertIn(f"pull {INSTANCE}", empty_log)
+        self.assertNotIn(":cu124", empty_log)
+
+        both_code, both_text, both_log = run_tty("both\n")
+        self.assertEqual(both_code, 0, both_text)
+        self.assertIn("manager default cu130", both_text)
+        self.assertIn(f"pull {INSTANCE}", both_log)
+        self.assertIn("pull ghcr.io/recognizeyourprivilege/comfyfleet:cu124\n", both_log)
+        self.assertIn(f"tag {INSTANCE} comfyfleet:latest", both_log)
+        self.assertIn(
+            "tag ghcr.io/recognizeyourprivilege/comfyfleet:cu124 comfyfleet:phase1\n",
+            both_log,
+        )
 
     def test_publish_script_pushes_both_dockerfiles(self):
         script = ROOT / "scripts" / "publish-images.sh"
