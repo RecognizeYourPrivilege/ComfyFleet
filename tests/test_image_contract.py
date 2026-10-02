@@ -56,7 +56,7 @@ class ImageContractTests(unittest.TestCase):
 
         self.assertIn("pip install --no-cache-dir numpy==2.2.6", dockerfile)
         self.assertIn(
-            "printf '%s\\n' 'torch==2.6.0+cu124' 'torchvision==0.21.0+cu124' 'numpy==2.2.6'",
+            "printf '%s\\n' 'torch==2.6.0+cu124' 'torchvision==0.21.0+cu124' 'torchaudio==2.6.0+cu124' 'numpy==2.2.6'",
             dockerfile,
         )
         self.assertIn("PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt", dockerfile)

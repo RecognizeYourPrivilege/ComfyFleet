@@ -19,9 +19,30 @@ PyTorch (matches CUDA 12.4; not the PyPI default, which is CUDA 13)
   index: https://download.pytorch.org/whl/cu124
   torch==2.6.0+cu124
   torchvision==0.21.0+cu124
+  torchaudio==2.6.0+cu124
   image Python: Debian bookworm CPython 3.11
   wheels: torch-2.6.0+cu124-cp311-cp311-linux_x86_64.whl
           torchvision-0.21.0+cu124-cp311-cp311-linux_x86_64.whl
+          torchaudio-2.6.0+cu124-cp311-cp311-linux_x86_64.whl
+  The torchaudio wheel's Requires-Dist is torch==2.6.0. The installed
+  2.6.0+cu124 satisfies that specifier (the local version is ignored when
+  the specifier has none). Manager's torch_torchvision_torchaudio_version_map
+  pairs torch 2.6.0 with torchvision 0.21.0 and torchaudio 2.6.0.
+  ComfyUI-Manager 14b5aaab does not import torch and does not run `pip show`.
+  After `python -m pip install <package>` (the EXECUTE line, including
+  cryptography; that commit does not pass -U or -c) PIPFixer.fix_broken in
+  glob/manager_util.py reads the `pip list` snapshot taken before the
+  command. It logs "[ComfyUI-Manager] PyTorch is not installed" when torch,
+  torchvision, or torchaudio is absent from that map. Installing
+  cryptography does not remove torch; it only runs the helper. Shipping
+  torch and torchvision without torchaudio made every Manager pip install
+  log that error while torch 2.6.0+cu124 was already in /opt/venv.
+  PIP_CONSTRAINT points at /opt/comfyfleet/torch-constraints.txt, which
+  lists these three wheels and numpy==2.2.6, so a later Manager install
+  cannot replace them. docker/verify_image_pins.py parses `pip list` the
+  same way and fails the build if any of the three is missing or not the
+  cu124 pin. No GPU. An existing container keeps the old image until it is
+  stopped and replaced with create --force.
 
 ComfyUI
   https://github.com/Comfy-Org/ComfyUI
@@ -66,9 +87,8 @@ numpy
   numpy==2.2.6
   Installed from PyPI before ComfyUI and custom-node requirements, then
   written into /opt/comfyfleet/torch-constraints.txt with the torch pins.
-  PIP_CONSTRAINT points at that file. Manager's custom-node installer runs
-  `python -m pip install -U` without its own -c flag; it inherits the env
-  var, so those installs cannot replace numpy (or the CUDA 12.4 torch wheels).
+  PIP_CONSTRAINT points at that file. Manager's installer inherits it, so
+  those installs cannot replace numpy (or the CUDA 12.4 torch wheels).
   ComfyUI v0.38.0 asks for numpy>=1.25.0. RES4LYF asks for numpy>=1.26.4.
   opencv-python 5 asks for numpy>=2. 2.2.6 satisfies all three.
   docker/verify_image_pins.py asserts the version during the image build.
