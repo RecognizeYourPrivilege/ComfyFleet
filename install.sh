@@ -5,7 +5,9 @@
 # This script starts the manager only. Instance containers are created later
 # with docker create --shm-size 8g (Compose form: shm_size: '8g').
 # Local tags: comfyfleet:cu130 (default, host CUDA 13.0) and comfyfleet:cu124
-# (host CUDA 12.4). Changing an instance's line is a recreate, not a restart.
+# (host CUDA 12.4). --cuda-tag both pulls and tags each line. The manager
+# default stays cu130 unless this install already selected the cu124 image.
+# Changing an instance's line is a recreate, not a restart.
 set -euo pipefail
 
 REGISTRY="${COMFYFLEET_REGISTRY:-ghcr.io}"
@@ -27,22 +29,29 @@ PULL_ONLY=0
 
 usage() {
   cat <<EOF
-Usage: install.sh [--cuda-tag cu130|cu124] [--compose] [--pull-only] [--public-host HOST] [--password PASS] [--port PORT] [--name NAME]
+Usage: install.sh [--cuda-tag cu130|cu124|both] [--compose] [--pull-only] [--public-host HOST] [--password PASS] [--port PORT] [--name NAME]
 
 Pull prebuilt images and start the ComfyFleet manager. Does not docker-build torch.
 
   COMFYFLEET_PASSWORD       required unless --pull-only. Prefer the environment
                             (a --password argument is visible in the process list).
   COMFYFLEET_PUBLIC_HOST    LAN hostname or IP browsers use. Required unless --pull-only.
-  COMFYFLEET_CUDA_TAG       cu130 or cu124. Same as --cuda-tag. The flag wins.
+  COMFYFLEET_CUDA_TAG       cu130, cu124, or both. Same as --cuda-tag. The flag wins.
+                            both pulls each instance line. The manager still
+                            gets cu130 unless COMFYFLEET_INSTANCE_IMAGE is
+                            already a cu124 ref.
 
 CUDA line (pick the one that matches the host NVIDIA driver major):
   cu130   host driver CUDA 13.0. Default when this prompt is skipped
           (stdin is not a terminal, or the choice is left empty).
+          Does not pull cu124.
           ${INSTANCE_REPO}:cu130@${CU130_PIN}
   cu124   host driver CUDA 12.4.
           ${INSTANCE_REPO}:cu124@${CU124_PIN}
           A wrong line can fail when an instance starts.
+  both    pull and tag cu130 and cu124. Manager COMFYFLEET_CUDA_TAG stays
+          cu130 unless COMFYFLEET_INSTANCE_IMAGE is already a cu124 ref.
+          Create can pick either line because both images are local.
 
 Default images when the line is cu130:
   ${INSTANCE_REPO}:cu130@${CU130_PIN}
@@ -54,10 +63,13 @@ Default images when the line is cu130:
 The instance image is tagged comfyfleet:<cuda tag>. The manager image is tagged
 ${LOCAL_MANAGER_TAG}. The running manager gets COMFYFLEET_INSTANCE_IMAGE and
 COMFYFLEET_CUDA_TAG set to the chosen line so create finds that image on the
-host engine. Create can still pick the other line; that image must be pulled
-too. Changing an existing instance's line is a recreate, not a restart.
+host engine. both tags each line (comfyfleet:cu130 and comfyfleet:latest,
+comfyfleet:cu124 and comfyfleet:phase1) and sets the manager default to cu130
+unless this install already selected the cu124 image. Create can still pick
+the other line; that image must be pulled too (both does that pull). Changing
+an existing instance's line is a recreate, not a restart.
 
-  --cuda-tag    cu130 (host CUDA 13.0, default) or cu124 (host CUDA 12.4)
+  --cuda-tag    cu130 (host CUDA 13.0, default), cu124 (host CUDA 12.4), or both
   --compose     docker compose up -d instead of docker run (still pulls both images)
   --pull-only   pull and tag, do not start the manager
   --port        host port published to container 9100 (docker run only; default 9100)
@@ -66,6 +78,7 @@ too. Changing an existing instance's line is a recreate, not a restart.
 Examples:
   COMFYFLEET_PASSWORD='...' COMFYFLEET_PUBLIC_HOST=192.168.1.20 ./install.sh
   COMFYFLEET_PASSWORD='...' COMFYFLEET_PUBLIC_HOST=192.168.1.20 ./install.sh --cuda-tag cu124
+  COMFYFLEET_PASSWORD='...' COMFYFLEET_PUBLIC_HOST=192.168.1.20 ./install.sh --cuda-tag both
   COMFYFLEET_PASSWORD='...' COMFYFLEET_PUBLIC_HOST=192.168.1.20 ./install.sh --compose
   curl -fsSL https://raw.githubusercontent.com/RecognizeYourPrivilege/ComfyFleet/main/install.sh \\
     | COMFYFLEET_PASSWORD='...' COMFYFLEET_PUBLIC_HOST=192.168.1.20 bash
@@ -82,7 +95,7 @@ die() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cuda-tag)
-      [[ $# -ge 2 ]] || die "--cuda-tag needs cu130 or cu124."
+      [[ $# -ge 2 ]] || die "--cuda-tag needs cu130 or cu124, or both."
       CUDA_TAG=$2
       CUDA_TAG_EXPLICIT=1
       shift 2
@@ -142,6 +155,36 @@ digest_ref() {
   printf '%s@%s\n' "${repo}" "${digest}"
 }
 
+# A ref that still carries the published cu130 digest is that line, even when
+# the tag says phase1. phase1 without that digest is the cu124 alias.
+image_line() {
+  local ref="$1"
+  if [[ -z "${ref}" ]]; then
+    printf '%s\n' ""
+    return
+  fi
+  if [[ "${ref}" == *"${CU130_PIN}"* ]]; then
+    printf '%s\n' "cu130"
+    return
+  fi
+  case "${ref}" in
+    *:cu124|*:cu124@*|*:phase1|*:phase1@*) printf '%s\n' "cu124" ;;
+    *:cu130|*:cu130@*|*:latest|*:latest@*) printf '%s\n' "cu130" ;;
+    *) printf '%s\n' "" ;;
+  esac
+}
+
+default_line_ref() {
+  local tag="$1"
+  if [[ "${tag}" == "cu130" ]]; then
+    printf '%s\n' "${INSTANCE_REPO}:cu130@${CU130_PIN}"
+  elif [[ -n "${CU124_PIN}" ]]; then
+    printf '%s\n' "${INSTANCE_REPO}:cu124@${CU124_PIN}"
+  else
+    printf '%s\n' "${INSTANCE_REPO}:cu124"
+  fi
+}
+
 choose_cuda_tag() {
   if [[ -z "${CUDA_TAG}" && -n "${COMFYFLEET_CUDA_TAG:-}" ]]; then
     CUDA_TAG="${COMFYFLEET_CUDA_TAG}"
@@ -152,26 +195,40 @@ choose_cuda_tag() {
       echo "Instance CUDA line (match the host NVIDIA driver major):"
       echo "  cu130  host driver CUDA 13.0 (default)"
       echo "  cu124  host driver CUDA 12.4"
+      echo "  both   pull cu130 and cu124 (manager default cu130)"
       read -r -p "CUDA tag [cu130]: " CUDA_TAG
     fi
     if [[ -z "${CUDA_TAG}" ]]; then
       CUDA_TAG="cu130"
     fi
   fi
-  if [[ "${CUDA_TAG}" != "cu130" && "${CUDA_TAG}" != "cu124" ]]; then
-    die "CUDA tag must be cu130 or cu124 (host driver CUDA 13.0 or CUDA 12.4), got ${CUDA_TAG}."
+  if [[ "${CUDA_TAG}" != "cu130" && "${CUDA_TAG}" != "cu124" && "${CUDA_TAG}" != "both" ]]; then
+    die "CUDA tag must be cu130 or cu124, or both (host driver CUDA 13.0 or CUDA 12.4; both pulls each line), got ${CUDA_TAG}."
   fi
 }
 
 choose_cuda_tag
 
+# both pulls each line. The manager default stays cu130 unless this install
+# already pointed COMFYFLEET_INSTANCE_IMAGE at the cu124 line. A digest pin
+# stays on cu130, the same default line install uses when the prompt is skipped.
+MANAGER_CUDA_TAG="${CUDA_TAG}"
+if [[ "${CUDA_TAG}" == "both" ]]; then
+  MANAGER_CUDA_TAG="cu130"
+  if [[ -z "${COMFYFLEET_INSTANCE_DIGEST:-}" && "$(image_line "${COMFYFLEET_INSTANCE_IMAGE:-}")" == "cu124" ]]; then
+    MANAGER_CUDA_TAG="cu124"
+  fi
+fi
+
 if [[ -n "${COMFYFLEET_INSTANCE_DIGEST:-}" ]]; then
   INSTANCE_REF="$(digest_ref "${INSTANCE_REPO}" "${COMFYFLEET_INSTANCE_DIGEST}")"
 elif [[ -n "${COMFYFLEET_INSTANCE_IMAGE:-}" && "${CUDA_TAG_EXPLICIT}" -eq 0 ]]; then
   INSTANCE_REF="${COMFYFLEET_INSTANCE_IMAGE}"
-elif [[ -n "${COMFYFLEET_INSTANCE_IMAGE:-}" && "${COMFYFLEET_INSTANCE_IMAGE}" == *":${CUDA_TAG}"* ]]; then
+elif [[ -n "${COMFYFLEET_INSTANCE_IMAGE:-}" && "${COMFYFLEET_INSTANCE_IMAGE}" == *":${MANAGER_CUDA_TAG}"* ]]; then
   INSTANCE_REF="${COMFYFLEET_INSTANCE_IMAGE}"
-elif [[ "${CUDA_TAG}" == "cu130" ]]; then
+elif [[ -n "${COMFYFLEET_INSTANCE_IMAGE:-}" && "$(image_line "${COMFYFLEET_INSTANCE_IMAGE}")" == "${MANAGER_CUDA_TAG}" ]]; then
+  INSTANCE_REF="${COMFYFLEET_INSTANCE_IMAGE}"
+elif [[ "${MANAGER_CUDA_TAG}" == "cu130" ]]; then
   INSTANCE_REF="${INSTANCE_REPO}:cu130@${CU130_PIN}"
 elif [[ -n "${CU124_PIN}" ]]; then
   INSTANCE_REF="${INSTANCE_REPO}:cu124@${CU124_PIN}"
@@ -188,8 +245,9 @@ else
 fi
 
 # Create reads this name on the host engine. install always sets it.
-LOCAL_INSTANCE_TAG="comfyfleet:${CUDA_TAG}"
-export COMFYFLEET_CUDA_TAG="${CUDA_TAG}"
+# both never reaches the manager: COMFYFLEET_CUDA_TAG is cu130 or cu124.
+LOCAL_INSTANCE_TAG="comfyfleet:${MANAGER_CUDA_TAG}"
+export COMFYFLEET_CUDA_TAG="${MANAGER_CUDA_TAG}"
 export COMFYFLEET_INSTANCE_IMAGE="${INSTANCE_REF}"
 export COMFYFLEET_MANAGER_IMAGE="${MANAGER_REF}"
 
@@ -222,7 +280,48 @@ tag_ref() {
   docker tag "${ref}" "${alias}"
 }
 
+pull_tag_line() {
+  local tag="$1"
+  local ref="$2"
+  pull_ref "${ref}"
+  tag_ref "${ref}" "comfyfleet:${tag}"
+  if [[ "${tag}" == "cu130" ]]; then
+    tag_ref "${ref}" "comfyfleet:latest"
+  else
+    tag_ref "${ref}" "comfyfleet:phase1"
+  fi
+}
+
+pull_and_tag_both() {
+  local cu130_ref cu124_ref
+  if [[ "${MANAGER_CUDA_TAG}" == "cu130" ]]; then
+    cu130_ref="${INSTANCE_REF}"
+    cu124_ref="$(default_line_ref cu124)"
+  else
+    cu124_ref="${INSTANCE_REF}"
+    cu130_ref="$(default_line_ref cu130)"
+  fi
+  pull_tag_line cu130 "${cu130_ref}"
+  pull_tag_line cu124 "${cu124_ref}"
+  pull_ref "${MANAGER_REF}"
+  tag_ref "${MANAGER_REF}" "${LOCAL_MANAGER_TAG}"
+  if [[ -n "${COMFYFLEET_INSTANCE_DIGEST:-}" ]]; then
+    tag_ref "${INSTANCE_REF}" "${INSTANCE_REPO}:${MANAGER_CUDA_TAG}"
+  fi
+  if [[ -n "${COMFYFLEET_MANAGER_DIGEST:-}" ]]; then
+    tag_ref "${MANAGER_REF}" "${MANAGER_REPO}:latest"
+  fi
+  echo "comfyfleet: instance ${cu130_ref} (also comfyfleet:cu130)"
+  echo "comfyfleet: instance ${cu124_ref} (also comfyfleet:cu124)"
+  echo "comfyfleet: manager ${MANAGER_REF} (also ${LOCAL_MANAGER_TAG})"
+  echo "comfyfleet: manager default ${COMFYFLEET_CUDA_TAG}"
+}
+
 pull_and_tag() {
+  if [[ "${CUDA_TAG}" == "both" ]]; then
+    pull_and_tag_both
+    return
+  fi
   pull_ref "${INSTANCE_REF}"
   pull_ref "${MANAGER_REF}"
   tag_ref "${INSTANCE_REF}" "${LOCAL_INSTANCE_TAG}"

@@ -20,18 +20,19 @@ These host paths stay:
 
 1. List instances in the UI, or `GET /api/instances`.
 2. Delete each one (UI **Delete**, or the POST above). Stop first if you want a graceful stop; delete force-stops a container that is still running.
-3. Re-run install with the password and the LAN address browsers use. The script asks **cu130** (host driver CUDA 13.0) or **cu124** (host driver CUDA 12.4). A non-interactive run defaults to cu130. `--cuda-tag` or `COMFYFLEET_CUDA_TAG` skips the prompt.
+3. Re-run install with the password and the LAN address browsers use. The script asks **cu130** (host driver CUDA 13.0), **cu124** (host driver CUDA 12.4), or **both** (pull each line). A non-interactive run defaults to cu130 only. `--cuda-tag` or `COMFYFLEET_CUDA_TAG` skips the prompt (`cu130`, `cu124`, or `both`).
 
    ```bash
    export COMFYFLEET_PASSWORD=replace-with-a-long-secret
    export COMFYFLEET_PUBLIC_HOST=192.168.1.20
    ./install.sh
    # CUDA 12.4 host: ./install.sh --cuda-tag cu124
+   # Both lines: ./install.sh --cuda-tag both
    ```
 
 4. In the UI, create each instance and start it. The create sheet has the same **cu130** / **cu124** picker. Match the host driver's CUDA major (`nvidia-smi`). A mismatched line can fail when the instance starts. New instances are created stopped unless you use **Create & start**. Every create sets `--shm-size 8g`.
 
-The other line has to be pulled onto the host engine before create can use it. Re-run `install.sh --cuda-tag` for that line, or pull it yourself. See [README.md](README.md) for the curl-to-bash install and the image table.
+The other line has to be on the host engine before create can use it. `./install.sh --cuda-tag both` pulls both. A one-line install can be repeated with the other `--cuda-tag`, or pull that image yourself. See [README.md](README.md) for the curl-to-bash install and the image table.
 
 ## Path B — also remove host files
 
