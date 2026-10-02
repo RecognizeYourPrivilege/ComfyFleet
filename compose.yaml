@@ -1,13 +1,13 @@
 # ComfyFleet manager. Pulls a prebuilt manager image from GHCR.
 # The instance image is not a compose service. Pull it before create:
-#   docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba
+#   docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c
 # install.sh does that pull, tags comfyfleet:phase1, and sets
 # COMFYFLEET_INSTANCE_IMAGE. A local rebuild is compose.build.yaml.
 # Open http://<lan-host>:9100/ . Do not publish 9100 on the public internet.
 
 services:
   manager:
-    image: ${COMFYFLEET_MANAGER_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a4204564c60cf3afc40db17b34a268cf2c1c2f8e685b4601bc1c6e4dedbc713f}
+    image: ${COMFYFLEET_MANAGER_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:31b99db3d3fd79dcbde50f3b4d7096dc7c6b93ac1140d1f87a971b6be6813910}
     container_name: comfyfleet-manager
     ports:
       - "9100:9100"
@@ -17,7 +17,7 @@ services:
     environment:
       COMFYFLEET_PASSWORD: ${COMFYFLEET_PASSWORD:?Set COMFYFLEET_PASSWORD}
       COMFYFLEET_PUBLIC_HOST: ${COMFYFLEET_PUBLIC_HOST:-}
-      COMFYFLEET_INSTANCE_IMAGE: ${COMFYFLEET_INSTANCE_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba}
+      COMFYFLEET_INSTANCE_IMAGE: ${COMFYFLEET_INSTANCE_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c}
       COMFYFLEET_BIND_HOST: 0.0.0.0
       COMFYFLEET_BIND_PORT: "9100"
     gpus: all

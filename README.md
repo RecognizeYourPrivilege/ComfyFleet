@@ -14,8 +14,8 @@ HTTP field names: [CONTROL_HTTP.md](CONTROL_HTTP.md).
 
 | Image | Pull | Local tag from `install.sh` | Role |
 |---|---|---|---|
-| Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a4204564c60cf3afc40db17b34a268cf2c1c2f8e685b4601bc1c6e4dedbc713f` | `comfyfleet-manager:latest` | Control HTTP and web UI. No CUDA stack. Includes `git` and `unzip` for create-time node seeding. |
-| Instance | `ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba` | `comfyfleet:phase1` | ComfyUI. CUDA 12.4 runtime, torch `2.6.0+cu124`. |
+| Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:31b99db3d3fd79dcbde50f3b4d7096dc7c6b93ac1140d1f87a971b6be6813910` | `comfyfleet-manager:latest` | Control HTTP and web UI. No CUDA stack. Includes `git` and `unzip` for create-time node seeding. |
+| Instance | `ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c` | `comfyfleet:phase1` | ComfyUI. CUDA 12.4 runtime, torch `2.6.0+cu124`. |
 
 Each publish also tags the git SHA. `ghcr.io/recognizeyourprivilege/comfyfleet:latest` is the same instance build as `:phase1`.
 
@@ -117,10 +117,10 @@ export COMFYFLEET_PUBLIC_HOST=192.168.1.20
 Same start without the script. Pull both digests, tag the local names, then run the manager:
 
 ```bash
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a4204564c60cf3afc40db17b34a268cf2c1c2f8e685b4601bc1c6e4dedbc713f
-docker tag ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba comfyfleet:phase1
-docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a4204564c60cf3afc40db17b34a268cf2c1c2f8e685b4601bc1c6e4dedbc713f comfyfleet-manager:latest
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:31b99db3d3fd79dcbde50f3b4d7096dc7c6b93ac1140d1f87a971b6be6813910
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c comfyfleet:phase1
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:31b99db3d3fd79dcbde50f3b4d7096dc7c6b93ac1140d1f87a971b6be6813910 comfyfleet-manager:latest
 
 docker run -d --name comfyfleet-manager \
   --restart unless-stopped \
@@ -130,8 +130,8 @@ docker run -d --name comfyfleet-manager \
   -v /home:/home \
   -e COMFYFLEET_PASSWORD=replace-with-a-long-secret \
   -e COMFYFLEET_PUBLIC_HOST=192.168.1.20 \
-  -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba \
-  ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:a4204564c60cf3afc40db17b34a268cf2c1c2f8e685b4601bc1c6e4dedbc713f
+  -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c \
+  ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:31b99db3d3fd79dcbde50f3b4d7096dc7c6b93ac1140d1f87a971b6be6813910
 ```
 
 [compose.yaml](compose.yaml) is the same service. It does not pull the instance image:
@@ -139,7 +139,7 @@ docker run -d --name comfyfleet-manager \
 ```bash
 export COMFYFLEET_PASSWORD=replace-with-a-long-secret
 export COMFYFLEET_PUBLIC_HOST=192.168.1.20
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:6441c6340c7330198fd8a492b763b6c19874e7091e8ce310b3b6abfda54454ba
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c
 docker compose up -d
 ```
 
