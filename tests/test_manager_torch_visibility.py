@@ -153,7 +153,7 @@ class ManagerTorchVisibilityTests(unittest.TestCase):
         self.assertIn("create --force", readme)
         self.assertIn("start` and `restart` alone keep the existing container layers", readme)
         self.assertIn("CUDA 13.0", readme)
-        self.assertIn("floating `:phase1` tag does not move a digest-pinned install", readme)
+        self.assertIn("A floating tag does not move a digest-pinned install", readme)
         self.assertIn('MANAGER_PYTORCH_MISSING_LOG = "[ComfyUI-Manager] PyTorch is not installed"', script)
         self.assertIn("parse_manager_pip_list", script)
         self.assertIn('NUMPY_PIN = "2.3.2"', script)

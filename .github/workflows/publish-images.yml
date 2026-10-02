@@ -1,5 +1,7 @@
-# Build both ComfyFleet images and push them to GHCR.
-# No GPU: Dockerfile does not import comfy_kitchen during the build.
+# Build the manager image and both instance lines and push them to GHCR.
+# Primary instance tags: :cu130 and :cu124.
+# Aliases: :latest → cu130, :phase1 → cu124.
+# No GPU: neither instance Dockerfile imports comfy_kitchen during the build.
 # Torch wheels are large. The instance job frees disk first and allows 180 minutes.
 # If the runner still runs out of disk or time, use scripts/publish-images.sh.
 name: Publish images
@@ -10,6 +12,7 @@ on:
       - main
     paths:
       - Dockerfile
+      - Dockerfile.cu124
       - Dockerfile.manager
       - docker/**
       - comfyfleet/**
@@ -40,6 +43,16 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.publish_instance
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cuda_tag: cu130
+            dockerfile: Dockerfile
+            alias: latest
+          - cuda_tag: cu124
+            dockerfile: Dockerfile.cu124
+            alias: phase1
     outputs:
       digest: ${{ steps.build.outputs.digest }}
       image: ${{ steps.names.outputs.image }}
@@ -82,26 +95,41 @@ jobs:
           owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
           echo "image=ghcr.io/${owner}/comfyfleet" >> "${GITHUB_OUTPUT}"
 
+      - name: Instance tags
+        id: tags
+        run: |
+          image="${{ steps.names.outputs.image }}"
+          cuda_tag="${{ matrix.cuda_tag }}"
+          alias="${{ matrix.alias }}"
+          {
+            echo "list<<EOF"
+            echo "${image}:${cuda_tag}"
+            echo "${image}:${alias}"
+            echo "${image}:${GITHUB_SHA}-${cuda_tag}"
+            if [[ "${cuda_tag}" == "cu130" ]]; then
+              echo "${image}:${GITHUB_SHA}"
+            fi
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Build and push instance
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: Dockerfile
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: true
           provenance: false
           sbom: false
-          tags: |
-            ${{ steps.names.outputs.image }}:phase1
-            ${{ steps.names.outputs.image }}:latest
-            ${{ steps.names.outputs.image }}:${{ github.sha }}
+          tags: ${{ steps.tags.outputs.list }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
+            com.recognizeyourprivilege.comfyfleet.cuda-tag=${{ matrix.cuda_tag }}
 
       - name: Digest
-        run: echo "instance ${{ steps.names.outputs.image }}@${{ steps.build.outputs.digest }}"
+        run: echo "instance-${{ matrix.cuda_tag }} ${{ steps.names.outputs.image }}:${{ matrix.cuda_tag }}@${{ steps.build.outputs.digest }} (alias :${{ matrix.alias }})"
 
   manager:
     if: github.event_name != 'workflow_dispatch' || inputs.publish_manager
@@ -165,11 +193,14 @@ jobs:
             echo "Pushed by this run. They are not pinned in the repo until a human copies them into the README."
             echo ""
             echo '```text'
+            echo "instance cu130 and cu124 (aliases latest→cu130, phase1→cu124). Matrix digest output is one leg; copy both from the instance job logs."
             echo "instance ${{ needs.instance.outputs.image }}@${{ needs.instance.outputs.digest }}"
             echo "manager ${{ needs.manager.outputs.image }}@${{ needs.manager.outputs.digest }}"
             echo '```'
             echo ""
             echo "A personal-account package is private on first publish. Set both packages to public or anonymous docker pull fails. GITHUB_TOKEN does not change visibility."
           } >> "${GITHUB_STEP_SUMMARY}"
+          echo "instance cu130 ${{ needs.instance.outputs.image }}:cu130"
+          echo "instance cu124 ${{ needs.instance.outputs.image }}:cu124"
           echo "instance ${{ needs.instance.outputs.image }}@${{ needs.instance.outputs.digest }}"
           echo "manager ${{ needs.manager.outputs.image }}@${{ needs.manager.outputs.digest }}"

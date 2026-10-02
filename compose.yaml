@@ -1,10 +1,15 @@
 # ComfyFleet manager. Pulls a prebuilt manager image from GHCR.
 # The instance image is not a compose service. The manager creates each
-# instance with docker create --shm-size 8g (Compose form: shm_size: '8g').
-# Pull the instance image before create:
-#   docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75
-# install.sh does that pull, tags comfyfleet:phase1, and sets
-# COMFYFLEET_INSTANCE_IMAGE. A local rebuild is compose.build.yaml.
+# instance with docker create --shm-size 8g (Compose form: shm_size: '8g')
+# on both CUDA lines.
+# Primary instance tags: comfyfleet:cu130 (host driver CUDA 13.0, default)
+# and comfyfleet:cu124 (host driver CUDA 12.4).
+# Pull the chosen line before create:
+#   docker pull ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75
+# install.sh does that pull, tags comfyfleet:cu130 (or comfyfleet:cu124), and
+# sets COMFYFLEET_INSTANCE_IMAGE and COMFYFLEET_CUDA_TAG.
+# Changing an instance's CUDA line is a recreate, not a restart.
+# A local rebuild is compose.build.yaml.
 # Open http://<lan-host>:9100/ . Do not publish 9100 on the public internet.
 
 services:
@@ -19,7 +24,8 @@ services:
     environment:
       COMFYFLEET_PASSWORD: ${COMFYFLEET_PASSWORD:?Set COMFYFLEET_PASSWORD}
       COMFYFLEET_PUBLIC_HOST: ${COMFYFLEET_PUBLIC_HOST:-}
-      COMFYFLEET_INSTANCE_IMAGE: ${COMFYFLEET_INSTANCE_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75}
+      COMFYFLEET_INSTANCE_IMAGE: ${COMFYFLEET_INSTANCE_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75}
+      COMFYFLEET_CUDA_TAG: ${COMFYFLEET_CUDA_TAG:-cu130}
       COMFYFLEET_BIND_HOST: 0.0.0.0
       COMFYFLEET_BIND_PORT: "9100"
     gpus: all

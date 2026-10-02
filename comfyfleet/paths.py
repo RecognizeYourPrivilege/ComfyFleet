@@ -39,7 +39,16 @@ MODEL_SUBDIRS = (
 
 CONTAINER_PORT = 8188
 WORKFLOW_CONTAINER_PATH = "/opt/comfyfleet/instance/default_workflow.json"
-DEFAULT_IMAGE = "comfyfleet:phase1"
+# Primary instance tags. cu130 is the default when the operator does not choose.
+CUDA_TAGS = ("cu130", "cu124")
+DEFAULT_CUDA_TAG = "cu130"
+DEFAULT_IMAGE = "comfyfleet:cu130"
+# Published cu130 digest (GHCR run that built the CUDA 13.0 line). A ref that
+# still says :phase1 but carries this digest is that cu130 image, not the
+# later :phase1 alias of cu124.
+CU130_PUBLISHED_DIGEST = (
+    "sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75"
+)
 
 
 @dataclass(frozen=True)

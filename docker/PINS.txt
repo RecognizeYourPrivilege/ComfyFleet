@@ -1,4 +1,5 @@
-ComfyFleet instance pins (implement date 2026-10-02)
+ComfyFleet cu130 instance pins (primary tag comfyfleet:cu130)
+Peer line: docker/PINS.cu124.txt (comfyfleet:cu124, host driver CUDA 12.4).
 
 Base
   python:3.14.7-slim-bookworm

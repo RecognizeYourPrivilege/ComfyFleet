@@ -10,25 +10,40 @@ HTTP field names: [CONTROL_HTTP.md](CONTROL_HTTP.md).
 
 ## Images
 
-[`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml) publishes both to GHCR from `main`. Both are `linux/amd64`. The manager image is Debian bookworm-slim and its Python is unchanged. The instance image build is the official CPython 3.14.7 bookworm image plus the NVIDIA CUDA 13.0 runtime.
+Two primary instance lines, plus the manager. [`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml) publishes all three to GHCR from `main`. All are `linux/amd64`. The manager image is Debian bookworm-slim and its Python is unchanged.
+
+| Tag | Host driver | Stack |
+|---|---|---|
+| `comfyfleet:cu130` | **CUDA 13.0** | Default. ComfyUI v0.37.4, CPython 3.14.7, torch `2.13.0+cu130`. |
+| `comfyfleet:cu124` | **CUDA 12.4** | ComfyUI v0.38.0, Debian bookworm CPython 3.11, torch `2.6.0+cu124`. |
+
+`install.sh` asks which line to pull. A non-interactive run (no TTY, empty answer) defaults to **cu130**. The choice sets `COMFYFLEET_INSTANCE_IMAGE` and `COMFYFLEET_CUDA_TAG` on the manager. The create form can pick the other line later; that image has to be on the host engine too. A mismatched line can fail when the instance starts. Match the host driver major.
+
+Changing the CUDA line on an instance that already exists is a **recreate** (stop, then create with replace / `--force`, then start). `start`, `restart`, and Flags Apply keep the line stored at create. They do not swap tags.
+
+Every instance create uses `--shm-size 8g` (Compose `shm_size: '8g'`), on both lines. Docker's 64MB `/dev/shm` is too small for ComfyUI.
+
+Optional aliases, same digests as the primary tags when publish retags them: `:latest` → cu130, `:phase1` → cu124. A floating tag does not move a digest-pinned install.
 
 | Image | Pull | Local tag from `install.sh` | Role |
 |---|---|---|---|
 | Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:766e70fb3b70650269c8d2cac495f85b1ccba5390eafa14a2cf9767d309c5e2a` | `comfyfleet-manager:latest` | Control HTTP and web UI. No CUDA stack. Includes `git` and `unzip` for create-time node seeding. |
-| Instance | `ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75` | `comfyfleet:phase1` | ComfyUI v0.37.4. Python 3.14.7, CUDA 13.0 runtime, torch `2.13.0+cu130`. |
+| Instance cu130 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75` | `comfyfleet:cu130` | ComfyUI v0.37.4. Python 3.14.7, CUDA 13.0 runtime, torch `2.13.0+cu130`. Host driver CUDA 13.0. |
+| Instance cu124 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu124` | `comfyfleet:cu124` | ComfyUI v0.38.0. CPython 3.11, CUDA 12.4 runtime, torch `2.6.0+cu124`. Host driver CUDA 12.4. Digest pin follows the first publish of this tag. |
 
-Each publish also tags the git SHA. `ghcr.io/recognizeyourprivilege/comfyfleet:latest` is the same instance build as `:phase1`.
+Each publish also tags the git SHA (`<sha>` and `<sha>-cu130` for cu130, `<sha>-cu124` for cu124).
 
 Override a pin without editing the script:
 
 ```bash
+export COMFYFLEET_CUDA_TAG=cu130
 export COMFYFLEET_INSTANCE_DIGEST=sha256:<instance-digest>
 export COMFYFLEET_MANAGER_DIGEST=sha256:<manager-digest>
 ```
 
-`COMFYFLEET_INSTANCE_IMAGE` and `COMFYFLEET_MANAGER_IMAGE` replace the full ref. The manager default, when `COMFYFLEET_INSTANCE_IMAGE` is unset, is `comfyfleet:phase1`. `install.sh` pulls the digest above and tags that local name so a manager started without the variable still finds the image. The instance tag has to exist in the **host** engine before create, because sibling containers are started by that engine.
+`COMFYFLEET_INSTANCE_IMAGE` and `COMFYFLEET_MANAGER_IMAGE` replace the full ref when you are not also passing `--cuda-tag`. The manager default, when `COMFYFLEET_INSTANCE_IMAGE` is unset, is `comfyfleet:cu130`. `install.sh` pulls the cu130 digest above (or `:cu124` when that line is selected) and tags that local name so a manager started without the variable still finds the image. The instance tag has to exist in the **host** engine before create, because sibling containers are started by that engine.
 
-`install.sh`, `compose.yaml`, and the digest in the table pin an image by digest. The floating `:phase1` tag does not move a digest-pinned install.
+`install.sh`, `compose.yaml`, and the cu130 digest in the table pin that line by digest. The cu124 line is pulled by tag until a digest is copied in after publish. A floating tag does not move a digest-pinned install.
 
 ### Instance image contents
 
@@ -46,7 +61,7 @@ PyTorch wheels come from `https://download.pytorch.org/whl/cu130`: `torch==2.13.
 
 Pinned ComfyUI-Manager does not import torch to decide that PyTorch is installed. After `python -m pip install` (the `EXECUTE` line, including a package such as `cryptography`) it reads the `pip list` snapshot taken before that command. It logs `PyTorch is not installed` when `torch`, `torchvision`, or `torchaudio` is missing. The image installs all three cu130 wheels so that snapshot contains them.
 
-`start` and `restart` alone keep the existing container layers. After the new digest is on the host engine, recreate the instance: **stop**, then **`create --force`** with the same workflow, GPUs, and launch flags, then **start**. Host model, custom-node, and output directories stay.
+`start` and `restart` alone keep the existing container layers. After the new digest is on the host engine, recreate the instance: **stop**, then **`create --force`** with the same workflow, GPUs, launch flags, and CUDA line, then **start**. Host model, custom-node, and output directories stay. Passing a different `cuda_tag` on that recreate is how the line changes. Apply does not change it.
 
 ComfyUI v0.37.4 installs `comfy-kitchen==0.2.35`. On Python 3.14 that resolves to the cp312-abi3 manylinux wheel (the CUDA build). Torch 2.13 accepts PEP 585 `list[int]` / `list[bool]` custom-op annotations, so the torch 2.6 rewrite (`patch_comfy_kitchen_torch26.py`) is not in this image. The Triton backend in torch 2.13.0+cu130 (`triton==3.7.1`) JIT-compiles `driver.c`, which includes `Python.h`. Without `gcc` that compile raises `Failed to find C compiler. Please specify via CC environment variable.` The official 3.14.7 image ships `Python.h`. The image does not install Debian `python3-dev` (bookworm's headers are CPython 3.11), `g++`, `build-essential`, or `cuda-nvcc`. The image build does not `import comfy_kitchen`.
 
@@ -75,6 +90,34 @@ Baked custom nodes (also `docker/PINS.txt`):
 
 `RES4LYF` imports `cv2`. Its `opencv-python` wheel needs `libxcb.so.1` on bookworm-slim. The image installs `libxcb1`, `libx11-6`, `libxext6`, `libice6`, `libsm6`, `libglib2.0-0`, and `libgl1`, and the build imports `cv2` so a missing library fails the build.
 
+### cu124 instance image
+
+`Dockerfile.cu124`, pins in `docker/PINS.cu124.txt`. Primary tag `comfyfleet:cu124`. Host driver **CUDA 12.4**. Debian bookworm CPython 3.11 (not 3.14). `gcc` and `python3-dev` are installed for Triton. `--shm-size 8g` is still set at create, not in the image.
+
+| Package | Pin |
+|---|---|
+| `cuda-libraries-12-4` | `12.4.1-1` |
+| `cuda-cudart-12-4` | `12.4.127-1` |
+| `libcudnn9-cuda-12` | `9.1.0.70-1` |
+| torch | `torch==2.6.0+cu124` |
+| torchvision | `torchvision==0.21.0+cu124` |
+| torchaudio | `torchaudio==2.6.0+cu124` |
+| index | `https://download.pytorch.org/whl/cu124` |
+| numpy | `numpy==2.2.6` |
+| ComfyUI `v0.38.0` | `6b747c0428c343e1417219641db93a4fb7cb69ae` |
+
+The same baked custom nodes as the cu130 line (Manager `14b5aaab`, Pixaroma, ComfyDock, RES4LYF). `comfy-kitchen==0.2.36` is the pure-Python wheel, then `docker/patch_comfy_kitchen_torch26.py` rewrites annotations that torch 2.6 rejects. That patch is not applied on the cu130 line. Trusted install (`COMFYFLEET_TRUSTED_INSTALL`) is the same patch on both lines. All three torch packages are in `pip list`.
+
+An optional llama install on this line uses the cu124 index, not cu130:
+
+```bash
+unset CXX CC CMAKE_ARGS
+/opt/venv/bin/python -m pip install llama-cpp-python --only-binary=:all: --force-reinstall \
+  --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+```
+
+That package is not baked. A failed optional install is not a base-image failure.
+
 There is no baked default workflow. Omitting the workflow fails create. `examples/workflow.example.json` is documentation only. `.dockerignore` excludes `examples/`.
 
 ### Manager git URL install
@@ -95,11 +138,11 @@ An open gate answers `POST /customnode/install/git_url` with **400** and `expect
 ## Host
 
 - Linux with Docker.
-- A working NVIDIA driver that supports CUDA 13.0. `nvidia-smi` must succeed on the host. The instance PyTorch wheels are `+cu130`. The host does not need the CUDA toolkit installed.
+- A working NVIDIA driver. `nvidia-smi` must succeed on the host. Pick **cu130** when the driver supports CUDA 13.0, or **cu124** when it supports CUDA 12.4. The host does not need the CUDA toolkit installed. The wrong line can fail at runtime.
 - The [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), so `docker create --gpus device=N` works.
 - Permission to create `/home/models`, `/home/custom_nodes_<name>`, and `/home/files/<name>/...`.
 
-The host does not need Debian or a local image rebuild. It does need a driver that can run CUDA 13.0.
+The host does not need Debian or a local image rebuild. It does need a driver that matches the instance line you pick (CUDA 13.0 or CUDA 12.4).
 
 ## Install
 
@@ -110,6 +153,8 @@ export COMFYFLEET_PASSWORD=replace-with-a-long-secret
 export COMFYFLEET_PUBLIC_HOST=192.168.1.20
 ./install.sh
 ```
+
+On a terminal, the script asks `cu130` (host driver CUDA 13.0) or `cu124` (host driver CUDA 12.4). Enter, or omit the choice when stdin is not a terminal, and the line is **cu130**. `./install.sh --cuda-tag cu124` or `COMFYFLEET_CUDA_TAG=cu124` selects the other line without a prompt.
 
 Without a checkout:
 
@@ -126,16 +171,16 @@ export COMFYFLEET_PUBLIC_HOST=192.168.1.20
 ./install.sh --compose
 ```
 
-`replace-with-a-long-secret` is a placeholder. Open `http://192.168.1.20:9100/`. The script pulls both images, tags the local names, removes an existing `comfyfleet-manager` container, and starts the manager with `--gpus all`, `-p 9100:9100`, the Docker socket, `/home`, `COMFYFLEET_PASSWORD`, `COMFYFLEET_PUBLIC_HOST`, and `COMFYFLEET_INSTANCE_IMAGE`. Re-running it updates the manager. It does not delete workflow instances.
+`replace-with-a-long-secret` is a placeholder. Open `http://192.168.1.20:9100/`. The script pulls the manager and the chosen instance line, tags the local names, removes an existing `comfyfleet-manager` container, and starts the manager with `--gpus all`, `-p 9100:9100`, the Docker socket, `/home`, `COMFYFLEET_PASSWORD`, `COMFYFLEET_PUBLIC_HOST`, `COMFYFLEET_INSTANCE_IMAGE`, and `COMFYFLEET_CUDA_TAG`. Re-running it updates the manager. It does not delete workflow instances.
 
 ### Manual run
 
 Same start without the script. Pull both digests, tag the local names, then run the manager:
 
 ```bash
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75
 docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:766e70fb3b70650269c8d2cac495f85b1ccba5390eafa14a2cf9767d309c5e2a
-docker tag ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75 comfyfleet:phase1
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75 comfyfleet:cu130
 docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:766e70fb3b70650269c8d2cac495f85b1ccba5390eafa14a2cf9767d309c5e2a comfyfleet-manager:latest
 
 docker run -d --name comfyfleet-manager \
@@ -146,16 +191,19 @@ docker run -d --name comfyfleet-manager \
   -v /home:/home \
   -e COMFYFLEET_PASSWORD=replace-with-a-long-secret \
   -e COMFYFLEET_PUBLIC_HOST=192.168.1.20 \
-  -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75 \
+  -e COMFYFLEET_CUDA_TAG=cu130 \
+  -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75 \
   ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:766e70fb3b70650269c8d2cac495f85b1ccba5390eafa14a2cf9767d309c5e2a
 ```
+
+For a CUDA 12.4 host, pull `ghcr.io/recognizeyourprivilege/comfyfleet:cu124`, tag `comfyfleet:cu124`, and set `COMFYFLEET_CUDA_TAG=cu124` with that ref as `COMFYFLEET_INSTANCE_IMAGE`.
 
 [compose.yaml](compose.yaml) is the same service. It does not pull the instance image:
 
 ```bash
 export COMFYFLEET_PASSWORD=replace-with-a-long-secret
 export COMFYFLEET_PUBLIC_HOST=192.168.1.20
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75
 docker compose up -d
 ```
 
@@ -190,7 +238,7 @@ Optional. Leave the git URL list and the zip blank to skip them. Create still re
 
 ## Use
 
-Open the manager URL and sign in with `COMFYFLEET_PASSWORD`. Upload a workflow JSON, pick GPUs, then create. New instances stay stopped. Each instance card has an icon row: **Start**, **Stop**, **Force stop** (`docker kill`), **Open** (a shell proxied by the manager), **Open Comfy**, **Flags**, and **Delete**. **Open Comfy** uses `window.location.hostname` plus the instance's published port and is enabled only while the instance is running. **Flags** (pencil) reveals that instance's Comfy arguments, including **Reserve VRAM** and **VRAM headroom** (GB, sent as `--reserve-vram` and `--vram-headroom`). The panel stays open until you close it. The same two numbers are in the create sheet under **Advanced / ComfyUI flags**, next to the VRAM choices. **Delete** asks for confirmation, then removes that container and its fleet record. Host files stay. The create sheet keeps Comfy args under **Advanced / ComfyUI flags**, collapsed until you open them.
+Open the manager URL and sign in with `COMFYFLEET_PASSWORD`. Upload a workflow JSON, pick the CUDA line (`cu130` for host driver CUDA 13.0, `cu124` for CUDA 12.4), pick GPUs, then create. The instance card shows the line. New instances stay stopped. Each instance card has an icon row: **Start**, **Stop**, **Force stop** (`docker kill`), **Open** (a shell proxied by the manager), **Open Comfy**, **Flags**, and **Delete**. **Open Comfy** uses `window.location.hostname` plus the instance's published port and is enabled only while the instance is running. **Flags** (pencil) reveals that instance's Comfy arguments, including **Reserve VRAM** and **VRAM headroom** (GB, sent as `--reserve-vram` and `--vram-headroom`). The panel stays open until you close it. The same two numbers are in the create sheet under **Advanced / ComfyUI flags**, next to the VRAM choices. **Delete** asks for confirmation, then removes that container and its fleet record. Host files stay. The create sheet keeps Comfy args under **Advanced / ComfyUI flags**, collapsed until you open them.
 
 On a multi-GPU host, create asks which GPUs to attach. A single GPU still has to be selected.
 
@@ -203,13 +251,13 @@ docker exec -it comfyfleet-manager comfyfleet start portrait
 docker exec -it comfyfleet-manager comfyfleet stop portrait
 ```
 
-`start`, `stop`, and `restart` do not rebuild the instance image. On more than one GPU, pass `--gpu 0` or `--gpus 0,1`. `--force` replaces a **stopped** instance of the same sanitized name.
+`start`, `stop`, and `restart` do not rebuild the instance image and do not change its CUDA line. On more than one GPU, pass `--gpu 0` or `--gpus 0,1`. `--cuda-tag cu130` or `--cuda-tag cu124` selects the line (`--image` is a full ref override). `--force` replaces a **stopped** instance of the same sanitized name. Use that recreate to change the CUDA line. Flags Apply keeps the line.
 
 The container name is the workflow filename stem, lowercased, with characters outside `[a-z0-9_-]` turned into `_`, truncated at 63 characters. Ports start at **8188**. Changing GPUs or launch flags is a recreate (`--force` on a stopped instance). ComfyUI runs as `python main.py --listen 0.0.0.0 --port 8188` plus the saved flags. Pasted `--listen` or `--port` in extra args are removed. On NVIDIA, `--lowvram` does nothing while dynamic VRAM is enabled, so a 12GB GPU also needs `--disable-dynamic-vram`.
 
 `COMFYFLEET_MAX_CONCURRENT` set to a positive integer refuses a start that would exceed the GPU count. The default records a warning and continues. Containers are created with `--restart no` and `--shm-size 8g`. Docker's default 64MB `/dev/shm` is too small for ComfyUI. `start` sets `--restart unless-stopped` and leaves the shared-memory size from create in place.
 
-To move an instance onto a newer digest, re-run `install.sh` with a new `COMFYFLEET_INSTANCE_DIGEST`, then stop, `create --force`, and start. Pulling the floating `:phase1` tag does not move a digest-pinned install.
+To move an instance onto a newer digest of the **same** CUDA line, re-run `install.sh` with a new `COMFYFLEET_INSTANCE_DIGEST` (and the same `COMFYFLEET_CUDA_TAG`), then stop, `create --force`, and start. A floating tag does not move a digest-pinned install. To change cu130 versus cu124, pass the other `--cuda-tag` on that recreate. `start` or `restart` alone keeps the old layers and the old line.
 
 ## API
 
@@ -221,8 +269,8 @@ Same-origin. No CORS headers. Pages call `/api/...` with `credentials: "same-ori
 | `POST` | `/api/login` | no | Body `{"password":"..."}`. Sets the session cookie |
 | `POST` | `/api/logout` | no | Clears the session |
 | `GET` | `/api/gpus` | yes | **503** when `nvidia-smi` fails |
-| `GET` | `/api/instances` | yes | `name`, `status`, `port`, `gpus` |
-| `POST` | `/api/instances` | yes | Create. Workflow required. `start` defaults to false |
+| `GET` | `/api/instances` | yes | `name`, `status`, `port`, `gpus`, `cuda_tag`, `image` |
+| `POST` | `/api/instances` | yes | Create. Workflow required. `cuda_tag` is `cu130` or `cu124`. `start` defaults to false |
 | `POST` | `/api/instances/{name}/start` | yes | Start |
 | `POST` | `/api/instances/{name}/stop` | yes | Stop |
 | `POST` | `/api/instances/{name}/delete` | yes | Remove that container. Host mounts stay |
@@ -256,24 +304,26 @@ python -m unittest discover -s tests
 Optional. Use this when you are changing the Dockerfiles. No GPU is required for the build: the instance Dockerfile does not import `comfy_kitchen` during the build. Torch wheels are large.
 
 ```bash
-docker build -t comfyfleet:phase1 .
+docker build -f Dockerfile -t comfyfleet:cu130 .
+docker build -f Dockerfile.cu124 -t comfyfleet:cu124 .
 docker build -f Dockerfile.manager -t comfyfleet-manager:latest .
 export COMFYFLEET_PASSWORD=replace-with-a-long-secret
 export COMFYFLEET_PUBLIC_HOST=192.168.1.20
-export COMFYFLEET_INSTANCE_IMAGE=comfyfleet:phase1
+export COMFYFLEET_INSTANCE_IMAGE=comfyfleet:cu130
+export COMFYFLEET_CUDA_TAG=cu130
 export COMFYFLEET_MANAGER_IMAGE=comfyfleet-manager:latest
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ```
 
-`compose.build.yaml` points the manager at the local tags. The instance image is still the separate `docker build -t comfyfleet:phase1 .` above. Recreate running instances after that rebuild: stop, `create --force`, start. `start` or `restart` alone keeps the old layers.
+`compose.build.yaml` points the manager at the local tags. The instance images are still the separate `docker build -t comfyfleet:cu130 .` and `docker build -f Dockerfile.cu124 -t comfyfleet:cu124 .` commands above. Recreate running instances after that rebuild: stop, `create --force`, start. `start` or `restart` alone keeps the old layers. Changing the CUDA line is that same recreate with the other tag, not Apply.
 
 ### Publish to GHCR
 
-[`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml) builds both Dockerfiles on `ubuntu-24.04` (`linux/amd64`) and pushes to GHCR. It runs on pushes to `main` that change image inputs, and from `workflow_dispatch`. It does not run on pull requests. The runner has no GPU. The instance job timeout is 180 minutes.
+[`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml) builds `Dockerfile` (cu130), `Dockerfile.cu124`, and `Dockerfile.manager` on `ubuntu-24.04` (`linux/amd64`) and pushes to GHCR. The instance job is a two-leg matrix. It runs on pushes to `main` that change image inputs, and from `workflow_dispatch`. It does not run on pull requests. The runner has no GPU. Each instance leg timeout is 180 minutes.
 
 | Image | Tags |
 |---|---|
-| `ghcr.io/recognizeyourprivilege/comfyfleet` | `phase1`, `latest`, `<git sha>` |
+| `ghcr.io/recognizeyourprivilege/comfyfleet` | `cu130`, `cu124`, `latest` (alias of cu130), `phase1` (alias of cu124), `<git sha>`, `<git sha>-cu130`, `<git sha>-cu124` |
 | `ghcr.io/recognizeyourprivilege/comfyfleet-manager` | `latest`, `<git sha>` |
 
 The workflow logs in with `GITHUB_TOKEN` (`packages: write`). The job summary prints both digests. Those digests are not committed automatically. When a publish should move the install pin, copy them into this file, `install.sh`, and `compose.yaml`.
@@ -291,4 +341,4 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-std
 scripts/publish-images.sh
 ```
 
-`scripts/publish-images.sh` runs `docker buildx build --platform linux/amd64 --push` for `Dockerfile` and `Dockerfile.manager`, then prints digests.
+`scripts/publish-images.sh` runs `docker buildx build --platform linux/amd64 --push` for `Dockerfile`, `Dockerfile.cu124`, and `Dockerfile.manager`, then prints digests for both instance lines and the manager.

@@ -13,7 +13,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/publish-images.sh
 
-Build Dockerfile and Dockerfile.manager for linux/amd64 and push to GHCR.
+Build Dockerfile (cu130), Dockerfile.cu124, and Dockerfile.manager for linux/amd64 and push to GHCR.
 
 Login first. The password is a PAT, not your GitHub password
 (classic write:packages, or fine-grained Packages read and write):
@@ -25,9 +25,13 @@ Environment:
   COMFYFLEET_REGISTRY     default ghcr.io
 
 Tags:
-  ghcr.io/<owner>/comfyfleet:phase1
-  ghcr.io/<owner>/comfyfleet:latest
-  ghcr.io/<owner>/comfyfleet:<git sha>
+  ghcr.io/<owner>/comfyfleet:cu130
+  ghcr.io/<owner>/comfyfleet:latest          (alias of cu130)
+  ghcr.io/<owner>/comfyfleet:<git sha>       (cu130)
+  ghcr.io/<owner>/comfyfleet:<git sha>-cu130
+  ghcr.io/<owner>/comfyfleet:cu124
+  ghcr.io/<owner>/comfyfleet:phase1          (alias of cu124)
+  ghcr.io/<owner>/comfyfleet:<git sha>-cu124
   ghcr.io/<owner>/comfyfleet-manager:latest
   ghcr.io/<owner>/comfyfleet-manager:<git sha>
 
@@ -69,7 +73,8 @@ manager="${registry}/${owner}/comfyfleet-manager"
 
 echo "comfyfleet-publish: linux/amd64, no GPU. Instance context is ${root}."
 echo "comfyfleet-publish: this can take a long time. Torch wheels and CUDA libraries need a lot of disk."
-echo "comfyfleet-publish: instance ${instance}:phase1 ${instance}:latest ${instance}:${sha}"
+echo "comfyfleet-publish: instance ${instance}:cu130 ${instance}:latest ${instance}:${sha} ${instance}:${sha}-cu130"
+echo "comfyfleet-publish: instance ${instance}:cu124 ${instance}:phase1 ${instance}:${sha}-cu124"
 echo "comfyfleet-publish: manager ${manager}:latest ${manager}:${sha}"
 
 build_push() {
@@ -89,9 +94,15 @@ build_push() {
 }
 
 build_push "${root}/Dockerfile" \
-  -t "${instance}:phase1" \
+  -t "${instance}:cu130" \
   -t "${instance}:latest" \
-  -t "${instance}:${sha}"
+  -t "${instance}:${sha}" \
+  -t "${instance}:${sha}-cu130"
+
+build_push "${root}/Dockerfile.cu124" \
+  -t "${instance}:cu124" \
+  -t "${instance}:phase1" \
+  -t "${instance}:${sha}-cu124"
 
 build_push "${root}/Dockerfile.manager" \
   -t "${manager}:latest" \
@@ -114,7 +125,8 @@ print_digest() {
 
 echo "comfyfleet-publish: digests (copy into the README; not committed by this script)"
 failed=0
-print_digest instance "${instance}" "${sha}" || failed=1
+print_digest instance-cu130 "${instance}" "cu130" || failed=1
+print_digest instance-cu124 "${instance}" "cu124" || failed=1
 print_digest manager "${manager}" "${sha}" || failed=1
 echo "comfyfleet-publish: a personal-account package is private until a human sets it to public."
 echo "comfyfleet-publish: Actions pushes with GITHUB_TOKEN link the package to the repo. This CLI push relies on the source label."

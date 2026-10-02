@@ -477,7 +477,7 @@ class CreateCustomNodeTests(unittest.TestCase):
             install_missing_from_workflow=False,
         )
         args = self.docker.containers["portrait"]["args"]
-        image_at = args.index("comfyfleet:phase1")
+        image_at = args.index("comfyfleet:cu130")
         self.assertEqual(args[image_at + 1 :], ["--mmap-torch-files", "--fast"])
 
 
