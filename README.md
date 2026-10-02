@@ -17,7 +17,7 @@ Two primary instance lines, plus the manager. [`.github/workflows/publish-images
 | `comfyfleet:cu130` | **CUDA 13.0** | Default. ComfyUI v0.37.4, CPython 3.14.7, torch `2.13.0+cu130`. |
 | `comfyfleet:cu124` | **CUDA 12.4** | ComfyUI v0.38.0, Debian bookworm CPython 3.11, torch `2.6.0+cu124`. |
 
-`install.sh` asks which line to pull. A non-interactive run (no TTY, empty answer) defaults to **cu130**. The choice sets `COMFYFLEET_INSTANCE_IMAGE` and `COMFYFLEET_CUDA_TAG` on the manager. The create form can pick the other line later; that image has to be on the host engine too. A mismatched line can fail when the instance starts. Match the host driver major.
+`install.sh` asks which line to pull: **cu130**, **cu124**, or **both**. A non-interactive run (no TTY, empty answer) defaults to **cu130** only and does not pull both. **both** pulls and tags each instance image. The manager `COMFYFLEET_CUDA_TAG` stays **cu130** unless this install already pointed `COMFYFLEET_INSTANCE_IMAGE` at the cu124 line. The create form can pick either line when that image is on the host engine. A mismatched line can fail when the instance starts. Match the host driver major.
 
 Changing the CUDA line on an instance that already exists is a **recreate** (stop, then create with replace / `--force`, then start). `start`, `restart`, and Flags Apply keep the line stored at create. They do not swap tags.
 
@@ -154,7 +154,7 @@ export COMFYFLEET_PUBLIC_HOST=192.168.1.20
 ./install.sh
 ```
 
-On a terminal, the script asks `cu130` (host driver CUDA 13.0) or `cu124` (host driver CUDA 12.4). Enter, or omit the choice when stdin is not a terminal, and the line is **cu130**. `./install.sh --cuda-tag cu124` or `COMFYFLEET_CUDA_TAG=cu124` selects the other line without a prompt.
+On a terminal, the script asks `cu130` (host driver CUDA 13.0), `cu124` (host driver CUDA 12.4), or `both` (pull each line). Enter, or omit the choice when stdin is not a terminal, and the line is **cu130** only. `./install.sh --cuda-tag cu124` or `COMFYFLEET_CUDA_TAG=cu124` selects one line without a prompt. `--cuda-tag both` or `COMFYFLEET_CUDA_TAG=both` pulls both images; the manager default stays cu130.
 
 Without a checkout:
 
