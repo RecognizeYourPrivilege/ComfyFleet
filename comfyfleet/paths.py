@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-# Subdirectories ComfyUI v0.38.0 looks for under models/.
+# Subdirectories ComfyUI v0.37.4 looks for under models/.
 MODEL_SUBDIRS = (
     "checkpoints",
     "configs",

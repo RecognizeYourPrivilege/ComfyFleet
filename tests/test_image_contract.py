@@ -8,20 +8,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ImageContractTests(unittest.TestCase):
-    def test_dockerfile_pins_cuda_124_and_torch_and_nodes(self):
+    def test_dockerfile_pins_cuda_130_and_torch_and_nodes(self):
         text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("FROM debian:bookworm-slim", text)
-        self.assertIn("cuda-libraries-12-4=12.4.1-1", text)
+        self.assertIn("FROM python:3.14.7-slim-bookworm", text)
+        self.assertIn("sys.version_info[:3] == (3, 14, 7)", text)
+        self.assertIn("cuda-libraries-13-0=13.0.3-1", text)
         self.assertIn("\n        gcc \\\n", text)
-        self.assertIn("\n        python3-dev \\\n", text)
+        self.assertNotIn("\n        python3-dev \\\n", text)
         self.assertNotIn("build-essential", text)
         self.assertNotIn("cuda-nvcc", text)
-        self.assertIn("cuda-cudart-12-4=12.4.127-1", text)
-        self.assertIn("libcudnn9-cuda-12=9.1.0.70-1", text)
-        self.assertIn("https://download.pytorch.org/whl/cu124", text)
-        self.assertIn("torch==2.6.0+cu124", text)
-        self.assertIn("torchvision==0.21.0+cu124", text)
-        self.assertIn("6b747c0428c343e1417219641db93a4fb7cb69ae", text)
+        self.assertIn("cuda-cudart-13-0=13.0.96-1", text)
+        self.assertIn("libcudnn9-cuda-13=9.20.0.48-1", text)
+        self.assertIn("https://download.pytorch.org/whl/cu130", text)
+        self.assertNotIn("whl/cu124", text)
+        self.assertIn("torch==2.13.0+cu130", text)
+        self.assertIn("torchvision==0.28.0+cu130", text)
+        self.assertIn("torchaudio==2.11.0+cu130", text)
+        self.assertIn("8ff6dc384ba5c410266b40e137799e049459d4f2", text)
+        self.assertNotIn("llama-cpp-python", text)
         self.assertIn("14b5aaab711ad1f1306d420732a923fb058c44d7", text)
         self.assertIn("9259bc49557a92e3fc14796999468c723bd1ecdd", text)
         self.assertIn("3a9ff9eba897bf2388d6c1943b01d819ba05a0c6", text)
@@ -47,24 +51,24 @@ class ImageContractTests(unittest.TestCase):
             "libgl1",
         )
 
-        apt_at = dockerfile.index("apt-get install -y --no-install-recommends \\\n        cuda-libraries-12-4")
-        apt_block = dockerfile[apt_at:dockerfile.index("ln -sfn /usr/local/cuda-12.4", apt_at)]
+        apt_at = dockerfile.index("apt-get install -y --no-install-recommends \\\n        cuda-libraries-13-0")
+        apt_block = dockerfile[apt_at:dockerfile.index("ln -sfn /usr/local/cuda-13.0", apt_at)]
         for package in apt_packages:
             self.assertIn(f"\n        {package} \\\n", apt_block)
             self.assertIn(package, pins)
             self.assertIn(package, readme)
 
-        self.assertIn("pip install --no-cache-dir numpy==2.2.6", dockerfile)
+        self.assertIn("pip install --no-cache-dir --only-binary=numpy numpy==2.3.2", dockerfile)
         self.assertIn(
-            "printf '%s\\n' 'torch==2.6.0+cu124' 'torchvision==0.21.0+cu124' 'torchaudio==2.6.0+cu124' 'numpy==2.2.6'",
+            "printf '%s\\n' 'torch==2.13.0+cu130' 'torchvision==0.28.0+cu130' 'torchaudio==2.11.0+cu130' 'numpy==2.3.2'",
             dockerfile,
         )
         self.assertIn("PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt", dockerfile)
         self.assertLess(
-            dockerfile.index("printf '%s\\n' 'torch==2.6.0+cu124'"),
+            dockerfile.index("printf '%s\\n' 'torch==2.13.0+cu130'"),
             dockerfile.index("ENV PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt"),
         )
-        self.assertIn('numpy.__version__ == "2.2.6"', dockerfile)
+        self.assertIn('numpy.__version__ == "2.3.2"', dockerfile)
         self.assertIn("https://github.com/ClownsharkBatwing/RES4LYF.git", dockerfile)
         self.assertIn(commit, dockerfile)
         self.assertIn(
@@ -80,16 +84,17 @@ class ImageContractTests(unittest.TestCase):
         self.assertIn('link_baked "RES4LYF"', entry)
         self.assertLess(entry.index('link_baked "RES4LYF"'), entry.index("exec /opt/venv/bin/python main.py"))
 
-        self.assertIn('NUMPY_PIN = "2.2.6"', script)
+        self.assertIn('NUMPY_PIN = "2.3.2"', script)
+        self.assertIn("PYTHON_PIN = (3, 14, 7)", script)
         self.assertIn('ctypes.CDLL("libxcb.so.1")', script)
         self.assertIn("libqxcb.so", script)
         self.assertIn("import cv2", script)
         compile(script, "docker/verify_image_pins.py", "exec")
 
-        self.assertIn("numpy==2.2.6", pins)
+        self.assertIn("numpy==2.3.2", pins)
         self.assertIn(commit, pins)
         self.assertIn("libxcb.so.1", pins)
-        self.assertIn("numpy==2.2.6", readme)
+        self.assertIn("numpy==2.3.2", readme)
         self.assertIn(commit, readme)
         self.assertIn("libxcb.so.1", readme)
         self.assertIn("`RES4LYF`", readme)
