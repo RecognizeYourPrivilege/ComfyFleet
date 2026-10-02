@@ -163,7 +163,7 @@ The entrypoint runs `comfyfleet ui` on `0.0.0.0:9100`. Health is `GET /api/healt
 
 `-v /var/run/docker.sock:/var/run/docker.sock` is how the manager creates sibling containers. The image user is root, which can use a host socket mode `660` group `docker`. If the socket is missing, create and start fail and the UI still comes up so you can see the error.
 
-The GPU probe is `nvidia-smi` inside the manager. The manager image has no CUDA libraries. `--gpus all` (compose: `gpus: all`) mounts the host driver into the manager. Instance containers get `--gpus device=N`. Without the toolkit, `/api/gpus` returns 503 and create fails.
+The GPU probe is `nvidia-smi` inside the manager. The manager image has no CUDA libraries. `--gpus all` (compose: `gpus: all`) mounts the host driver into the manager. Instance containers get `--gpus device=N` and `--shm-size 8g` (Compose `shm_size: '8g'`). Without the toolkit, `/api/gpus` returns 503 and create fails.
 
 ### Mounts
 
@@ -207,7 +207,7 @@ docker exec -it comfyfleet-manager comfyfleet stop portrait
 
 The container name is the workflow filename stem, lowercased, with characters outside `[a-z0-9_-]` turned into `_`, truncated at 63 characters. Ports start at **8188**. Changing GPUs or launch flags is a recreate (`--force` on a stopped instance). ComfyUI runs as `python main.py --listen 0.0.0.0 --port 8188` plus the saved flags. Pasted `--listen` or `--port` in extra args are removed. On NVIDIA, `--lowvram` does nothing while dynamic VRAM is enabled, so a 12GB GPU also needs `--disable-dynamic-vram`.
 
-`COMFYFLEET_MAX_CONCURRENT` set to a positive integer refuses a start that would exceed the GPU count. The default records a warning and continues. Containers are created with `--restart no`. `start` sets `--restart unless-stopped`.
+`COMFYFLEET_MAX_CONCURRENT` set to a positive integer refuses a start that would exceed the GPU count. The default records a warning and continues. Containers are created with `--restart no` and `--shm-size 8g`. Docker's default 64MB `/dev/shm` is too small for ComfyUI. `start` sets `--restart unless-stopped` and leaves the shared-memory size from create in place.
 
 To move an instance onto a newer digest, re-run `install.sh` with a new `COMFYFLEET_INSTANCE_DIGEST`, then stop, `create --force`, and start. Pulling the floating `:phase1` tag does not move a digest-pinned install.
 
