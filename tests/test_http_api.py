@@ -636,8 +636,8 @@ class HttpApiTests(unittest.TestCase):
             "nodes": [
                 {"type": "KSampler"},
                 {
-                    "type": "ImpactSwitch",
-                    "properties": {"aux_id": "ltdrdata/ComfyUI-Impact-Pack"},
+                    "type": "ExampleNode",
+                    "properties": {"aux_id": "example/ExamplePack"},
                 },
             ],
             "links": [],
@@ -666,7 +666,7 @@ class HttpApiTests(unittest.TestCase):
         nodes = self.layout.custom_nodes("portrait")
         self.assertTrue((nodes / "FromGit" / "marker.txt").is_file())
         self.assertTrue((nodes / "Second-Node" / "marker.txt").is_file())
-        self.assertEqual(installed, [("portrait", ["https://github.com/ltdrdata/ComfyUI-Impact-Pack"])])
+        self.assertEqual(installed, [("portrait", ["https://github.com/example/ExamplePack"])])
         self.assertEqual(len(cloned), 2)
 
         skipped = {

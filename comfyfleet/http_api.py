@@ -51,6 +51,8 @@ from comfyfleet.control import (
     terminal_argv,
     update_instance_launch,
 )
+from comfyfleet.ownership import fix_owner
+from comfyfleet.prune import prune_dangling_containers
 from comfyfleet.terminal import accept_value, bridge_exec
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
@@ -564,6 +566,12 @@ def _fleet(
     content_type: str | None,
 ) -> Response:
     del host_header  # Open Comfy does not use the request host or a pinned public host.
+    if path == "/api/host/fix-owner":
+        _require_method(method, "POST")
+        return _fix_owner(context)
+    if path == "/api/host/prune-dangling":
+        _require_method(method, "POST")
+        return _prune_dangling(context)
     if path == "/api/gpus":
         _require_method(method, "GET")
         return _gpus(context)
@@ -631,6 +639,10 @@ def _require_fleet_auth(context: ApiContext, method: str, path: str, headers: di
 
 
 def _protected_action(method: str, path: str) -> str | None:
+    if path == "/api/host/fix-owner":
+        return "fix-owner" if method == "POST" else None
+    if path == "/api/host/prune-dangling":
+        return "prune-dangling" if method == "POST" else None
     if path == "/api/gpus":
         return "list"
     if path == "/api/instances":
@@ -875,6 +887,33 @@ def _force_stop(context: ApiContext, name: str) -> Response:
     instance = force_stop_instance(name, layout=context.layout, docker=context.docker)
     status = context.docker.status(instance.name) or "missing"
     return _json(200, {"ok": True, "instance": _instance_json(instance, status)})
+
+
+def _fix_owner(context: ApiContext) -> Response:
+    result = fix_owner(context.layout)
+    return _json(
+        200,
+        {
+            "ok": True,
+            "user": result.user,
+            "group": result.group,
+            "uid": result.uid,
+            "gid": result.gid,
+            "paths": list(result.paths),
+        },
+    )
+
+
+def _prune_dangling(context: ApiContext) -> Response:
+    result = prune_dangling_containers(context.docker)
+    return _json(
+        200,
+        {
+            "ok": True,
+            "removed": list(result.removed),
+            "kept_managed": list(result.kept_managed),
+        },
+    )
 
 
 def _delete(context: ApiContext, name: str) -> Response:

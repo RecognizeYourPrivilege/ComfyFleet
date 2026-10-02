@@ -37,6 +37,30 @@ const zipName = document.querySelector("#zip-name");
 const installMissingInput = document.querySelector("#install-missing-from-workflow");
 const flagsDisclosure = document.querySelector("#comfy-flags");
 
+const hostButton = document.querySelector("#host-menu-button");
+const hostMenu = document.querySelector("#host-menu");
+
+function setHostMenu(open) {
+  hostMenu.hidden = !open;
+  hostButton.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+hostButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setHostMenu(hostMenu.hidden);
+});
+document.addEventListener("click", (event) => {
+  if (!hostMenu.hidden && !event.target.closest(".host-menu")) setHostMenu(false);
+});
+document.querySelector("#fix-owner").addEventListener("click", () => {
+  setHostMenu(false);
+  fixOwnership();
+});
+document.querySelector("#prune-dangling").addEventListener("click", () => {
+  setHostMenu(false);
+  pruneDangling();
+});
+
 document.querySelector("#refresh").addEventListener("click", () => refresh());
 document.querySelector("#logout").addEventListener("click", () => logout());
 document.querySelector("#open-create").addEventListener("click", openSheet);
@@ -54,7 +78,9 @@ sheet.addEventListener("click", (event) => {
   if (event.target.closest("[data-close]")) closeSheet();
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !sheet.hidden) closeSheet();
+  if (event.key !== "Escape") return;
+  if (!hostMenu.hidden) setHostMenu(false);
+  if (!sheet.hidden) closeSheet();
 });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh();
@@ -281,9 +307,14 @@ async function confirmDelete(name, button) {
   await mutate(name, "delete", button, "Deleting…");
 }
 
-function askConfirm(text) {
+function askConfirm(text, options) {
   const sheet = document.querySelector("#confirm");
   const message = document.querySelector("#confirm-text");
+  const title = document.querySelector("#confirm-title");
+  const yes = document.querySelector("#confirm-yes");
+  const opts = options || {};
+  title.textContent = opts.title || "Delete instance";
+  yes.textContent = opts.yes || "Delete";
   message.textContent = text;
   sheet.hidden = false;
   return new Promise((resolve) => {
@@ -892,6 +923,48 @@ function isAuthFailure(result) {
   if (!result || result.sessionExpired || result.status === 401) return true;
   const error = (result.error || "").toLowerCase();
   return error === "unauthorized" || error === "session expired";
+}
+
+async function fixOwnership() {
+  const yes = await askConfirm(
+    "Change ownership of /home/wildcards, /home/models, every /home/custom_nodes_* directory, and /home/files to comfyui:comfyui? Only those directories are walked.",
+    { title: "Fix ownership", yes: "Fix ownership" }
+  );
+  if (!yes) return;
+  state.busy = true;
+  const result = await call("/api/host/fix-owner", { method: "POST" });
+  state.busy = false;
+  if (result.sessionExpired || isAuthFailure(result)) return;
+  if (!result.ok) {
+    showBanner(result.error || "Fix ownership failed.");
+    return;
+  }
+  const paths = (result.payload && result.payload.paths) || [];
+  showToast(paths.length ? `Ownership updated on ${paths.length} paths.` : "No allowlisted directories were present.");
+  hide(banner);
+}
+
+async function pruneDangling() {
+  const yes = await askConfirm(
+    "Remove stopped containers that are not ComfyFleet instances? Containers labeled comfyfleet.managed=true are kept, including stopped instances.",
+    { title: "Prune dangling containers", yes: "Prune" }
+  );
+  if (!yes) return;
+  state.busy = true;
+  const result = await call("/api/host/prune-dangling", { method: "POST" });
+  state.busy = false;
+  if (result.sessionExpired || isAuthFailure(result)) return;
+  if (!result.ok) {
+    showBanner(result.error || "Prune failed.");
+    return;
+  }
+  const removed = (result.payload && result.payload.removed) || [];
+  showToast(
+    removed.length
+      ? `Removed ${removed.length} dangling container${removed.length === 1 ? "" : "s"}. Fleet instances were kept.`
+      : "No dangling containers to remove. Fleet instances were kept."
+  );
+  hide(banner);
 }
 
 async function logout() {

@@ -13,13 +13,14 @@ import subprocess
 from pathlib import Path
 
 from comfyfleet.errors import FleetError
-from comfyfleet.paths import CONTAINER_PORT, WORKFLOW_CONTAINER_PATH
+from comfyfleet.paths import CONTAINER_PORT, WILDCARDS_CONTAINER, WORKFLOW_CONTAINER_PATH
 
 DEFAULT_SOCKET = "/var/run/docker.sock"
 # ComfyUI instance default. Docker's 64MB /dev/shm is too small.
 # Compose spelling of the same default is shm_size: '8g'.
 INSTANCE_SHM_SIZE = "8g"
 _PUBLISHED_PORT = re.compile(r":(\d+)->")
+_CONTAINER_ID = re.compile(r"[0-9a-fA-F]{12,64}")
 # Host network namespace, not the manager's. Prints LISTEN tables only.
 _HOST_LISTENER_SCRIPT = (
     "import pathlib,sys\n"
@@ -40,6 +41,7 @@ def build_create_args(
     port: int,
     gpus: list[int],
     models: str,
+    wildcards: str,
     custom_nodes: str,
     input_dir: str,
     output_dir: str,
@@ -73,6 +75,8 @@ def build_create_args(
         f"{port}:{CONTAINER_PORT}",
         "-v",
         f"{models}:/opt/ComfyUI/models",
+        "-v",
+        f"{wildcards}:{WILDCARDS_CONTAINER}",
         "-v",
         f"{custom_nodes}:/opt/ComfyUI/custom_nodes",
         "-v",
@@ -127,6 +131,36 @@ class DockerCLI:
 
     def remove(self, name: str) -> None:
         self._check(["rm", "-f", name])
+
+    def list_container_records(self):
+        """Every container on this engine, including stopped ones.
+
+        Labels are included so prune can hard-exclude ``comfyfleet.managed=true``.
+        """
+
+        from comfyfleet.prune import parse_ps
+
+        completed = self._check(
+            [
+                "ps",
+                "-a",
+                "--no-trunc",
+                "--format",
+                "{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Labels}}",
+            ]
+        )
+        return parse_ps(completed.stdout or "")
+
+    def remove_stopped(self, container_id: str) -> None:
+        """``docker rm`` one stopped container. Not ``rm -f``.
+
+        A running container is left for Docker to reject. Fleet instances are
+        never passed here; prune filters ``comfyfleet.managed=true`` first.
+        """
+
+        if not _CONTAINER_ID.fullmatch(container_id or ""):
+            raise FleetError(f"refusing to remove unexpected container id {container_id!r}")
+        self._check(["rm", container_id])
 
     def update_restart(self, name: str, policy: str) -> None:
         self._check(["update", "--restart", policy, name])

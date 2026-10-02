@@ -200,21 +200,21 @@ class CustomNodeUnitTests(unittest.TestCase):
             workflow = {
                 "nodes": [
                     {"type": "KSampler"},
-                    {"type": "ImpactSwitch", "properties": {"aux_id": "ltdrdata/ComfyUI-Impact-Pack"}},
+                    {"type": "ExampleNode", "properties": {"aux_id": "example/ExamplePack"}},
                     {"type": "Already", "properties": {"aux_id": "someone/AlreadyThere"}},
                 ]
             }
             (dest / "AlreadyThere").mkdir()
             urls, warnings = plan_missing_installs(workflow, dest, node_map=None)
             self.assertEqual(warnings, [])
-            self.assertEqual(urls, ["https://github.com/ltdrdata/ComfyUI-Impact-Pack"])
+            self.assertEqual(urls, ["https://github.com/example/ExamplePack"])
             registry = {
-                "https://github.com/ltdrdata/ComfyUI-Impact-Pack": [["ImpactSwitch"], {"title_aux": "Impact"}],
+                "https://github.com/example/ExamplePack": [["ExampleNode"], {"title_aux": "Example"}],
                 "https://github.com/example/unrelated": [["UnrelatedNode"], {}],
             }
             urls, warnings = plan_missing_installs(workflow, dest, parse_node_map(registry))
             self.assertEqual(warnings, [])
-            self.assertEqual(urls, ["https://github.com/ltdrdata/ComfyUI-Impact-Pack"])
+            self.assertEqual(urls, ["https://github.com/example/ExamplePack"])
 
     def test_present_class_and_baked_pack_are_not_installed(self):
         with TemporaryDirectory() as tmp:
@@ -282,7 +282,7 @@ class CustomNodeUnitTests(unittest.TestCase):
                     "3": {
                         "class_type": "ImpactSwitch",
                         "inputs": {},
-                        "properties": {"aux_id": "ltdrdata/ComfyUI-Impact-Pack"},
+                        "properties": {"aux_id": "example/ExamplePack"},
                     },
                     "4": {"class_type": "KSampler", "inputs": {}},
                 },
@@ -290,7 +290,7 @@ class CustomNodeUnitTests(unittest.TestCase):
                 None,
             )
             self.assertEqual(warnings, [])
-            self.assertEqual(urls, ["https://github.com/ltdrdata/ComfyUI-Impact-Pack"])
+            self.assertEqual(urls, ["https://github.com/example/ExamplePack"])
 
     def test_trusted_install_without_exec_warns_immediately(self):
         warnings, installed = trusted_manager_install(
@@ -410,7 +410,7 @@ class CreateCustomNodeTests(unittest.TestCase):
         workflow = {
             "nodes": [
                 {"type": "KSampler"},
-                {"type": "ImpactSwitch", "properties": {"aux_id": "ltdrdata/ComfyUI-Impact-Pack"}},
+                {"type": "ExampleNode", "properties": {"aux_id": "example/ExamplePack"}},
             ]
         }
         node_map = {
@@ -422,7 +422,7 @@ class CreateCustomNodeTests(unittest.TestCase):
             node_installer=installer,
             node_map=node_map,
         )
-        self.assertEqual(seen, [("portrait", ["https://github.com/ltdrdata/ComfyUI-Impact-Pack"])])
+        self.assertEqual(seen, [("portrait", ["https://github.com/example/ExamplePack"])])
         self.assertFalse(result.started)
         self.assertEqual(self.docker.status("portrait"), "exited")
         self.assertIn(("start", "portrait"), self.docker.calls)

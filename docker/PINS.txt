@@ -174,5 +174,46 @@ llama-cpp-python
   Check: /opt/venv/bin/python -c "from llama_cpp import Llama; print('ok')"
   A failed optional install must not be treated as a base-image failure.
 
+ComfyUI-Impact-Pack
+  https://github.com/ltdrdata/ComfyUI-Impact-Pack
+  branch Main
+  commit 429d0159ad429e64d2b3916e6e7be9c22d025c3c
+  Same commit on the cu124 line.
+  requirements.txt names opencv-python-headless. That line is filtered out
+  before pip install. opencv-python from RES4LYF stays. The constraint file
+  also contains opencv-python-headless<0.
+  install.py runs at build with baked_custom_nodes/skip_download_model so it
+  does not download sam_vit_b_01ec64.pth. The sentinel is removed after the
+  run. No SAM weight file is copied into the image.
+  The entrypoint symlinks baked_custom_nodes/ComfyUI-Impact-Pack into
+  custom_nodes and seeds impact-pack.ini:
+    custom_wildcards = /home/wildcards
+  with no quotes. That seed runs on every start.
+
+ComfyUI-Impact-Subpack
+  https://github.com/ltdrdata/ComfyUI-Impact-Subpack
+  branch main
+  commit 50c7b71a6a224734cc9b21963c6d1926816a97f1
+  Same commit on the cu124 line.
+  requirements.txt names opencv-python-headless. That line is filtered out.
+  install.py runs under the same skip_download_model sentinel so the
+  ultralytics detector weights are not baked (the models mount would hide
+  them anyway). The sentinel is removed afterward.
+  The entrypoint symlinks baked_custom_nodes/ComfyUI-Impact-Subpack.
+  The legacy Impact-Pack submodule named subpack is not initialized.
+
+SAM weights
+  Not in this image. Host path /home/models/sams (container
+  /opt/ComfyUI/models/sams on the shared models mount). Create creates that
+  directory. A first-run download into that shared directory is fine.
+  Usual file: sam_vit_b_01ec64.pth from
+  https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth
+
+Wildcards
+  Host /home/wildcards is bind-mounted at /home/wildcards on every create.
+  The directory is created only when it is missing. An existing directory
+  is not wiped and is not recursively chowned on create. A directory this
+  lane creates is chowned once, not recursively, to comfyui:comfyui.
+
 No workflow JSON is baked into this image. The operator file is bind-mounted
 to /opt/comfyfleet/instance/default_workflow.json and loaded on every start.

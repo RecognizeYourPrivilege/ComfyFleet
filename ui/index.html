@@ -21,7 +21,14 @@
         <h1>ComfyFleet</h1>
       </div>
       <div class="top-actions">
-        <button id="logout" class="btn secondary" type="button">Log out</button>
+        <div class="host-menu">
+          <button id="host-menu-button" class="btn secondary" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="host-menu">Host</button>
+          <div id="host-menu" class="host-menu-panel glass" role="menu" hidden>
+            <button id="fix-owner" class="host-menu-item" type="button" role="menuitem">Fix ownership</button>
+            <button id="prune-dangling" class="host-menu-item" type="button" role="menuitem">Prune dangling containers</button>
+            <button id="logout" class="host-menu-item" type="button" role="menuitem">Log out</button>
+          </div>
+        </div>
         <button id="refresh" class="icon-btn" type="button" aria-label="Refresh fleet">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M20 12a8 8 0 1 1-2.3-5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>

@@ -27,6 +27,7 @@ from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu, select_gpus
 from comfyfleet.launch import LaunchConfig, launch_from_json, parse_launch
 from comfyfleet.naming import instance_name_from_workflow, is_instance_name
+from comfyfleet.ownership import ensure_wildcards_dir
 from comfyfleet.paths import (
     CUDA_TAGS,
     CU130_PUBLISHED_DIGEST,
@@ -97,7 +98,19 @@ def authorize(action: str) -> None:
     refuses to start when ``COMFYFLEET_PASSWORD`` is missing.
     """
 
-    if action not in {"create", "start", "stop", "force-stop", "delete", "terminal", "restart", "list", "update"}:
+    if action not in {
+        "create",
+        "start",
+        "stop",
+        "force-stop",
+        "delete",
+        "terminal",
+        "restart",
+        "list",
+        "update",
+        "fix-owner",
+        "prune-dangling",
+    }:
         raise FleetError(f"unknown control action {action!r}")
     if http_auth_state() is False:
         raise AuthError("unauthorized")
@@ -759,6 +772,7 @@ def _create_args(layout: FleetLayout, instance: Instance) -> list[str]:
         port=instance.port,
         gpus=instance.gpus,
         models=str(layout.models),
+        wildcards=str(layout.wildcards),
         custom_nodes=str(layout.custom_nodes(instance.name)),
         input_dir=str(layout.input_dir(instance.name)),
         output_dir=str(layout.output_dir(instance.name)),
@@ -770,6 +784,13 @@ def _create_args(layout: FleetLayout, instance: Instance) -> list[str]:
 
 
 def _prepare_dirs(layout: FleetLayout, name: str) -> None:
+    try:
+        ensure_wildcards_dir(layout)
+    except OSError as exc:
+        raise FleetError(
+            f"cannot create {layout.wildcards}: {exc}. "
+            "Required host path: /home/wildcards (created only when missing; an existing directory is left alone)."
+        ) from exc
     paths = [
         layout.models,
         *[layout.models / sub for sub in MODEL_SUBDIRS],
