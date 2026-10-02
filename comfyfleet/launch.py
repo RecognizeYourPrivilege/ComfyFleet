@@ -1,7 +1,7 @@
 """Per-instance ComfyUI ``main.py`` flags.
 
-The catalog matches ComfyUI v0.38.0 (``comfy/cli_args.py`` at
-``6b747c0428c343e1417219641db93a4fb7cb69ae``). ``--listen`` and ``--port``
+The catalog matches ComfyUI v0.37.4 (``comfy/cli_args.py`` at
+``8ff6dc384ba5c410266b40e137799e049459d4f2``). ``--listen`` and ``--port``
 are not in the catalog: the entrypoint always supplies
 ``--listen 0.0.0.0`` and the container port, then these arguments.
 """

@@ -17,6 +17,10 @@ error when torch, torchvision, or torchaudio is absent. This script parses
 This runs after requirements are installed. It does not need a GPU or a
 display: dlopen resolves NEEDED libraries and returns before any X server
 is contacted, and `pip list` does not import torch.
+
+It also fails the build when /opt/venv is not CPython 3.14.7. torchaudio
+is pinned to 2.11.0+cu130 because the cu130 index has no torchaudio 2.13
+wheel. The name still has to be present for Manager's pip-list check.
 """
 
 import ctypes
@@ -26,13 +30,15 @@ import subprocess
 import sys
 from collections.abc import Mapping
 
-NUMPY_PIN = "2.2.6"
+NUMPY_PIN = "2.3.2"
+PYTHON_PIN = (3, 14, 7)
 
-# cu124 pins. Manager's version map pairs torch 2.6.0 with these.
+# cu130 pins. torchvision 0.28.0 pairs with torch 2.13.0. torchaudio stays
+# at 2.11.0+cu130 until a 2.13 cu130 audio wheel exists.
 TORCH_PIP_PINS = (
-    ("torch", "2.6.0+cu124"),
-    ("torchvision", "0.21.0+cu124"),
-    ("torchaudio", "2.6.0+cu124"),
+    ("torch", "2.13.0+cu130"),
+    ("torchvision", "0.28.0+cu130"),
+    ("torchaudio", "2.11.0+cu130"),
 )
 
 # Exact logging.error text in PIPFixer.fix_broken when any of the three
@@ -45,7 +51,7 @@ def parse_manager_pip_list(text: str) -> dict[str, str]:
 
     Header rows are skipped. Names are lowercased and dashes become
     underscores. The second column is the version, including a local
-    version such as ``2.6.0+cu124``.
+    version such as ``2.13.0+cu130``.
     """
     pip_map: dict[str, str] = {}
     for line in text.split("\n"):
@@ -74,7 +80,7 @@ def stock_manager_pytorch_log(versions: Mapping[str, str]) -> str | None:
 
 
 def manager_torch_pin_errors(versions: Mapping[str, str]) -> list[str]:
-    """Errors when the snapshot would trip Manager, or a pin is not cu124."""
+    """Errors when the snapshot would trip Manager, or a pin is not cu130."""
     errors: list[str] = []
     log_line = stock_manager_pytorch_log(versions)
     if log_line is not None:
@@ -109,6 +115,10 @@ def pip_list_text(executable: str | None = None) -> str:
 
 
 def main() -> None:
+    got = sys.version_info[:3]
+    if got != PYTHON_PIN:
+        sys.exit(f"python {got} != {PYTHON_PIN}")
+
     import numpy
 
     if numpy.__version__ != NUMPY_PIN:
