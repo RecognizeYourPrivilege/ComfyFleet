@@ -16,6 +16,9 @@ from comfyfleet.errors import FleetError
 from comfyfleet.paths import CONTAINER_PORT, WORKFLOW_CONTAINER_PATH
 
 DEFAULT_SOCKET = "/var/run/docker.sock"
+# ComfyUI instance default. Docker's 64MB /dev/shm is too small.
+# Compose spelling of the same default is shm_size: '8g'.
+INSTANCE_SHM_SIZE = "8g"
 _PUBLISHED_PORT = re.compile(r":(\d+)->")
 # Host network namespace, not the manager's. Prints LISTEN tables only.
 _HOST_LISTENER_SCRIPT = (
@@ -49,6 +52,9 @@ def build_create_args(
     ``comfy_args`` are appended after the image name so they become
     entrypoint arguments. The entrypoint puts them after
     ``--listen 0.0.0.0`` and ``--port`` (the container port).
+
+    ``--shm-size`` is a create flag, before the image name. Every instance
+    gets ``INSTANCE_SHM_SIZE`` (``8g``).
     """
 
     gpu_list = ",".join(str(index) for index in gpus)
@@ -58,6 +64,8 @@ def build_create_args(
         name,
         "--restart",
         "no",
+        "--shm-size",
+        INSTANCE_SHM_SIZE,
         "--gpus",
         f"device={gpu_list}",
         "-p",

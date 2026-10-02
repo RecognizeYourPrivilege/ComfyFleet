@@ -122,7 +122,7 @@ class ManagerImageContractTests(unittest.TestCase):
         self.assertNotIn("torch==", text)
         self.assertNotIn("dockerd", text)
         instance = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("cuda-libraries-12-4=12.4.1-1", instance)
+        self.assertIn("cuda-libraries-13-0=13.0.3-1", instance)
         self.assertIn('ENTRYPOINT ["/opt/comfyfleet/entrypoint.sh"]', instance)
         self.assertNotIn("COPY comfyfleet", instance)
         self.assertNotIn("COPY pyproject.toml", instance)

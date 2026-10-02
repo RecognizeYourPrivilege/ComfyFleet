@@ -1,5 +1,7 @@
 # ComfyFleet manager. Pulls a prebuilt manager image from GHCR.
-# The instance image is not a compose service. Pull it before create:
+# The instance image is not a compose service. The manager creates each
+# instance with docker create --shm-size 8g (Compose form: shm_size: '8g').
+# Pull the instance image before create:
 #   docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c
 # install.sh does that pull, tags comfyfleet:phase1, and sets
 # COMFYFLEET_INSTANCE_IMAGE. A local rebuild is compose.build.yaml.

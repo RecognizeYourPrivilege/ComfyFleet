@@ -25,7 +25,7 @@ from comfyfleet.http_api import (
     make_server,
 )
 from comfyfleet.public_host import request_host
-from comfyfleet.paths import FleetLayout
+from comfyfleet.paths import DEFAULT_IMAGE, FleetLayout
 
 
 class FakeDocker:
@@ -254,6 +254,8 @@ class HttpApiTests(unittest.TestCase):
         self.assertIn(f"{root}/files/portrait/temp:/opt/ComfyUI/temp", args)
         self.assertIn(f"{root}/files/portrait:/opt/comfyfleet/instance", args)
         self.assertEqual(args[args.index("--restart") + 1], "no")
+        self.assertEqual(args[args.index("--shm-size") + 1], "8g")
+        self.assertLess(args.index("--shm-size"), args.index(DEFAULT_IMAGE))
         self.assertEqual(args[args.index("--gpus") + 1], "device=0")
         self.assertEqual(args[args.index("-p") + 1], "8188:8188")
         stored = (root / "files" / "portrait" / "default_workflow.json").read_bytes()

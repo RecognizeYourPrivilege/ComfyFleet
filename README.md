@@ -10,12 +10,12 @@ HTTP field names: [CONTROL_HTTP.md](CONTROL_HTTP.md).
 
 ## Images
 
-[`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml) publishes both to GHCR from `main`. Both are `linux/amd64` Debian bookworm-slim.
+[`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml) publishes both to GHCR from `main`. Both are `linux/amd64`. The manager image is Debian bookworm-slim and its Python is unchanged. The instance image build is the official CPython 3.14.7 bookworm image plus the NVIDIA CUDA 13.0 runtime.
 
 | Image | Pull | Local tag from `install.sh` | Role |
 |---|---|---|---|
 | Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:31b99db3d3fd79dcbde50f3b4d7096dc7c6b93ac1140d1f87a971b6be6813910` | `comfyfleet-manager:latest` | Control HTTP and web UI. No CUDA stack. Includes `git` and `unzip` for create-time node seeding. |
-| Instance | `ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c` | `comfyfleet:phase1` | ComfyUI. CUDA 12.4 runtime, torch `2.6.0+cu124`. |
+| Instance | `ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c` | `comfyfleet:phase1` | This digest is the previous publish (CUDA 12.4, torch `2.6.0+cu124`). This repo's Dockerfile is the next pin: ComfyUI v0.37.4, Python 3.14.7, torch `2.13.0+cu130`. |
 
 Each publish also tags the git SHA. `ghcr.io/recognizeyourprivilege/comfyfleet:latest` is the same instance build as `:phase1`.
 
@@ -28,32 +28,48 @@ export COMFYFLEET_MANAGER_DIGEST=sha256:<manager-digest>
 
 `COMFYFLEET_INSTANCE_IMAGE` and `COMFYFLEET_MANAGER_IMAGE` replace the full ref. The manager default, when `COMFYFLEET_INSTANCE_IMAGE` is unset, is `comfyfleet:phase1`. `install.sh` pulls the digest above and tags that local name so a manager started without the variable still finds the image. The instance tag has to exist in the **host** engine before create, because sibling containers are started by that engine.
 
+`install.sh`, `compose.yaml`, and the digest in the table pin an image by digest. The floating `:phase1` tag does not move a digest-pinned install. After this Dockerfile is published from `main`, copy the new instance digest into this file, `install.sh`, and `compose.yaml`. Until that follow-through, the digest above is the previous image.
+
 ### Instance image contents
 
-Debian bookworm-slim plus the NVIDIA CUDA 12.4 runtime (not the devel toolkit). The kitchen annotation rewrite and the `gcc` and `python3-dev` packages are image layers. The host does not repeat those steps.
+Official CPython **3.14.7** (`python:3.14.7-slim-bookworm`) plus the NVIDIA CUDA **13.0** runtime (not the devel toolkit). Bookworm's Python 3.11 is not used. `/opt/venv` is that 3.14.7 interpreter, and the build fails if it is not. `gcc` is an image layer for Triton. The host does not repeat those steps. The host NVIDIA driver must support **CUDA 13.0**.
 
 | Package | Pin |
 |---|---|
-| `cuda-libraries-12-4` | `12.4.1-1` |
-| `cuda-cudart-12-4` | `12.4.127-1` |
-| `libcudnn9-cuda-12` | `9.1.0.70-1` |
+| `cuda-libraries-13-0` | `13.0.3-1` |
+| `cuda-cudart-13-0` | `13.0.96-1` |
+| `libcudnn9-cuda-13` | `9.20.0.48-1` |
 
-PyTorch wheels come from `https://download.pytorch.org/whl/cu124` (not the PyPI CUDA 13 default): `torch==2.6.0+cu124`, `torchvision==0.21.0+cu124`, and `torchaudio==2.6.0+cu124`. Python is bookworm CPython 3.11. `/opt/comfyfleet/torch-constraints.txt` pins those wheels and `numpy==2.2.6`. `PIP_CONSTRAINT` points at that file, so a later `pip install` from Manager cannot replace them.
+PyTorch wheels come from `https://download.pytorch.org/whl/cu130`: `torch==2.13.0+cu130`, `torchvision==0.28.0+cu130`, and `torchaudio==2.11.0+cu130`. Python is CPython 3.14.7. `/opt/comfyfleet/torch-constraints.txt` pins those wheels and `numpy==2.3.2`. `PIP_CONSTRAINT` points at that file, so a later `pip install` from Manager cannot replace them.
 
-Pinned ComfyUI-Manager does not import torch to decide that PyTorch is installed. After `python -m pip install` (the `EXECUTE` line, including a package such as `cryptography`) it reads the `pip list` snapshot taken before that command. It logs `PyTorch is not installed` when `torch`, `torchvision`, or `torchaudio` is missing. The image installs all three cu124 wheels so that snapshot contains them. `start` and `restart` keep the existing container. After this image is published, stop the instance, `create --force` with the same workflow, then start. Host model, custom-node, and output directories stay.
+`torchaudio==2.11.0+cu130` is a presence pin on top of torch 2.13.0. PyTorch has not published torchaudio 2.13 on cu130 yet (the newest cu130 cp314 wheel is 2.11.0). TorchAudio 2.11 uses the stable ABI, so this wheel installs next to torch 2.13.0+cu130 and does not replace it. The package name has to be in `pip list` so Manager does not log that PyTorch is missing.
 
-`comfy-kitchen==0.2.36` is the pure-Python wheel (`py3-none-any`). Torch 2.6.0+cu124 `infer_schema` rejects that release's PEP 585 annotations, so the image rewrites them to `typing.List` with `docker/patch_comfy_kitchen_torch26.py` (also `/opt/comfyfleet/patch_comfy_kitchen_torch26.py`). The Triton backend in torch 2.6.0+cu124 (`triton==3.2.0`) JIT-compiles `driver.c`, which includes `Python.h`. bookworm-slim has neither `gcc` nor Python headers, so that compile raises `Failed to find C compiler. Please specify via CC environment variable.` The image installs `gcc` and `python3-dev` for that step. It does not install `g++`, `build-essential`, or `cuda-nvcc`. The image build does not `import comfy_kitchen`.
+Pinned ComfyUI-Manager does not import torch to decide that PyTorch is installed. After `python -m pip install` (the `EXECUTE` line, including a package such as `cryptography`) it reads the `pip list` snapshot taken before that command. It logs `PyTorch is not installed` when `torch`, `torchvision`, or `torchaudio` is missing. The image installs all three cu130 wheels so that snapshot contains them.
+
+`start` and `restart` alone keep the existing container layers. After the new digest is on the host engine, recreate the instance: **stop**, then **`create --force`** with the same workflow, GPUs, and launch flags, then **start**. Host model, custom-node, and output directories stay.
+
+ComfyUI v0.37.4 installs `comfy-kitchen==0.2.35`. On Python 3.14 that resolves to the cp312-abi3 manylinux wheel (the CUDA build). Torch 2.13 accepts PEP 585 `list[int]` / `list[bool]` custom-op annotations, so the torch 2.6 rewrite (`patch_comfy_kitchen_torch26.py`) is not in this image. The Triton backend in torch 2.13.0+cu130 (`triton==3.7.1`) JIT-compiles `driver.c`, which includes `Python.h`. Without `gcc` that compile raises `Failed to find C compiler. Please specify via CC environment variable.` The official 3.14.7 image ships `Python.h`. The image does not install Debian `python3-dev` (bookworm's headers are CPython 3.11), `g++`, `build-essential`, or `cuda-nvcc`. The image build does not `import comfy_kitchen`.
+
+`llama-cpp-python` is not baked into this image. An optional later install into this venv uses the cu130 binary index, not cu124:
+
+```bash
+unset CXX CC CMAKE_ARGS
+/opt/venv/bin/python -m pip install llama-cpp-python --only-binary=:all: --force-reinstall \
+  --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu130
+```
+
+Check with `/opt/venv/bin/python -c "from llama_cpp import Llama; print('ok')"`. A failure of that optional install is not a base-image failure.
 
 Baked custom nodes (also `docker/PINS.txt`):
 
 | Component | Pin |
 |---|---|
-| ComfyUI `v0.38.0` | `6b747c0428c343e1417219641db93a4fb7cb69ae` |
+| ComfyUI `v0.37.4` | `8ff6dc384ba5c410266b40e137799e049459d4f2` |
 | ComfyUI-Manager | `14b5aaab711ad1f1306d420732a923fb058c44d7` |
 | ComfyUI-Pixaroma `v1.4.181` | `9259bc49557a92e3fc14796999468c723bd1ecdd` |
 | ComfyUI-ComfyDock | `3a9ff9eba897bf2388d6c1943b01d819ba05a0c6` |
 | `RES4LYF` | `3d1d69da69ee47f7647d59e1bd0967e472fccc41` |
-| numpy | `2.2.6` |
+| numpy | `2.3.2` |
 
 `git` is in the instance image so Manager can clone. The host `custom_nodes` mount hides the image folder. On every start the entrypoint symlinks baked nodes into that mount when the name is absent: `ComfyUI-Manager`, `ComfyUI-Pixaroma`, `ComfyUI-ComfyDock`, `RES4LYF`, and `comfyfleet_default_workflow` (loader only; it is not a workflow). A real directory at one of those names is left alone.
 
@@ -79,11 +95,11 @@ An open gate answers `POST /customnode/install/git_url` with **400** and `expect
 ## Host
 
 - Linux with Docker.
-- A working NVIDIA driver. `nvidia-smi` must succeed on the host.
+- A working NVIDIA driver that supports CUDA 13.0. `nvidia-smi` must succeed on the host. The instance PyTorch wheels are `+cu130`. The host does not need the CUDA toolkit installed.
 - The [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), so `docker create --gpus device=N` works.
 - Permission to create `/home/models`, `/home/custom_nodes_<name>`, and `/home/files/<name>/...`.
 
-The host does not need Debian, a CUDA toolkit, or a local image rebuild.
+The host does not need Debian or a local image rebuild. It does need a driver that can run CUDA 13.0.
 
 ## Install
 
@@ -147,7 +163,7 @@ The entrypoint runs `comfyfleet ui` on `0.0.0.0:9100`. Health is `GET /api/healt
 
 `-v /var/run/docker.sock:/var/run/docker.sock` is how the manager creates sibling containers. The image user is root, which can use a host socket mode `660` group `docker`. If the socket is missing, create and start fail and the UI still comes up so you can see the error.
 
-The GPU probe is `nvidia-smi` inside the manager. The manager image has no CUDA libraries. `--gpus all` (compose: `gpus: all`) mounts the host driver into the manager. Instance containers get `--gpus device=N`. Without the toolkit, `/api/gpus` returns 503 and create fails.
+The GPU probe is `nvidia-smi` inside the manager. The manager image has no CUDA libraries. `--gpus all` (compose: `gpus: all`) mounts the host driver into the manager. Instance containers get `--gpus device=N` and `--shm-size 8g` (Compose `shm_size: '8g'`). Without the toolkit, `/api/gpus` returns 503 and create fails.
 
 ### Mounts
 
@@ -191,7 +207,7 @@ docker exec -it comfyfleet-manager comfyfleet stop portrait
 
 The container name is the workflow filename stem, lowercased, with characters outside `[a-z0-9_-]` turned into `_`, truncated at 63 characters. Ports start at **8188**. Changing GPUs or launch flags is a recreate (`--force` on a stopped instance). ComfyUI runs as `python main.py --listen 0.0.0.0 --port 8188` plus the saved flags. Pasted `--listen` or `--port` in extra args are removed. On NVIDIA, `--lowvram` does nothing while dynamic VRAM is enabled, so a 12GB GPU also needs `--disable-dynamic-vram`.
 
-`COMFYFLEET_MAX_CONCURRENT` set to a positive integer refuses a start that would exceed the GPU count. The default records a warning and continues. Containers are created with `--restart no`. `start` sets `--restart unless-stopped`.
+`COMFYFLEET_MAX_CONCURRENT` set to a positive integer refuses a start that would exceed the GPU count. The default records a warning and continues. Containers are created with `--restart no` and `--shm-size 8g`. Docker's default 64MB `/dev/shm` is too small for ComfyUI. `start` sets `--restart unless-stopped` and leaves the shared-memory size from create in place.
 
 To move an instance onto a newer digest, re-run `install.sh` with a new `COMFYFLEET_INSTANCE_DIGEST`, then stop, `create --force`, and start. Pulling the floating `:phase1` tag does not move a digest-pinned install.
 
@@ -249,7 +265,7 @@ export COMFYFLEET_MANAGER_IMAGE=comfyfleet-manager:latest
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
 ```
 
-`compose.build.yaml` points the manager at the local tags. The instance image is still the separate `docker build -t comfyfleet:phase1 .` above. Recreate running instances after that rebuild: stop, `create --force`, start.
+`compose.build.yaml` points the manager at the local tags. The instance image is still the separate `docker build -t comfyfleet:phase1 .` above. Recreate running instances after that rebuild: stop, `create --force`, start. `start` or `restart` alone keeps the old layers.
 
 ### Publish to GHCR
 

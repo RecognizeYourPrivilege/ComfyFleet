@@ -247,6 +247,8 @@ class LaunchCreateTests(unittest.TestCase):
         )
         args = self.docker.containers["portrait"]["args"]
         self.assertEqual(args[-1], DEFAULT_IMAGE)
+        self.assertEqual(args[args.index("--shm-size") + 1], "8g")
+        self.assertLess(args.index("--shm-size"), args.index(DEFAULT_IMAGE))
 
     def test_update_recreates_same_name_port_and_mounts(self):
         created = create_instance(
@@ -278,6 +280,7 @@ class LaunchCreateTests(unittest.TestCase):
         self.assertEqual(first[first.index("--name") + 1], second[second.index("--name") + 1])
         self.assertEqual(first[first.index("-p") + 1], second[second.index("-p") + 1])
         self.assertEqual(first[first.index("--gpus") + 1], second[second.index("--gpus") + 1])
+        self.assertEqual(second[second.index("--shm-size") + 1], "8g")
         self.assertEqual(
             second[second.index(DEFAULT_IMAGE) + 1 :],
             ["--novram", "--disable-dynamic-vram", "--cache-none"],
