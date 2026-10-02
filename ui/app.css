@@ -68,6 +68,9 @@ button { touch-action: manipulation; }
 }
 
 .top {
+  /* backdrop-filter on .glass traps the Host menu. Lift the header above the logo plate so the menu stays clickable. */
+  position: relative;
+  z-index: 30;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -115,6 +118,41 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
   min-height: var(--hit);
   padding: 0 16px;
   border-radius: 16px;
+}
+
+.host-menu {
+  position: relative;
+}
+
+.host-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 40;
+  min-width: min(280px, calc(100vw - 32px));
+  padding: 8px;
+  border-radius: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.host-menu-panel[hidden] {
+  display: none;
+}
+
+.host-menu-item {
+  min-height: var(--hit);
+  text-align: left;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  padding: 0 14px;
+  color: var(--ink);
+}
+
+.host-menu-item:hover,
+.host-menu-item:focus-visible {
+  background: var(--fill);
 }
 
 .icon-btn svg { width: 22px; height: 22px; }

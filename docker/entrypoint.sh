@@ -77,6 +77,8 @@ link_baked "ComfyUI-Manager"
 link_baked "ComfyUI-Pixaroma"
 link_baked "ComfyUI-ComfyDock"
 link_baked "RES4LYF"
+link_baked "ComfyUI-Impact-Pack"
+link_baked "ComfyUI-Impact-Subpack"
 link_baked "comfyfleet_default_workflow"
 
 models="/opt/ComfyUI/models"
@@ -108,7 +110,8 @@ mkdir -p \
   "${models}/frame_interpolation" \
   "${models}/geometry_estimation" \
   "${models}/optical_flow" \
-  "${models}/detection"
+  "${models}/detection" \
+  "${models}/sams"
 
 # Stock Manager (pin 14b5aaab) allows git-URL and pip installs only when the
 # config flag is true AND --listen is loopback. This process keeps
@@ -118,6 +121,10 @@ mkdir -p \
 # See docker/patch_manager_trusted_install.py.
 export COMFYFLEET_TRUSTED_INSTALL=1
 /opt/venv/bin/python /opt/comfyfleet/seed_manager_config.py
+# Re-applied on every start so recreate keeps custom_wildcards = /home/wildcards
+# (no quotes). The bind is /home/wildcards:/home/wildcards. SAM weights are not
+# in this image; they live on the shared models mount at models/sams.
+/opt/venv/bin/python /opt/comfyfleet/seed_impact_config.py
 
 echo "comfyfleet: loading operator workflow ${WF}"
 echo "comfyfleet: COMFYFLEET_TRUSTED_INSTALL=${COMFYFLEET_TRUSTED_INSTALL}"

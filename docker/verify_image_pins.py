@@ -73,6 +73,14 @@ PIN_PROFILES = {
 # names is missing from the pre-install pip list snapshot.
 MANAGER_PYTORCH_MISSING_LOG = "[ComfyUI-Manager] PyTorch is not installed"
 
+# RES4LYF images.py and Impact modules/impact/utils.py both import cv2.
+# The wheel must be opencv-python. opencv-python-headless replaces that module.
+CV2_SOURCES = (
+    "RES4LYF/images.py",
+    "ComfyUI-Impact-Pack/modules/impact/utils.py",
+)
+BAKED_ROOT = "/opt/comfyfleet/baked_custom_nodes"
+
 
 def parse_manager_pip_list(text: str) -> dict[str, str]:
     """Parse `pip list` the way Manager 14b5aaab get_installed_packages does.
@@ -140,6 +148,39 @@ def manager_torch_pin_errors(versions: Mapping[str, str]) -> list[str]:
     return errors
 
 
+def opencv_distribution_errors(versions: Mapping[str, str]) -> list[str]:
+    """Fail when the headless wheel is installed or opencv-python is absent.
+
+    ``pip list`` names are already normalized (dashes become underscores).
+    """
+
+    errors: list[str] = []
+    if "opencv_python_headless" in versions:
+        errors.append(
+            "opencv-python-headless is installed. RES4LYF and Impact import cv2 "
+            "from opencv-python; the headless wheel must not replace it."
+        )
+    if "opencv_python" not in versions:
+        errors.append("opencv-python is not installed")
+    return errors
+
+
+def missing_cv2_imports(baked_root: str) -> list[str]:
+    """Paths under the bake root that do not import cv2."""
+
+    missing: list[str] = []
+    for rel in CV2_SOURCES:
+        path = os.path.join(baked_root, rel)
+        if not os.path.isfile(path):
+            missing.append(f"{path} missing")
+            continue
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        if "import cv2" not in text:
+            missing.append(f"{path} does not import cv2")
+    return missing
+
+
 def pip_list_text(executable: str | None = None) -> str:
     """Run `<python> -m pip list`, the command Manager's get_pip_cmd builds."""
     python = executable or sys.executable
@@ -172,6 +213,7 @@ def main() -> None:
 
     versions = parse_manager_pip_list(pip_list_text())
     pin_errors = manager_torch_pin_errors(versions)
+    pin_errors.extend(opencv_distribution_errors(versions))
     if pin_errors:
         sys.exit("comfyfleet: " + "; ".join(pin_errors))
 
@@ -197,6 +239,9 @@ def main() -> None:
     # Also pulls libX11.so.6, libXext.so.6, libSM.so.6, libICE.so.6, and
     # libGL.so.1. A missing soname raises OSError here.
     ctypes.CDLL(plugins[0], mode=ctypes.RTLD_GLOBAL)
+    import_errors = missing_cv2_imports(BAKED_ROOT)
+    if import_errors:
+        sys.exit("comfyfleet: " + "; ".join(import_errors))
     print(
         "comfyfleet: "
         f"numpy {numpy.__version__} cv2 {cv2.__version__} libxcb ok "
