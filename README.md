@@ -14,8 +14,8 @@ HTTP field names: [CONTROL_HTTP.md](CONTROL_HTTP.md).
 
 | Image | Pull | Local tag from `install.sh` | Role |
 |---|---|---|---|
-| Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:31b99db3d3fd79dcbde50f3b4d7096dc7c6b93ac1140d1f87a971b6be6813910` | `comfyfleet-manager:latest` | Control HTTP and web UI. No CUDA stack. Includes `git` and `unzip` for create-time node seeding. |
-| Instance | `ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c` | `comfyfleet:phase1` | This digest is the previous publish (CUDA 12.4, torch `2.6.0+cu124`). This repo's Dockerfile is the next pin: ComfyUI v0.37.4, Python 3.14.7, torch `2.13.0+cu130`. |
+| Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:766e70fb3b70650269c8d2cac495f85b1ccba5390eafa14a2cf9767d309c5e2a` | `comfyfleet-manager:latest` | Control HTTP and web UI. No CUDA stack. Includes `git` and `unzip` for create-time node seeding. |
+| Instance | `ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75` | `comfyfleet:phase1` | ComfyUI v0.37.4. Python 3.14.7, CUDA 13.0 runtime, torch `2.13.0+cu130`. |
 
 Each publish also tags the git SHA. `ghcr.io/recognizeyourprivilege/comfyfleet:latest` is the same instance build as `:phase1`.
 
@@ -28,7 +28,7 @@ export COMFYFLEET_MANAGER_DIGEST=sha256:<manager-digest>
 
 `COMFYFLEET_INSTANCE_IMAGE` and `COMFYFLEET_MANAGER_IMAGE` replace the full ref. The manager default, when `COMFYFLEET_INSTANCE_IMAGE` is unset, is `comfyfleet:phase1`. `install.sh` pulls the digest above and tags that local name so a manager started without the variable still finds the image. The instance tag has to exist in the **host** engine before create, because sibling containers are started by that engine.
 
-`install.sh`, `compose.yaml`, and the digest in the table pin an image by digest. The floating `:phase1` tag does not move a digest-pinned install. After this Dockerfile is published from `main`, copy the new instance digest into this file, `install.sh`, and `compose.yaml`. Until that follow-through, the digest above is the previous image.
+`install.sh`, `compose.yaml`, and the digest in the table pin an image by digest. The floating `:phase1` tag does not move a digest-pinned install.
 
 ### Instance image contents
 
@@ -133,10 +133,10 @@ export COMFYFLEET_PUBLIC_HOST=192.168.1.20
 Same start without the script. Pull both digests, tag the local names, then run the manager:
 
 ```bash
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:31b99db3d3fd79dcbde50f3b4d7096dc7c6b93ac1140d1f87a971b6be6813910
-docker tag ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c comfyfleet:phase1
-docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:31b99db3d3fd79dcbde50f3b4d7096dc7c6b93ac1140d1f87a971b6be6813910 comfyfleet-manager:latest
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:766e70fb3b70650269c8d2cac495f85b1ccba5390eafa14a2cf9767d309c5e2a
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75 comfyfleet:phase1
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:766e70fb3b70650269c8d2cac495f85b1ccba5390eafa14a2cf9767d309c5e2a comfyfleet-manager:latest
 
 docker run -d --name comfyfleet-manager \
   --restart unless-stopped \
@@ -146,8 +146,8 @@ docker run -d --name comfyfleet-manager \
   -v /home:/home \
   -e COMFYFLEET_PASSWORD=replace-with-a-long-secret \
   -e COMFYFLEET_PUBLIC_HOST=192.168.1.20 \
-  -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c \
-  ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:31b99db3d3fd79dcbde50f3b4d7096dc7c6b93ac1140d1f87a971b6be6813910
+  -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75 \
+  ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:766e70fb3b70650269c8d2cac495f85b1ccba5390eafa14a2cf9767d309c5e2a
 ```
 
 [compose.yaml](compose.yaml) is the same service. It does not pull the instance image:
@@ -155,7 +155,7 @@ docker run -d --name comfyfleet-manager \
 ```bash
 export COMFYFLEET_PASSWORD=replace-with-a-long-secret
 export COMFYFLEET_PUBLIC_HOST=192.168.1.20
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:67b958f4062b13620ab04bfb7b368e37ce5410db5f905ebd33e881ff8adcd36c
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:phase1@sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75
 docker compose up -d
 ```
 
