@@ -86,7 +86,8 @@ RUN mkdir -p /opt/comfyfleet \
     && python -c 'import importlib.metadata as metadata; expected = (("torch", "2.13.0+cu130"), ("torchvision", "0.28.0+cu130"), ("torchaudio", "2.11.0+cu130")); mismatches = {name: metadata.version(name) for name, pin in expected if metadata.version(name) != pin}; assert not mismatches, mismatches' \
     && pip install --no-cache-dir --only-binary=numpy numpy==2.3.2 \
     && python -c 'import numpy; assert numpy.__version__ == "2.3.2", numpy.__version__' \
-    && printf '%s\n' 'torch==2.13.0+cu130' 'torchvision==0.28.0+cu130' 'torchaudio==2.11.0+cu130' 'numpy==2.3.2' > /opt/comfyfleet/torch-constraints.txt
+    && printf '%s\n' 'torch==2.13.0+cu130' 'torchvision==0.28.0+cu130' 'torchaudio==2.11.0+cu130' 'numpy==2.3.2' > /opt/comfyfleet/torch-constraints.txt \
+    && printf '%s\n' 'opencv-python-headless<0' >> /opt/comfyfleet/torch-constraints.txt
 
 # Manager installs run `python -m pip install <pkg>` and do not pass -c
 # (pinned 14b5aaab does not pass -U either). PIP_CONSTRAINT is the same file,
@@ -94,6 +95,12 @@ RUN mkdir -p /opt/comfyfleet \
 # Afterwards PIPFixer.fix_broken reads `pip list` and logs
 # "PyTorch is not installed" if any of those three torch packages is absent.
 ENV PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt
+
+# Impact requirements name opencv-python-headless. This filter drops that
+# line (and a second opencv-python pin) so RES4LYF's opencv-python wheel
+# stays. The constraint opencv-python-headless<0 makes a later install fail
+# closed instead of replacing cv2.
+COPY docker/impact_bake.py /opt/comfyfleet/impact_bake.py
 
 # Full upstream checkouts. Pixaroma's workflow-browser examples stay inside that
 # custom node; the entrypoint never uses them as the instance default.
@@ -112,6 +119,10 @@ RUN git config --global --add safe.directory '*' \
     && git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-ComfyDock checkout 3a9ff9eba897bf2388d6c1943b01d819ba05a0c6 \
     && git clone https://github.com/ClownsharkBatwing/RES4LYF.git /opt/comfyfleet/baked_custom_nodes/RES4LYF \
     && git -C /opt/comfyfleet/baked_custom_nodes/RES4LYF checkout 3d1d69da69ee47f7647d59e1bd0967e472fccc41 \
+    && git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Pack \
+    && git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Pack checkout 429d0159ad429e64d2b3916e6e7be9c22d025c3c \
+    && git clone https://github.com/ltdrdata/ComfyUI-Impact-Subpack.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Subpack \
+    && git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Subpack checkout 50c7b71a6a224734cc9b21963c6d1926816a97f1 \
     && mkdir -p /opt/comfyfleet/stock_custom_nodes \
     && cp -a /opt/ComfyUI/custom_nodes/. /opt/comfyfleet/stock_custom_nodes/ \
     && mkdir -p /opt/ComfyUI/models /opt/ComfyUI/input /opt/ComfyUI/output /opt/ComfyUI/temp /opt/comfyfleet/instance
@@ -124,7 +135,15 @@ RUN pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt \
         -r /opt/comfyfleet/baked_custom_nodes/RES4LYF/requirements.txt \
     && python -c 'import sys; assert sys.version_info[:3] == (3, 14, 7), sys.version' \
     && python -c 'import torch; assert "cu130" in torch.__version__, torch.__version__' \
-    && python -c 'import numpy; assert numpy.__version__ == "2.3.2", numpy.__version__'
+    && python -c 'import numpy; assert numpy.__version__ == "2.3.2", numpy.__version__' \
+    && python /opt/comfyfleet/impact_bake.py \
+    && SAM2_BUILD_CUDA=0 pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt -r /tmp/impact-requirements.txt \
+    && python -c 'import importlib.metadata as metadata; names={dist.metadata["Name"].lower() for dist in metadata.distributions()}; assert "opencv-python-headless" not in names, sorted(n for n in names if "opencv" in n); assert "opencv-python" in names; import cv2' \
+    && touch /opt/comfyfleet/baked_custom_nodes/skip_download_model \
+    && COMFYUI_PATH=/opt/ComfyUI COMFYUI_MODEL_PATH=/opt/ComfyUI/models python /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Pack/install.py \
+    && COMFYUI_PATH=/opt/ComfyUI COMFYUI_MODEL_PATH=/opt/ComfyUI/models python /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Subpack/install.py \
+    && rm -f /opt/comfyfleet/baked_custom_nodes/skip_download_model \
+    && python /opt/comfyfleet/impact_bake.py --check-weights
 
 COPY docker/PINS.txt /opt/comfyfleet/PINS.txt
 COPY docker/verify_image_pins.py /opt/comfyfleet/verify_image_pins.py
@@ -152,6 +171,7 @@ COPY docker/comfyfleet_default_workflow /opt/comfyfleet/baked_custom_nodes/comfy
 # after the torch and git-clone layers so a rebuild can reuse them.
 COPY docker/patch_manager_trusted_install.py /opt/comfyfleet/patch_manager_trusted_install.py
 COPY docker/seed_manager_config.py /opt/comfyfleet/seed_manager_config.py
+COPY docker/seed_impact_config.py /opt/comfyfleet/seed_impact_config.py
 COPY docker/entrypoint.sh /opt/comfyfleet/entrypoint.sh
 RUN python /opt/comfyfleet/patch_manager_trusted_install.py \
     && chmod 0755 /opt/comfyfleet/entrypoint.sh

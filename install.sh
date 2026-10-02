@@ -17,6 +17,10 @@ MANAGER_REPO="${REGISTRY}/${OWNER}/comfyfleet-manager"
 LOCAL_MANAGER_TAG="comfyfleet-manager:latest"
 # Published primary-tag digests. Aliases (:latest → cu130, :phase1 → cu124)
 # are the same images and are not pinned separately.
+# Digest pins are the last GHCR publish. Impact Pack on both instance lines
+# and the manager Host menu / fix-owner API are in this tree. Do not replace
+# these with placeholders. Bump them after the next GHCR publish of cu130,
+# cu124, and the manager image.
 CU130_PIN="sha256:2032db1691256959cd619108376a7227f68d54e0135073dd941f1dc8d41d032e"
 CU124_PIN="sha256:d2a5e55fcc348c0550e3d2e918bf36579a5a092d498070d63391cebffad71b76"
 MANAGER_PIN="sha256:a26f075d8b31c44cbd080de0557ebe29a6617c2f848b5b244f461b6ac42b2cb8"

@@ -23,6 +23,7 @@ from comfyfleet.control import (
     start_instance,
     stop_instance,
 )
+from comfyfleet.ownership import fix_owner
 from comfyfleet.docker import DockerCLI
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import detect_gpus
@@ -181,6 +182,15 @@ def build_parser() -> argparse.ArgumentParser:
     listing = sub.add_parser("list", help="Show instances, status, and host ports")
     listing.set_defaults(func=_cmd_list)
 
+    owner = sub.add_parser(
+        "fix-owner",
+        help=(
+            "chown -R comfyui:comfyui on /home/wildcards, /home/models, "
+            "/home/custom_nodes_*, and /home/files. No path argument."
+        ),
+    )
+    owner.set_defaults(func=_cmd_fix_owner)
+
     bind = argparse.ArgumentParser(add_help=False)
     bind.add_argument(
         "--host",
@@ -330,6 +340,17 @@ def _cmd_restart(args: argparse.Namespace) -> int:
 def _cmd_list(_args: argparse.Namespace) -> int:
     rows = list_instances(FleetLayout(), DockerCLI())
     print(format_list(rows))
+    return 0
+
+
+def _cmd_fix_owner(_args: argparse.Namespace) -> int:
+    result = fix_owner(FleetLayout())
+    print(f"owner: {result.user}:{result.group} ({result.uid}:{result.gid})")
+    if not result.paths:
+        print("  no allowlisted directories were present")
+        return 0
+    for path in result.paths:
+        print(f"  {path}")
     return 0
 
 

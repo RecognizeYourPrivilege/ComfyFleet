@@ -35,10 +35,16 @@ MODEL_SUBDIRS = (
     "geometry_estimation",
     "optical_flow",
     "detection",
+    # Impact Pack SAM weights. The image does not bake them. First-run
+    # download into this shared directory is the operator path.
+    "sams",
 )
 
 CONTAINER_PORT = 8188
 WORKFLOW_CONTAINER_PATH = "/opt/comfyfleet/instance/default_workflow.json"
+# Host and container use the same path. Impact's impact-pack.ini is seeded
+# with this value and no quotes.
+WILDCARDS_CONTAINER = "/home/wildcards"
 # Primary instance tags. cu130 is the default when the operator does not choose.
 CUDA_TAGS = ("cu130", "cu124")
 DEFAULT_CUDA_TAG = "cu130"
@@ -60,6 +66,10 @@ class FleetLayout:
     @property
     def models(self) -> Path:
         return self.root / "models"
+
+    @property
+    def wildcards(self) -> Path:
+        return self.root / "wildcards"
 
     @property
     def files(self) -> Path:
