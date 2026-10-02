@@ -27,11 +27,18 @@ from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu, select_gpus
 from comfyfleet.launch import LaunchConfig, launch_from_json, parse_launch
 from comfyfleet.naming import instance_name_from_workflow, is_instance_name
-from comfyfleet.paths import DEFAULT_IMAGE, MODEL_SUBDIRS, FleetLayout
+from comfyfleet.paths import (
+    CUDA_TAGS,
+    CU130_PUBLISHED_DIGEST,
+    DEFAULT_CUDA_TAG,
+    DEFAULT_IMAGE,
+    MODEL_SUBDIRS,
+    FleetLayout,
+)
 from comfyfleet.ports import choose_port, make_port_in_use
 from comfyfleet.workflow import load_operator_workflow
 
-METADATA_SCHEMA = 1
+METADATA_SCHEMA = 2
 
 
 @dataclass
@@ -44,6 +51,7 @@ class Instance:
     workflow_source: str
     created_at: str
     launch: LaunchConfig = field(default_factory=LaunchConfig)
+    cuda_tag: str = ""
 
     def to_json(self) -> dict:
         payload = asdict(self)
@@ -63,6 +71,7 @@ class Instance:
                 workflow_source=str(payload.get("workflow_source", "")),
                 created_at=str(payload.get("created_at", "")),
                 launch=launch_from_json(payload.get("launch"), path=str(path)),
+                cuda_tag=_stored_cuda_tag(payload, str(payload["image"])),
             )
         except FleetError:
             raise
@@ -105,6 +114,8 @@ def create_instance(
     interactive: bool = False,
     prompt=None,
     image: str = DEFAULT_IMAGE,
+    cuda_tag: str | None = None,
+    instance_image: str | None = None,
     start: bool = False,
     force: bool = False,
     port_in_use=None,
@@ -120,7 +131,6 @@ def create_instance(
 ) -> ActionResult:
     authorize("create")
     launch = _canonicalize_launch(launch)
-    image = resolve_instance_image(image)
     source = Path(workflow)
     workflow_data = load_operator_workflow(source)
     name = instance_name_from_workflow(source)
@@ -132,13 +142,21 @@ def create_instance(
             raise FleetError(
                 f"instance {name!r} already exists (status: {container_status or 'metadata only'}). "
                 "Refusing to overwrite. Stop it and re-run with --force to replace a stopped instance. "
-                "Changing the GPU set requires recreate (--force), not an in-place edit."
+                "Changing the GPU set or the CUDA line requires recreate (--force), not an in-place edit. "
+                "start, restart, and launch Apply keep the image this instance was created with."
             )
         if container_status == "running":
             raise FleetError(
                 f"instance {name!r} is running. Stop it before --force replace. "
                 "A running container is never overwritten."
             )
+    image, cuda_tag = resolve_create_image(
+        image,
+        cuda_tag=cuda_tag,
+        instance_image=instance_image,
+        previous=previous,
+        reuse_previous=bool(force and previous is not None),
+    )
     selected = select_gpus(
         gpus,
         gpu=gpu,
@@ -163,6 +181,7 @@ def create_instance(
         workflow_source=str(source.resolve()),
         created_at=_now(),
         launch=launch,
+        cuda_tag=cuda_tag,
     )
     _write_metadata(layout, instance)
     try:
@@ -429,7 +448,9 @@ def update_instance_launch(
 ) -> ActionResult:
     """Stop and recreate this instance so only Comfy argv changes.
 
-    Name, host port, GPU set, image, workflow file, and mount paths stay.
+    Name, host port, GPU set, image, CUDA line, workflow file, and mount
+    paths stay. Apply does not read ``COMFYFLEET_INSTANCE_IMAGE`` again.
+    Changing ``cu130`` / ``cu124`` is a create ``--force``, not this path.
     The previous container is removed before the replacement is created, so
     the name is not left duplicated.
     """
@@ -535,7 +556,7 @@ def list_instances(layout: FleetLayout, docker: DockerCLI) -> list[tuple[Instanc
 
 
 def format_list(rows: list[tuple[Instance, str]]) -> str:
-    header = ("NAME", "STATUS", "PORT", "URL", "GPUS", "WORKFLOW")
+    header = ("NAME", "STATUS", "PORT", "URL", "GPUS", "CUDA", "WORKFLOW")
     host = list_url_host()
     body = []
     for instance, status in rows:
@@ -546,6 +567,7 @@ def format_list(rows: list[tuple[Instance, str]]) -> str:
                 str(instance.port),
                 f"http://{host}:{instance.port}",
                 ",".join(str(index) for index in instance.gpus),
+                instance.cuda_tag or infer_cuda_tag(instance.image) or instance.image,
                 instance.workflow_host_path,
             )
         )
@@ -584,10 +606,141 @@ def resolve_instance_image(image: str) -> str:
     on the host engine; the manager does not build it during create.
     """
 
-    if image != DEFAULT_IMAGE:
-        return image
-    override = os.environ.get("COMFYFLEET_INSTANCE_IMAGE", "").strip()
-    return override or DEFAULT_IMAGE
+    resolved, _tag = resolve_create_image(image)
+    return resolved
+
+
+def image_tag(image: str) -> str:
+    """Tag portion of an image ref, ignoring a trailing digest."""
+
+    name = image.strip().split("@", 1)[0]
+    slash = name.rfind("/")
+    tail = name[slash + 1 :]
+    colon = tail.rfind(":")
+    if colon < 0:
+        return ""
+    return tail[colon + 1 :]
+
+
+def infer_cuda_tag(image: str) -> str:
+    """Return ``cu130`` or ``cu124`` when the ref names that line, else ``""``.
+
+    ``:latest`` is the cu130 alias. ``:phase1`` is the cu124 alias, except
+    the digest published before that alias existed, which is the cu130 line.
+    """
+
+    ref = image.strip()
+    if not ref:
+        return ""
+    if CU130_PUBLISHED_DIGEST in ref:
+        return "cu130"
+    tag = image_tag(ref)
+    if tag in CUDA_TAGS:
+        return tag
+    if tag == "latest":
+        return "cu130"
+    if tag == "phase1":
+        return "cu124"
+    return ""
+
+
+def _stored_cuda_tag(payload: dict, image: str) -> str:
+    raw = payload.get("cuda_tag", "")
+    if raw is None:
+        raw = ""
+    if not isinstance(raw, str):
+        raise FleetError("instance metadata field 'cuda_tag' must be a string")
+    tag = raw.strip()
+    if tag and tag not in CUDA_TAGS:
+        raise FleetError(f"instance metadata cuda_tag {tag!r} is not cu130 or cu124")
+    return tag or infer_cuda_tag(image)
+
+
+def _install_default_image() -> tuple[str, str]:
+    """Image and CUDA line chosen at install (or the cu130 default)."""
+
+    env_image = os.environ.get("COMFYFLEET_INSTANCE_IMAGE", "").strip()
+    env_tag = os.environ.get("COMFYFLEET_CUDA_TAG", "").strip()
+    if env_tag and env_tag not in CUDA_TAGS:
+        raise FleetError(
+            f"COMFYFLEET_CUDA_TAG must be cu130 or cu124, got {env_tag!r}. "
+            "cu130 needs a host driver that supports CUDA 13.0. "
+            "cu124 needs a host driver that supports CUDA 12.4."
+        )
+    if env_image:
+        inferred = infer_cuda_tag(env_image)
+        if env_tag and inferred and env_tag != inferred:
+            raise FleetError(
+                f"COMFYFLEET_CUDA_TAG={env_tag} does not match "
+                f"COMFYFLEET_INSTANCE_IMAGE ({inferred})."
+            )
+        return env_image, env_tag or inferred
+    return DEFAULT_IMAGE, env_tag or DEFAULT_CUDA_TAG
+
+
+def _local_image(cuda_tag: str) -> str:
+    return f"comfyfleet:{cuda_tag}"
+
+
+def resolve_create_image(
+    image: str = DEFAULT_IMAGE,
+    cuda_tag: str | None = None,
+    instance_image: str | None = None,
+    *,
+    previous: Instance | None = None,
+    reuse_previous: bool = False,
+) -> tuple[str, str]:
+    """Return ``(image ref, cuda_tag)`` for one create.
+
+    ``instance_image`` or a non-default ``image`` is a full ref. ``cuda_tag``
+    is ``cu130`` or ``cu124``. When neither is set, the install default is
+    used (``COMFYFLEET_INSTANCE_IMAGE`` / ``COMFYFLEET_CUDA_TAG``, else
+    ``comfyfleet:cu130``).
+
+    A ``--force`` recreate with no new line keeps a different CUDA line
+    instead of swapping it because the install default changed. The same
+    line still follows a new digest in ``COMFYFLEET_INSTANCE_IMAGE``.
+    The image must already exist on the host engine.
+    """
+
+    requested = (cuda_tag or "").strip()
+    if requested and requested not in CUDA_TAGS:
+        raise FleetError(
+            f"cuda_tag must be cu130 or cu124, got {requested!r}. "
+            "cu130 needs a host driver that supports CUDA 13.0. "
+            "cu124 needs a host driver that supports CUDA 12.4. "
+            "The wrong line can fail when the instance starts."
+        )
+    override = (instance_image or "").strip()
+    explicit = image.strip() if image and image != DEFAULT_IMAGE else ""
+    full = override or explicit
+    if full:
+        inferred = infer_cuda_tag(full)
+        if requested and inferred and requested != inferred:
+            raise FleetError(
+                f"cuda_tag {requested} does not match image ref {full} ({inferred}). "
+                "Pass one CUDA line, or a ref whose tag is that line."
+            )
+        return full, requested or inferred
+
+    if reuse_previous and previous is not None and not requested:
+        prev_tag = previous.cuda_tag or infer_cuda_tag(previous.image)
+        env_image, env_tag = _install_default_image()
+        if prev_tag and env_tag and prev_tag != env_tag:
+            return previous.image, prev_tag
+        if prev_tag and env_tag and prev_tag == env_tag:
+            return env_image, env_tag
+        if previous.image and previous.image not in {DEFAULT_IMAGE, "comfyfleet:phase1", env_image}:
+            return previous.image, prev_tag
+        return env_image, env_tag or prev_tag or DEFAULT_CUDA_TAG
+
+    if requested:
+        env_image, env_tag = _install_default_image()
+        if env_image and env_tag == requested:
+            return env_image, requested
+        return _local_image(requested), requested
+
+    return _install_default_image()
 
 
 def list_url_host() -> str:
@@ -612,6 +765,7 @@ def _create_args(layout: FleetLayout, instance: Instance) -> list[str]:
         temp_dir=str(layout.temp_dir(instance.name)),
         instance_dir=str(layout.instance_dir(instance.name)),
         comfy_args=instance.launch.argv(),
+        cuda_tag=instance.cuda_tag,
     )
 
 

@@ -1,4 +1,5 @@
-# ComfyFleet instance runtime.
+# ComfyFleet cu130 instance line. Primary tag: comfyfleet:cu130.
+# Peer line: Dockerfile.cu124 (comfyfleet:cu124).
 # Official CPython 3.14.7 on Debian bookworm-slim, plus the NVIDIA CUDA 13.0
 # runtime libraries (not the devel toolkit). Bookworm's python3 is 3.11 and
 # is not installed. /opt/venv is created from this interpreter. The build
@@ -39,6 +40,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     CUDA_VERSION=13.0.3 \
+    COMFYFLEET_CUDA_TAG=cu130 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility \
     PATH=/opt/venv/bin:/usr/local/cuda/bin:${PATH} \

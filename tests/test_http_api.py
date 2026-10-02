@@ -416,7 +416,9 @@ class HttpApiTests(unittest.TestCase):
             ],
         )
         args = self.docker.containers["portrait"]["args"]
-        self.assertEqual(args[args.index("comfyfleet:phase1") + 1 :], argv)
+        self.assertEqual(args[args.index(DEFAULT_IMAGE) + 1 :], argv)
+        self.assertEqual(created["instance"]["cuda_tag"], "cu130")
+        self.assertEqual(args[args.index("--shm-size") + 1], "8g")
         self.assertNotIn("--listen", args)
 
         body, content_type = _multipart(
@@ -717,6 +719,31 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(self.docker.status("packed"), "created")
         self.assertFalse((self.layout.root / "outside.txt").exists())
         self.assertFalse((self.layout.custom_nodes("packed") / "Ok" / "a.py").exists())
+
+    def test_create_cuda_tag_is_returned_and_shm_stays(self):
+        path = Path(self.tmp.name) / "Portrait.json"
+        path.write_bytes(_workflow("line"))
+        created = self._post_json(
+            {"workflow_path": str(path), "gpu": "0", "cuda_tag": "cu124"}
+        )
+        self.assertEqual(created["instance"]["cuda_tag"], "cu124")
+        self.assertEqual(created["instance"]["image"], "comfyfleet:cu124")
+        args = self.docker.containers["portrait"]["args"]
+        self.assertEqual(args[args.index("--shm-size") + 1], "8g")
+        self.assertLess(args.index("--shm-size"), args.index("comfyfleet:cu124"))
+        listed = self._body(*self._open("GET", "/api/instances"))["instances"]
+        self.assertEqual(listed[0]["cuda_tag"], "cu124")
+
+        status, raw = self._open(
+            "POST",
+            "/api/instances",
+            data=json.dumps(
+                {"workflow_path": str(path), "gpu": "0", "cuda_tag": "cu121", "force": True}
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 400, raw)
+        self.assertIn("cu130 or cu124", json.loads(raw.decode("utf-8"))["error"])
 
     def _post_json(self, payload):
         status, raw = self._open(

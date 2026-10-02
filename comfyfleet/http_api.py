@@ -84,6 +84,8 @@ _CREATE_FIELDS = (
     "extra_args",
     "comfy_extra_args",
     "install_missing_from_workflow",
+    "cuda_tag",
+    "instance_image",
 )
 _FLOAT_FIELDS = {"reserve_vram", "vram_headroom", "preview_size"}
 _AUTH_NOTE = (
@@ -258,6 +260,8 @@ class _CreateForm:
     custom_node_git_urls: list[str] = field(default_factory=list)
     custom_nodes_zip: bytes | None = None
     install_missing_from_workflow: bool = True
+    cuda_tag: str | None = None
+    instance_image: str | None = None
 
 
 def resolve_ui_dir(explicit: str | None = None) -> Path | None:
@@ -799,6 +803,8 @@ def _create(context: ApiContext, body: bytes, content_type: str | None) -> Respo
             gpus_spec=form.gpus,
             interactive=False,
             prompt=None,
+            cuda_tag=form.cuda_tag,
+            instance_image=form.instance_image,
             start=form.start,
             force=form.force,
             port_in_use=context.port_in_use,
@@ -913,6 +919,8 @@ def _instance_json(instance: Instance, status: str) -> dict:
         "status": status,
         "port": instance.port,
         "gpus": list(instance.gpus),
+        "image": instance.image,
+        "cuda_tag": instance.cuda_tag,
         "launch": {**instance.launch.to_json(), "argv": instance.launch.argv()},
     }
 
@@ -1034,6 +1042,8 @@ def _parse_create_form(body: bytes, content_type: str | None) -> _CreateForm:
             fields.get("install_missing_from_workflow"),
             default=True,
         ),
+        cuda_tag=_optional_str(fields.get("cuda_tag")),
+        instance_image=_optional_str(fields.get("instance_image")),
     )
 
 
@@ -1045,6 +1055,7 @@ def _json_fields(body: bytes) -> tuple[dict[str, str], list[str]]:
     if not isinstance(payload, dict):
         raise FleetError(
             "JSON body must be an object with workflow_path, gpu, gpus, start, force, "
+            "optional cuda_tag (cu130 or cu124) or instance_image, "
             "and optional launch fields (vram, attention, flags, reserve_vram, "
             "vram_headroom, preview_method, preview_size, extra_args, comfy_extra_args)."
         )

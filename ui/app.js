@@ -25,6 +25,7 @@ const fileInput = document.querySelector("#workflow-file");
 const fileName = document.querySelector("#file-name");
 const pathInput = document.querySelector("#workflow-path");
 const forceInput = document.querySelector("#force");
+const instanceImageInput = document.querySelector("#instance-image");
 const reserveInput = document.querySelector("#reserve-vram");
 const headroomInput = document.querySelector("#vram-headroom");
 const previewMethodInput = document.querySelector("#preview-method");
@@ -139,6 +140,11 @@ function isRunning(instance) {
   return instance.status === "running";
 }
 
+function selectedCudaTag() {
+  const picked = document.querySelector('input[name="cuda-tag"]:checked');
+  return picked ? picked.value : "cu130";
+}
+
 function openTarget(instance) {
   if (!isRunning(instance)) return null;
   const port = Number(instance.port);
@@ -165,9 +171,12 @@ function instanceCard(instance) {
   top.append(trailing);
   card.append(top);
   const gpuText = (instance.gpus || []).join(", ") || "none";
+  const cudaText = instance.cuda_tag === "cu130" || instance.cuda_tag === "cu124"
+    ? instance.cuda_tag
+    : (instance.image || "unknown");
   card.append(el("p", {
     className: "meta",
-    text: `Port ${instance.port} · GPU ${gpuText} · ${instance.status}`,
+    text: `Port ${instance.port} · GPU ${gpuText} · CUDA ${cudaText} · ${instance.status}`,
   }));
   const launchArgv = instance.launch && instance.launch.argv;
   if (Array.isArray(launchArgv) && launchArgv.length) {
@@ -394,6 +403,9 @@ async function submitCreate(start) {
   if (file) body.append("workflow", file, file.name);
   if (workflowPath) body.append("workflow_path", workflowPath);
   body.append("gpus", chosen.join(","));
+  body.append("cuda_tag", selectedCudaTag());
+  const imageOverride = instanceImageInput.value.trim();
+  if (imageOverride) body.append("instance_image", imageOverride);
   body.append("start", start ? "true" : "false");
   body.append("force", forceInput.checked ? "true" : "false");
   body.append("vram", launch.vram);
@@ -427,6 +439,7 @@ async function submitCreate(start) {
   fileName.textContent = "No file chosen";
   pathInput.value = "";
   forceInput.checked = false;
+  instanceImageInput.value = "";
   gitUrlsInput.value = "";
   zipInput.value = "";
   zipName.textContent = "No zip chosen";
@@ -605,7 +618,7 @@ function instanceFlagEditor(instance) {
   body.append(el("p", { className: "flag-sub", text: "ComfyUI flags" }));
   body.append(el("p", {
     className: "hint",
-    text: "Click a flag to add it. × removes it. Apply stops this instance if it is running and recreates the same name, port, mounts, and workflow. Only the Comfy arguments change.",
+    text: "Click a flag to add it. × removes it. Apply stops this instance if it is running and recreates the same name, port, mounts, and workflow. Only the Comfy arguments change. The CUDA line stays. Changing cu130 versus cu124 requires a recreate from the create sheet.",
   }));
   const applied = el("div", { className: "chip-row" });
   const catalog = el("div");
