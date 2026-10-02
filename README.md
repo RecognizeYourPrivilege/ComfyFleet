@@ -45,6 +45,8 @@ export COMFYFLEET_MANAGER_DIGEST=sha256:<manager-digest>
 
 `install.sh`, `compose.yaml`, and the digests in the table pin an image by digest. A floating tag does not move a digest-pinned install.
 
+Those digests are the last GHCR publish. This checkout bakes ComfyUI-Impact-Pack and ComfyUI-Impact-Subpack into both instance Dockerfiles and changes the manager (Host menu, `comfyfleet fix-owner`, and the host API). `install.sh` keeps the published digests above. The cu130, cu124, and manager digest pins are updated after the next GHCR publish of those three images. This pull request does not publish images, so the digest bump follows that publish.
+
 ### Instance image contents
 
 Official CPython **3.14.7** (`python:3.14.7-slim-bookworm`) plus the NVIDIA CUDA **13.0** runtime (not the devel toolkit). Bookworm's Python 3.11 is not used. `/opt/venv` is that 3.14.7 interpreter, and the build fails if it is not. `gcc` is an image layer for Triton. The host does not repeat those steps. The host NVIDIA driver must support **CUDA 13.0**.
@@ -84,11 +86,15 @@ Baked custom nodes (also `docker/PINS.txt`):
 | ComfyUI-Pixaroma `v1.4.181` | `9259bc49557a92e3fc14796999468c723bd1ecdd` |
 | ComfyUI-ComfyDock | `3a9ff9eba897bf2388d6c1943b01d819ba05a0c6` |
 | `RES4LYF` | `3d1d69da69ee47f7647d59e1bd0967e472fccc41` |
+| ComfyUI-Impact-Pack | `429d0159ad429e64d2b3916e6e7be9c22d025c3c` |
+| ComfyUI-Impact-Subpack | `50c7b71a6a224734cc9b21963c6d1926816a97f1` |
 | numpy | `2.3.2` |
 
-`git` is in the instance image so Manager can clone. The host `custom_nodes` mount hides the image folder. On every start the entrypoint symlinks baked nodes into that mount when the name is absent: `ComfyUI-Manager`, `ComfyUI-Pixaroma`, `ComfyUI-ComfyDock`, `RES4LYF`, and `comfyfleet_default_workflow` (loader only; it is not a workflow). A real directory at one of those names is left alone.
+`git` is in the instance image so Manager can clone. The host `custom_nodes` mount hides the image folder. On every start the entrypoint symlinks baked nodes into that mount when the name is absent: `ComfyUI-Manager`, `ComfyUI-Pixaroma`, `ComfyUI-ComfyDock`, `RES4LYF`, `ComfyUI-Impact-Pack`, `ComfyUI-Impact-Subpack`, and `comfyfleet_default_workflow` (loader only; it is not a workflow). A real directory at one of those names is left alone.
 
-`RES4LYF` imports `cv2`. Its `opencv-python` wheel needs `libxcb.so.1` on bookworm-slim. The image installs `libxcb1`, `libx11-6`, `libxext6`, `libice6`, `libsm6`, `libglib2.0-0`, and `libgl1`, and the build imports `cv2` so a missing library fails the build.
+`RES4LYF` and Impact Pack both import `cv2`. The wheel is `opencv-python`, which needs `libxcb.so.1` on bookworm-slim. The image installs `libxcb1`, `libx11-6`, `libxext6`, `libice6`, `libsm6`, `libglib2.0-0`, and `libgl1`, and the build imports `cv2` so a missing library fails the build. Impact's `requirements.txt` names `opencv-python-headless`. That wheel is not installed. `opencv-python-headless<0` is in the pip constraint file so a later install cannot replace `cv2`. The build also runs each pack's `install.py` with Impact's `skip_download_model` sentinel, then removes the sentinel. SAM weights are not copied into the image.
+
+SAM checkpoints belong in the shared host directory `/home/models/sams` (container `/opt/ComfyUI/models/sams`). Create makes that directory. A first-run download into that shared path is fine. The pack's usual file is `sam_vit_b_01ec64.pth` from `https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth`. The entrypoint seeds `custom_wildcards = /home/wildcards` with no quotes in `impact-pack.ini` on every start.
 
 ### cu124 instance image
 
@@ -106,7 +112,7 @@ Baked custom nodes (also `docker/PINS.txt`):
 | numpy | `numpy==2.2.6` |
 | ComfyUI `v0.38.0` | `6b747c0428c343e1417219641db93a4fb7cb69ae` |
 
-The same baked custom nodes as the cu130 line (Manager `14b5aaab`, Pixaroma, ComfyDock, RES4LYF). `comfy-kitchen==0.2.36` is the pure-Python wheel, then `docker/patch_comfy_kitchen_torch26.py` rewrites annotations that torch 2.6 rejects. That patch is not applied on the cu130 line. Trusted install (`COMFYFLEET_TRUSTED_INSTALL`) is the same patch on both lines. All three torch packages are in `pip list`.
+The same baked custom nodes as the cu130 line (Manager `14b5aaab`, Pixaroma, ComfyDock, RES4LYF, ComfyUI-Impact-Pack `429d0159ad429e64d2b3916e6e7be9c22d025c3c`, ComfyUI-Impact-Subpack `50c7b71a6a224734cc9b21963c6d1926816a97f1`). `opencv-python` is kept and `opencv-python-headless` is not installed, on this line as well. `comfy-kitchen==0.2.36` is the pure-Python wheel, then `docker/patch_comfy_kitchen_torch26.py` rewrites annotations that torch 2.6 rejects. That patch is not applied on the cu130 line. Trusted install (`COMFYFLEET_TRUSTED_INSTALL`) is the same patch on both lines. All three torch packages are in `pip list`.
 
 An optional llama install on this line uses the cu124 index, not cu130:
 
@@ -140,7 +146,7 @@ An open gate answers `POST /customnode/install/git_url` with **400** and `expect
 - Linux with Docker.
 - A working NVIDIA driver. `nvidia-smi` must succeed on the host. Pick **cu130** when the driver supports CUDA 13.0, or **cu124** when it supports CUDA 12.4. The host does not need the CUDA toolkit installed. The wrong line can fail at runtime.
 - The [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), so `docker create --gpus device=N` works.
-- Permission to create `/home/models`, `/home/custom_nodes_<name>`, and `/home/files/<name>/...`.
+- Permission to create `/home/models`, `/home/wildcards`, `/home/custom_nodes_<name>`, and `/home/files/<name>/...`. `/home/wildcards` is created only when it is missing. An existing directory is not wiped, and create does not recursively chown it.
 
 The host does not need Debian or a local image rebuild. It does need a driver that matches the instance line you pick (CUDA 13.0 or CUDA 12.4).
 
@@ -229,7 +235,8 @@ Create writes under `/home` in the manager, then passes those same paths to `doc
 
 | Host path | Instance container |
 |---|---|
-| `/home/models` | `/opt/ComfyUI/models` (shared, read-write) |
+| `/home/models` | `/opt/ComfyUI/models` (shared, read-write). SAM weights go in `/home/models/sams`. |
+| `/home/wildcards` | `/home/wildcards` (shared, read-write). Impact `custom_wildcards`. |
 | `/home/custom_nodes_<name>` | `/opt/ComfyUI/custom_nodes` |
 | `/home/files/<name>/input` | `/opt/ComfyUI/input` |
 | `/home/files/<name>/output` | `/opt/ComfyUI/output` |
@@ -244,7 +251,9 @@ Optional. Leave the git URL list and the zip blank to skip them. Create still re
 
 ## Use
 
-Open the manager URL and sign in with `COMFYFLEET_PASSWORD`. Upload a workflow JSON, pick the CUDA line (`cu130` for host driver CUDA 13.0, `cu124` for CUDA 12.4), pick GPUs, then create. The instance card shows the line. New instances stay stopped. Each instance card has an icon row: **Start**, **Stop**, **Force stop** (`docker kill`), **Open** (a shell proxied by the manager), **Open Comfy**, **Flags**, and **Delete**. **Open Comfy** uses `window.location.hostname` plus the instance's published port and is enabled only while the instance is running. **Flags** (pencil) reveals that instance's Comfy arguments, including **Reserve VRAM** and **VRAM headroom** (GB, sent as `--reserve-vram` and `--vram-headroom`). The panel stays open until you close it. The same two numbers are in the create sheet under **Advanced / ComfyUI flags**, next to the VRAM choices. **Delete** asks for confirmation, then removes that container and its fleet record. Host files stay. The create sheet keeps Comfy args under **Advanced / ComfyUI flags**, collapsed until you open them.
+Open the manager URL and sign in with `COMFYFLEET_PASSWORD`. The header **Host** menu (not an instance card) has **Fix ownership**, **Prune dangling containers**, and **Log out**. Fix ownership and prune ask for confirmation. Fix ownership runs `comfyfleet fix-owner` through the API: recursive `chown` to `comfyui:comfyui` on `/home/wildcards`, `/home/models`, every `/home/custom_nodes_*` directory, and `/home/files`. Prune removes stopped containers that are not fleet instances. A container labeled `comfyfleet.managed=true` is kept whether it is running or stopped. Log out calls `POST /api/logout`.
+
+Upload a workflow JSON, pick the CUDA line (`cu130` for host driver CUDA 13.0, `cu124` for CUDA 12.4), pick GPUs, then create. The instance card shows the line. New instances stay stopped. Each instance card has an icon row: **Start**, **Stop**, **Force stop** (`docker kill`), **Open** (a shell proxied by the manager), **Open Comfy**, **Flags**, and **Delete**. **Open Comfy** uses `window.location.hostname` plus the instance's published port and is enabled only while the instance is running. **Flags** (pencil) reveals that instance's Comfy arguments, including **Reserve VRAM** and **VRAM headroom** (GB, sent as `--reserve-vram` and `--vram-headroom`). The panel stays open until you close it. The same two numbers are in the create sheet under **Advanced / ComfyUI flags**, next to the VRAM choices. **Delete** asks for confirmation, then removes that container and its fleet record. Host files stay. The create sheet keeps Comfy args under **Advanced / ComfyUI flags**, collapsed until you open them.
 
 On a multi-GPU host, create asks which GPUs to attach. A single GPU still has to be selected.
 
@@ -253,6 +262,7 @@ CLI inside the manager (local process, not the browser session):
 ```bash
 docker exec -it comfyfleet-manager comfyfleet create --workflow /home/files/incoming/portrait.json --gpu 0
 docker exec -it comfyfleet-manager comfyfleet list
+docker exec -it comfyfleet-manager comfyfleet fix-owner
 docker exec -it comfyfleet-manager comfyfleet start portrait
 docker exec -it comfyfleet-manager comfyfleet stop portrait
 ```
@@ -274,6 +284,8 @@ Same-origin. No CORS headers. Pages call `/api/...` with `credentials: "same-ori
 | `GET` | `/api/health` | no | Liveness. No fleet list and no password |
 | `POST` | `/api/login` | no | Body `{"password":"..."}`. Sets the session cookie |
 | `POST` | `/api/logout` | no | Clears the session |
+| `POST` | `/api/host/fix-owner` | yes | Same helper as `comfyfleet fix-owner` |
+| `POST` | `/api/host/prune-dangling` | yes | Dangling containers only. Keeps `comfyfleet.managed=true` |
 | `GET` | `/api/gpus` | yes | **503** when `nvidia-smi` fails |
 | `GET` | `/api/instances` | yes | `name`, `status`, `port`, `gpus`, `cuda_tag`, `image` |
 | `POST` | `/api/instances` | yes | Create. Workflow required. `cuda_tag` is `cu130` or `cu124`. `start` defaults to false |

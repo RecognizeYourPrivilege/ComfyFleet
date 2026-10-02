@@ -138,5 +138,36 @@ comfy-kitchen
   the base packages are what that compile uses. The link is -lcuda against
   the host driver mounted into the container (libcuda.so).
 
+ComfyUI-Impact-Pack
+  https://github.com/ltdrdata/ComfyUI-Impact-Pack
+  branch Main
+  commit 429d0159ad429e64d2b3916e6e7be9c22d025c3c
+  Same commit as docker/PINS.txt (the cu130 line).
+  requirements.txt names opencv-python-headless. That line is filtered out
+  before pip install. opencv-python from RES4LYF stays. The constraint file
+  also contains opencv-python-headless<0.
+  install.py runs at build with baked_custom_nodes/skip_download_model so it
+  does not download SAM weights. The sentinel is removed after the run.
+  The entrypoint seeds impact-pack.ini:
+    custom_wildcards = /home/wildcards
+  with no quotes.
+
+ComfyUI-Impact-Subpack
+  https://github.com/ltdrdata/ComfyUI-Impact-Subpack
+  branch main
+  commit 50c7b71a6a224734cc9b21963c6d1926816a97f1
+  Same commit as docker/PINS.txt.
+  opencv-python-headless is filtered out. install.py runs under the same
+  skip_download_model sentinel. The sentinel is removed afterward.
+  The legacy Impact-Pack submodule named subpack is not initialized.
+
+SAM weights
+  Not in this image. Host path /home/models/sams. A first-run download into
+  that shared models directory is fine.
+
+Wildcards
+  Host /home/wildcards is bind-mounted at /home/wildcards on every create.
+  mkdir only when missing. No recursive chown on create.
+
 No workflow JSON is baked into this image. The operator file is bind-mounted
 to /opt/comfyfleet/instance/default_workflow.json and loaded on every start.

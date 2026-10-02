@@ -12,7 +12,8 @@ These host paths stay:
 |---|---|
 | `/home/custom_nodes_<name>` | That instance's custom nodes |
 | `/home/files/<name>` | Workflow, input, output, temp, fleet record (record is removed on delete) |
-| `/home/models` | Shared model library |
+| `/home/models` | Shared model library. SAM weights live in `/home/models/sams` and are not in the image. |
+| `/home/wildcards` | Shared Impact wildcards. Create makes this directory only when it is missing and does not wipe it. |
 
 `install.sh` replaces the `comfyfleet-manager` container only. Workflow instances stay on whatever image they were created with.
 
@@ -41,6 +42,14 @@ After the containers are gone:
 ```bash
 rm -rf /home/custom_nodes_<name> /home/files/<name>
 ```
+
+`/home/wildcards` is shared. Remove it only when the wildcard library should go too:
+
+```bash
+rm -rf /home/wildcards
+```
+
+`comfyfleet fix-owner` (and the Host menu **Fix ownership** action) recursively chowns `/home/wildcards`, `/home/models`, every `/home/custom_nodes_*` directory, and `/home/files` to `comfyui:comfyui`. It refuses every other path. Create's one-shot chown of a newly created `/home/wildcards` is not that recursive walk.
 
 `/home/models` is shared. Remove it only when the model library should go too:
 

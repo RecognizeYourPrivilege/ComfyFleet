@@ -107,6 +107,8 @@ Delete is `POST /api/instances/{name}/delete`. It removes that container and the
 | `GET` | `/api/health` | no | nothing in control | Liveness. No fleet data |
 | `POST` | `/api/login` | no | nothing in control | `{"ok": true}` and `Set-Cookie` |
 | `POST` | `/api/logout` | no | nothing in control | `{"ok": true}` and a cleared cookie |
+| `POST` | `/api/host/fix-owner` | yes | `comfyfleet.ownership.fix_owner` | Allowlisted chown result |
+| `POST` | `/api/host/prune-dangling` | yes | `comfyfleet.prune.prune_dangling_containers` | Removed ids and kept fleet ids |
 | `GET` | `/api/gpus` | yes | `comfyfleet.gpu.detect_gpus` | GPUs the create form can offer |
 | `GET` | `/api/instances` | yes | `list_instances` | Every known instance |
 | `POST` | `/api/instances` | yes | `create_instance` | The instance just created |
@@ -349,6 +351,48 @@ Show `error` to the operator.
 
 Unknown instances are **400** with control's "no instance named …" text, not 404.
 
+### `POST /api/host/fix-owner`
+
+Session cookie or `Authorization: Bearer`. There is no body and no path argument. The route calls the same helper as `comfyfleet fix-owner`.
+
+That helper resolves the host user and group by the names `comfyui:comfyui`, then recursively chowns only:
+
+| Path | Rule |
+|---|---|
+| `/home/wildcards` | recurse when the directory exists |
+| `/home/models` | recurse when the directory exists |
+| `/home/custom_nodes_*` | recurse each matching directory |
+| `/home/files` | recurse when the directory exists |
+
+A path outside that allowlist is refused, including `..` and a symlink whose target leaves the allowlist. An unauthenticated call is **401** and does not chown anything.
+
+```json
+{
+  "ok": true,
+  "user": "comfyui",
+  "group": "comfyui",
+  "uid": 1001,
+  "gid": 1001,
+  "paths": ["/home/wildcards", "/home/models", "/home/files"]
+}
+```
+
+`paths` lists the allowlisted directories that were present. A missing `comfyui` user is **400**.
+
+### `POST /api/host/prune-dangling`
+
+Session cookie or `Authorization: Bearer`. Removes stopped containers that are not ComfyFleet instances (`exited`, `created`, or `dead`, the set `docker container prune` removes). A container labeled `comfyfleet.managed=true` is not removed, whether it is running or stopped. Running containers that are not fleet instances are not dangling and are left alone. The implementation removes by id with `docker rm` (not `docker rm -f`) and never passes a managed id.
+
+```json
+{
+  "ok": true,
+  "removed": ["abc123abc123"],
+  "kept_managed": ["def456def456"]
+}
+```
+
+The Host menu sends this after a confirm dialog. It does not delete a fleet instance.
+
 ## Examples
 
 ```bash
@@ -388,6 +432,12 @@ curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
   -X POST http://127.0.0.1:9100/api/instances/portrait/stop
 
 curl -s -b /tmp/comfyfleet.cookies -X POST http://127.0.0.1:9100/api/logout
+
+curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
+  -X POST http://127.0.0.1:9100/api/host/fix-owner
+
+curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
+  -X POST http://127.0.0.1:9100/api/host/prune-dangling
 ```
 
 `examples/workflow.example.json` is documentation. The API will not use it unless the operator uploads it or passes it as `workflow_path`.

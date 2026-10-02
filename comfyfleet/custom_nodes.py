@@ -44,6 +44,8 @@ BAKED_NODE_DIRS = (
     "ComfyUI-Pixaroma",
     "ComfyUI-ComfyDock",
     "RES4LYF",
+    "ComfyUI-Impact-Pack",
+    "ComfyUI-Impact-Subpack",
     "comfyfleet_default_workflow",
 )
 
