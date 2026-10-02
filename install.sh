@@ -4,16 +4,21 @@
 # This does not build torch. A local image rebuild is optional (see README).
 # This script starts the manager only. Instance containers are created later
 # with docker create --shm-size 8g (Compose form: shm_size: '8g').
+# Local tags: comfyfleet:cu130 (default, host CUDA 13.0) and comfyfleet:cu124
+# (host CUDA 12.4). Changing an instance's line is a recreate, not a restart.
 set -euo pipefail
 
 REGISTRY="${COMFYFLEET_REGISTRY:-ghcr.io}"
 OWNER="$(printf '%s' "${COMFYFLEET_GHCR_OWNER:-recognizeyourprivilege}" | tr '[:upper:]' '[:lower:]')"
 INSTANCE_REPO="${REGISTRY}/${OWNER}/comfyfleet"
 MANAGER_REPO="${REGISTRY}/${OWNER}/comfyfleet-manager"
-LOCAL_INSTANCE_TAG="comfyfleet:phase1"
 LOCAL_MANAGER_TAG="comfyfleet-manager:latest"
-INSTANCE_PIN="sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75"
+# Published cu130 digest. cu124 has no digest until the first :cu124 publish.
+CU130_PIN="sha256:cfa4afde856b909a8d3878688cb22eb3c65d17fe4e20efb22a959a3ce9890e75"
+CU124_PIN=""
 MANAGER_PIN="sha256:766e70fb3b70650269c8d2cac495f85b1ccba5390eafa14a2cf9767d309c5e2a"
+CUDA_TAG=""
+CUDA_TAG_EXPLICIT=0
 NAME="${COMFYFLEET_CONTAINER_NAME:-comfyfleet-manager}"
 PORT="${COMFYFLEET_PUBLISH_PORT:-9100}"
 MODE="run"
@@ -21,25 +26,38 @@ PULL_ONLY=0
 
 usage() {
   cat <<EOF
-Usage: install.sh [--compose] [--pull-only] [--public-host HOST] [--password PASS] [--port PORT] [--name NAME]
+Usage: install.sh [--cuda-tag cu130|cu124] [--compose] [--pull-only] [--public-host HOST] [--password PASS] [--port PORT] [--name NAME]
 
 Pull prebuilt images and start the ComfyFleet manager. Does not docker-build torch.
 
   COMFYFLEET_PASSWORD       required unless --pull-only. Prefer the environment
                             (a --password argument is visible in the process list).
   COMFYFLEET_PUBLIC_HOST    LAN hostname or IP browsers use. Required unless --pull-only.
+  COMFYFLEET_CUDA_TAG       cu130 or cu124. Same as --cuda-tag. The flag wins.
 
-Default images:
-  ${INSTANCE_REPO}:phase1@${INSTANCE_PIN}
+CUDA line (pick the one that matches the host NVIDIA driver major):
+  cu130   host driver CUDA 13.0. Default when this prompt is skipped
+          (stdin is not a terminal, or the choice is left empty).
+          ${INSTANCE_REPO}:cu130@${CU130_PIN}
+  cu124   host driver CUDA 12.4.
+          ${INSTANCE_REPO}:cu124
+          No digest pin yet. The tag is published by publish-images.yml.
+          A wrong line can fail when an instance starts.
+
+Default images when the line is cu130:
+  ${INSTANCE_REPO}:cu130@${CU130_PIN}
   ${MANAGER_REPO}:latest@${MANAGER_PIN}
 
   COMFYFLEET_INSTANCE_IMAGE / COMFYFLEET_MANAGER_IMAGE replace those refs.
   COMFYFLEET_INSTANCE_DIGEST / COMFYFLEET_MANAGER_DIGEST (sha256:...) pull a different digest.
 
-The instance image is tagged ${LOCAL_INSTANCE_TAG}. The manager image is tagged
-${LOCAL_MANAGER_TAG}. The running manager gets COMFYFLEET_INSTANCE_IMAGE set to
-the pulled ref so create finds that image on the host engine.
+The instance image is tagged comfyfleet:<cuda tag>. The manager image is tagged
+${LOCAL_MANAGER_TAG}. The running manager gets COMFYFLEET_INSTANCE_IMAGE and
+COMFYFLEET_CUDA_TAG set to the chosen line so create finds that image on the
+host engine. Create can still pick the other line; that image must be pulled
+too. Changing an existing instance's line is a recreate, not a restart.
 
+  --cuda-tag    cu130 (host CUDA 13.0, default) or cu124 (host CUDA 12.4)
   --compose     docker compose up -d instead of docker run (still pulls both images)
   --pull-only   pull and tag, do not start the manager
   --port        host port published to container 9100 (docker run only; default 9100)
@@ -47,6 +65,7 @@ the pulled ref so create finds that image on the host engine.
 
 Examples:
   COMFYFLEET_PASSWORD='...' COMFYFLEET_PUBLIC_HOST=192.168.1.20 ./install.sh
+  COMFYFLEET_PASSWORD='...' COMFYFLEET_PUBLIC_HOST=192.168.1.20 ./install.sh --cuda-tag cu124
   COMFYFLEET_PASSWORD='...' COMFYFLEET_PUBLIC_HOST=192.168.1.20 ./install.sh --compose
   curl -fsSL https://raw.githubusercontent.com/RecognizeYourPrivilege/ComfyFleet/main/install.sh \\
     | COMFYFLEET_PASSWORD='...' COMFYFLEET_PUBLIC_HOST=192.168.1.20 bash
@@ -62,6 +81,12 @@ die() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --cuda-tag)
+      [[ $# -ge 2 ]] || die "--cuda-tag needs cu130 or cu124."
+      CUDA_TAG=$2
+      CUDA_TAG_EXPLICIT=1
+      shift 2
+      ;;
     --compose)
       MODE="compose"
       shift
@@ -117,12 +142,41 @@ digest_ref() {
   printf '%s@%s\n' "${repo}" "${digest}"
 }
 
+choose_cuda_tag() {
+  if [[ -z "${CUDA_TAG}" && -n "${COMFYFLEET_CUDA_TAG:-}" ]]; then
+    CUDA_TAG="${COMFYFLEET_CUDA_TAG}"
+    CUDA_TAG_EXPLICIT=1
+  fi
+  if [[ -z "${CUDA_TAG}" ]]; then
+    if [[ -t 0 ]]; then
+      echo "Instance CUDA line (match the host NVIDIA driver major):"
+      echo "  cu130  host driver CUDA 13.0 (default)"
+      echo "  cu124  host driver CUDA 12.4"
+      read -r -p "CUDA tag [cu130]: " CUDA_TAG
+    fi
+    if [[ -z "${CUDA_TAG}" ]]; then
+      CUDA_TAG="cu130"
+    fi
+  fi
+  if [[ "${CUDA_TAG}" != "cu130" && "${CUDA_TAG}" != "cu124" ]]; then
+    die "CUDA tag must be cu130 or cu124 (host driver CUDA 13.0 or CUDA 12.4), got ${CUDA_TAG}."
+  fi
+}
+
+choose_cuda_tag
+
 if [[ -n "${COMFYFLEET_INSTANCE_DIGEST:-}" ]]; then
   INSTANCE_REF="$(digest_ref "${INSTANCE_REPO}" "${COMFYFLEET_INSTANCE_DIGEST}")"
-elif [[ -n "${COMFYFLEET_INSTANCE_IMAGE:-}" ]]; then
+elif [[ -n "${COMFYFLEET_INSTANCE_IMAGE:-}" && "${CUDA_TAG_EXPLICIT}" -eq 0 ]]; then
   INSTANCE_REF="${COMFYFLEET_INSTANCE_IMAGE}"
+elif [[ -n "${COMFYFLEET_INSTANCE_IMAGE:-}" && "${COMFYFLEET_INSTANCE_IMAGE}" == *":${CUDA_TAG}"* ]]; then
+  INSTANCE_REF="${COMFYFLEET_INSTANCE_IMAGE}"
+elif [[ "${CUDA_TAG}" == "cu130" ]]; then
+  INSTANCE_REF="${INSTANCE_REPO}:cu130@${CU130_PIN}"
+elif [[ -n "${CU124_PIN}" ]]; then
+  INSTANCE_REF="${INSTANCE_REPO}:cu124@${CU124_PIN}"
 else
-  INSTANCE_REF="${INSTANCE_REPO}:phase1@${INSTANCE_PIN}"
+  INSTANCE_REF="${INSTANCE_REPO}:cu124"
 fi
 
 if [[ -n "${COMFYFLEET_MANAGER_DIGEST:-}" ]]; then
@@ -134,6 +188,8 @@ else
 fi
 
 # Create reads this name on the host engine. install always sets it.
+LOCAL_INSTANCE_TAG="comfyfleet:${CUDA_TAG}"
+export COMFYFLEET_CUDA_TAG="${CUDA_TAG}"
 export COMFYFLEET_INSTANCE_IMAGE="${INSTANCE_REF}"
 export COMFYFLEET_MANAGER_IMAGE="${MANAGER_REF}"
 
@@ -171,8 +227,13 @@ pull_and_tag() {
   pull_ref "${MANAGER_REF}"
   tag_ref "${INSTANCE_REF}" "${LOCAL_INSTANCE_TAG}"
   tag_ref "${MANAGER_REF}" "${LOCAL_MANAGER_TAG}"
+  if [[ "${CUDA_TAG}" == "cu130" ]]; then
+    tag_ref "${INSTANCE_REF}" "comfyfleet:latest"
+  else
+    tag_ref "${INSTANCE_REF}" "comfyfleet:phase1"
+  fi
   if [[ -n "${COMFYFLEET_INSTANCE_DIGEST:-}" ]]; then
-    tag_ref "${INSTANCE_REF}" "${INSTANCE_REPO}:phase1"
+    tag_ref "${INSTANCE_REF}" "${INSTANCE_REPO}:${CUDA_TAG}"
   fi
   if [[ -n "${COMFYFLEET_MANAGER_DIGEST:-}" ]]; then
     tag_ref "${MANAGER_REF}" "${MANAGER_REPO}:latest"
@@ -255,6 +316,7 @@ services:
       COMFYFLEET_PASSWORD: ${COMFYFLEET_PASSWORD:?Set COMFYFLEET_PASSWORD}
       COMFYFLEET_PUBLIC_HOST: ${COMFYFLEET_PUBLIC_HOST:?Set COMFYFLEET_PUBLIC_HOST}
       COMFYFLEET_INSTANCE_IMAGE: ${COMFYFLEET_INSTANCE_IMAGE:?}
+      COMFYFLEET_CUDA_TAG: ${COMFYFLEET_CUDA_TAG:?}
       COMFYFLEET_BIND_HOST: 0.0.0.0
       COMFYFLEET_BIND_PORT: "9100"
     gpus: all
@@ -276,6 +338,7 @@ start_run() {
     -e "COMFYFLEET_PASSWORD=${COMFYFLEET_PASSWORD}" \
     -e "COMFYFLEET_PUBLIC_HOST=${COMFYFLEET_PUBLIC_HOST}" \
     -e "COMFYFLEET_INSTANCE_IMAGE=${COMFYFLEET_INSTANCE_IMAGE}" \
+    -e "COMFYFLEET_CUDA_TAG=${COMFYFLEET_CUDA_TAG}" \
     -e COMFYFLEET_BIND_HOST=0.0.0.0 \
     -e COMFYFLEET_BIND_PORT=9100 \
     "${MANAGER_REF}"

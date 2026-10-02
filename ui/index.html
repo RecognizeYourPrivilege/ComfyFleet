@@ -80,6 +80,22 @@
       <input id="workflow-path" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="/home/you/flows/portrait.json">
       <p class="hint">Use a path only if this server runs as a user who can read it. Leave it empty when you upload a file.</p>
 
+      <p class="field-label" id="cuda-label">CUDA line</p>
+      <div class="cuda-row" role="radiogroup" aria-labelledby="cuda-label">
+        <label class="choice">
+          <input type="radio" name="cuda-tag" value="cu130" checked>
+          <span>cu130<small>Host driver CUDA 13.0. Default.</small></span>
+        </label>
+        <label class="choice">
+          <input type="radio" name="cuda-tag" value="cu124">
+          <span>cu124<small>Host driver CUDA 12.4.</small></span>
+        </label>
+      </div>
+      <p class="hint">Match the host NVIDIA driver major. The wrong line can fail when the instance starts. Changing the line on an existing instance requires a recreate (replace the stopped instance). Flags Apply and restart keep the line it was created with. Every create uses <code>--shm-size 8g</code>.</p>
+      <label class="field-label" for="instance-image">Image override <span class="optional-tag">optional</span></label>
+      <input id="instance-image" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="comfyfleet:cu130">
+      <p class="hint">Leave empty to use the selected line. A value here is the image ref passed to docker create. Pull that image on the host first.</p>
+
       <p class="field-label" id="gpu-label">GPUs</p>
       <div id="gpus" class="gpu-row" role="group" aria-labelledby="gpu-label"></div>
       <p id="gpu-note" class="hint"></p>

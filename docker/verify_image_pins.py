@@ -18,9 +18,14 @@ This runs after requirements are installed. It does not need a GPU or a
 display: dlopen resolves NEEDED libraries and returns before any X server
 is contacted, and `pip list` does not import torch.
 
-It also fails the build when /opt/venv is not CPython 3.14.7. torchaudio
-is pinned to 2.11.0+cu130 because the cu130 index has no torchaudio 2.13
-wheel. The name still has to be present for Manager's pip-list check.
+It also fails the build when /opt/venv is not the Python pin for this line.
+The cu130 line is CPython 3.14.7. torchaudio is pinned to 2.11.0+cu130
+because the cu130 index has no torchaudio 2.13 wheel. The cu124 line is
+Debian bookworm CPython 3.11 with torchaudio 2.6.0+cu124. On both lines the
+trio names still have to be present for Manager's pip-list check.
+
+``COMFYFLEET_CUDA_TAG`` selects the line (``cu130`` or ``cu124``). Unset
+means cu130, which is what the module-level pin constants describe.
 """
 
 import ctypes
@@ -40,6 +45,29 @@ TORCH_PIP_PINS = (
     ("torchvision", "0.28.0+cu130"),
     ("torchaudio", "2.11.0+cu130"),
 )
+
+# cu124 is the peer line (Dockerfile.cu124). main() swaps the globals above
+# when COMFYFLEET_CUDA_TAG=cu124. Import-time constants stay on cu130.
+PIN_PROFILES = {
+    "cu130": {
+        "numpy": "2.3.2",
+        "python": (3, 14, 7),
+        "torch": (
+            ("torch", "2.13.0+cu130"),
+            ("torchvision", "0.28.0+cu130"),
+            ("torchaudio", "2.11.0+cu130"),
+        ),
+    },
+    "cu124": {
+        "numpy": "2.2.6",
+        "python": (3, 11),
+        "torch": (
+            ("torch", "2.6.0+cu124"),
+            ("torchvision", "0.21.0+cu124"),
+            ("torchaudio", "2.6.0+cu124"),
+        ),
+    },
+}
 
 # Exact logging.error text in PIPFixer.fix_broken when any of the three
 # names is missing from the pre-install pip list snapshot.
@@ -79,8 +107,25 @@ def stock_manager_pytorch_log(versions: Mapping[str, str]) -> str | None:
     return None
 
 
+def configure_pins(cuda_tag: str | None = None) -> str:
+    """Point the module pin globals at one CUDA line. Returns the tag."""
+
+    global NUMPY_PIN, PYTHON_PIN, TORCH_PIP_PINS
+    tag = cuda_tag
+    if tag is None:
+        tag = os.environ.get("COMFYFLEET_CUDA_TAG", "cu130")
+    tag = (tag or "cu130").strip()
+    profile = PIN_PROFILES.get(tag)
+    if profile is None:
+        sys.exit(f"comfyfleet: CUDA line {tag!r} is not cu130 or cu124")
+    NUMPY_PIN = profile["numpy"]
+    PYTHON_PIN = profile["python"]
+    TORCH_PIP_PINS = profile["torch"]
+    return tag
+
+
 def manager_torch_pin_errors(versions: Mapping[str, str]) -> list[str]:
-    """Errors when the snapshot would trip Manager, or a pin is not cu130."""
+    """Errors when the snapshot would trip Manager, or a pin does not match."""
     errors: list[str] = []
     log_line = stock_manager_pytorch_log(versions)
     if log_line is not None:
@@ -115,7 +160,8 @@ def pip_list_text(executable: str | None = None) -> str:
 
 
 def main() -> None:
-    got = sys.version_info[:3]
+    configure_pins()
+    got = sys.version_info[: len(PYTHON_PIN)]
     if got != PYTHON_PIN:
         sys.exit(f"python {got} != {PYTHON_PIN}")
 
