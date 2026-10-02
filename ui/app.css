@@ -224,6 +224,12 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
   border-radius: 14px;
   background: var(--fill);
   font-size: 17px;
+  /* Masked text, not type=password, so Chrome does not float Save password over the Host menu. */
+  -webkit-text-security: disc;
+}
+
+.login-field input.is-revealed {
+  -webkit-text-security: none;
 }
 
 .login-field input::placeholder { color: var(--faint); }

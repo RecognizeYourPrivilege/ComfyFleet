@@ -15,7 +15,7 @@
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
   <main class="login-wrap">
-    <form id="login-form" class="login-card glass" method="post" action="/api/login">
+    <form id="login-form" class="login-card glass" method="post" action="/api/login" autocomplete="off">
       <figure class="login-hero">
         <img src="/comfyfleet-logo-ships.jpg" alt="ComfyFleet — ships on the water">
       </figure>
@@ -28,7 +28,7 @@
 
         <label class="field-label" for="password">Password</label>
         <div class="login-field">
-          <input id="password" name="password" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="Manager password" required>
+          <input id="password" name="password" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" placeholder="Manager password" required>
           <button id="toggle-password" class="login-reveal" type="button" aria-pressed="false" aria-controls="password" aria-label="Show password">Show</button>
         </div>
 
@@ -68,8 +68,8 @@
     }
 
     toggle.addEventListener("click", () => {
-      const reveal = passwordInput.type === "password";
-      passwordInput.type = reveal ? "text" : "password";
+      const reveal = !passwordInput.classList.contains("is-revealed");
+      passwordInput.classList.toggle("is-revealed", reveal);
       toggle.textContent = reveal ? "Hide" : "Show";
       toggle.setAttribute("aria-pressed", reveal ? "true" : "false");
       toggle.setAttribute("aria-label", reveal ? "Hide password" : "Show password");
@@ -100,6 +100,7 @@
       let payload = null;
       try { payload = await response.json(); } catch (err) { payload = null; }
       if (response.ok && payload && payload.ok) {
+        passwordInput.value = "";
         window.location.assign("/");
         return;
       }
