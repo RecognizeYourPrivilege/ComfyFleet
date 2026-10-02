@@ -98,6 +98,37 @@ class LlamaBakeContractTests(unittest.TestCase):
         self.assertNotIn("--force-reinstall", text)
         self.assertNotIn("CMAKE_ARGS=", text)
 
+    def test_cu130_installs_libc6_dev_so_the_stub_link_finds_crti(self):
+        """gcc --no-install-recommends on bookworm-slim has no crti.o.
+
+        Publish run 37069963220 installed the cu130 wheel, then the llama
+        import smoke failed: ld cannot find crti.o. libc6-dev provides
+        that file. python3-dev stays out (those headers are CPython 3.11).
+        The cu124 line already published green. python3-dev there installs
+        zlib1g-dev, which depends on libc6-dev, so that Dockerfile is
+        unchanged. python3-dev itself only recommends libc6-dev.
+        """
+
+        text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        apt_at = text.index(
+            "apt-get install -y --no-install-recommends \\\n        cuda-libraries-13-0"
+        )
+        apt_block = text[apt_at:text.index("ln -sfn /usr/local/cuda-13.0", apt_at)]
+        self.assertIn("\n        gcc \\\n", apt_block)
+        self.assertIn("\n        libc6-dev \\\n", apt_block)
+        self.assertNotIn("\n        python3-dev \\\n", apt_block)
+        self.assertNotIn("build-essential", text)
+        self.assertIn("crti.o", text)
+        pins = (ROOT / "docker" / "PINS.txt").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("libc6-dev", pins)
+        self.assertIn("crti.o", pins)
+        self.assertIn("libc6-dev", readme)
+        self.assertIn("crti.o", readme)
+        cu124 = (ROOT / "Dockerfile.cu124").read_text(encoding="utf-8")
+        self.assertIn("\n        python3-dev \\\n", cu124)
+        self.assertNotIn("libc6-dev", cu124)
+
     def test_cu124_dockerfile_bakes_the_cu124_wheel(self):
         text = (ROOT / "Dockerfile.cu124").read_text(encoding="utf-8")
         self.assertIn("unset CXX CC CMAKE_ARGS", text)
