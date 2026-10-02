@@ -258,7 +258,7 @@ class TrustedInstallPatchTests(unittest.TestCase):
         self.assertIn("COMFYFLEET_TRUSTED_INSTALL", dockerfile)
         self.assertIn("0.0.0.0", dockerfile)
         self.assertLess(
-            dockerfile.index("torch==2.6.0+cu124"),
+            dockerfile.index("torch==2.13.0+cu130"),
             dockerfile.index("patch_manager_trusted_install.py"),
         )
         self.assertIn('comfy_args=(--listen 0.0.0.0 --port 8188)', entrypoint)
