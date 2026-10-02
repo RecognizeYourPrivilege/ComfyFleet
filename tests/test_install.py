@@ -164,13 +164,13 @@ class InstallScriptTests(unittest.TestCase):
             self.assertIn(f"pull {INSTANCE}", pulled)
             self.assertIn(f"tag {INSTANCE} comfyfleet:cu130", pulled)
             self.assertIn(f"tag {INSTANCE} comfyfleet:latest", pulled)
-            self.assertIn("pull ghcr.io/recognizeyourprivilege/comfyfleet:cu124\n", pulled)
+            self.assertIn(f"pull {INSTANCE_CU124}\n", pulled)
             self.assertIn(
-                "tag ghcr.io/recognizeyourprivilege/comfyfleet:cu124 comfyfleet:cu124\n",
+                f"tag {INSTANCE_CU124} comfyfleet:cu124\n",
                 pulled,
             )
             self.assertIn(
-                "tag ghcr.io/recognizeyourprivilege/comfyfleet:cu124 comfyfleet:phase1\n",
+                f"tag {INSTANCE_CU124} comfyfleet:phase1\n",
                 pulled,
             )
             self.assertIn("manager default cu130", both.stdout)
@@ -193,7 +193,7 @@ class InstallScriptTests(unittest.TestCase):
             self.assertIn("COMFYFLEET_CUDA_TAG=cu130", started_log)
             self.assertNotIn("COMFYFLEET_CUDA_TAG=both", started_log)
             self.assertIn(f"pull {INSTANCE}", started_log)
-            self.assertIn("pull ghcr.io/recognizeyourprivilege/comfyfleet:cu124\n", started_log)
+            self.assertIn(f"pull {INSTANCE_CU124}\n", started_log)
             self.assertNotIn("not-printed", started.stdout + started.stderr)
 
             log.write_text("", encoding="utf-8")
@@ -206,7 +206,9 @@ class InstallScriptTests(unittest.TestCase):
             )
             self.assertEqual(from_env.returncode, 0, from_env.stderr)
             self.assertIn("manager default cu130", from_env.stdout)
-            self.assertIn(":cu124", log.read_text(encoding="utf-8"))
+            from_env_log = log.read_text(encoding="utf-8")
+            self.assertIn(f"pull {INSTANCE_CU124}\n", from_env_log)
+            self.assertIn(f"tag {INSTANCE_CU124} comfyfleet:cu124\n", from_env_log)
 
             log.write_text("", encoding="utf-8")
             kept = subprocess.run(
@@ -311,10 +313,10 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(both_code, 0, both_text)
         self.assertIn("manager default cu130", both_text)
         self.assertIn(f"pull {INSTANCE}", both_log)
-        self.assertIn("pull ghcr.io/recognizeyourprivilege/comfyfleet:cu124\n", both_log)
+        self.assertIn(f"pull {INSTANCE_CU124}\n", both_log)
         self.assertIn(f"tag {INSTANCE} comfyfleet:latest", both_log)
         self.assertIn(
-            "tag ghcr.io/recognizeyourprivilege/comfyfleet:cu124 comfyfleet:phase1\n",
+            f"tag {INSTANCE_CU124} comfyfleet:phase1\n",
             both_log,
         )
 
