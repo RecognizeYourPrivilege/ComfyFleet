@@ -21,10 +21,17 @@ Base
     replaced: stop, then create --force (same workflow, GPUs, and launch
     flags), then start. start or restart alone does not replace layers.
   Host C compiler for Triton JIT (not the CUDA devel toolkit):
-    gcc from Debian bookworm.
+    gcc and libc6-dev from Debian bookworm.
     Python.h is the header shipped with CPython 3.14.7
     (/usr/local/include/python3.14). Debian python3-dev is not installed;
-    that package is CPython 3.11.
+    that package is CPython 3.11. The cu124 line installs python3-dev,
+    which installs zlib1g-dev, and zlib1g-dev depends on libc6-dev, so
+    that line already has crti.o. python3-dev itself only recommends
+    libc6-dev.
+    libc6-dev is explicit here because apt uses --no-install-recommends
+    and therefore does not install gcc's recommended libc-dev. Without
+    crti.o, gcc -shared fails with "cannot find crti.o". The llama import
+    smoke and Triton's cuda_utils link both need that file.
     torch 2.13.0+cu130 depends on triton==3.7.1. import comfy_kitchen loads
     backends.triton, and quantization.py's @triton.autotune initializes the
     NVIDIA driver. That compiles driver.c (cuda_utils) and needs gcc plus
@@ -186,8 +193,9 @@ llama-cpp-python
   driver and is not in the image. docker build has no driver. The image
   verify compiles a temporary gcc stub for the undefined driver symbols,
   runs `from llama_cpp import Llama`, and deletes the stub in that same
-  step. The stub is not on the runtime linker path. The import does not
-  load a model and does not need a GPU.
+  step. That gcc -shared link needs crti.o from libc6-dev (see the host
+  C compiler note above). The stub is not on the runtime linker path.
+  The import does not load a model and does not need a GPU.
   docker/verify_image_pins.py checks the pip list version and the import.
 
 ComfyUI-Impact-Pack

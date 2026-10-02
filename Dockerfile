@@ -10,6 +10,13 @@
 # package loads the Triton backend. Python.h comes from this image
 # (/usr/local/include/python3.14). Debian python3-dev is CPython 3.11 and
 # is not installed. g++ and the CUDA compiler are not installed.
+# libc6-dev sits next to gcc. apt uses --no-install-recommends, which
+# skips gcc's recommended libc-dev, so bookworm-slim has no crti.o.
+# The llama import smoke links a temporary libcuda.so.1 with gcc -shared
+# and fails with "cannot find crti.o" without that package. Triton's
+# cuda_utils link needs the same objects. The cu124 line already has
+# them: python3-dev installs zlib1g-dev, and zlib1g-dev depends on
+# libc6-dev. python3-dev itself only recommends libc6-dev.
 #
 # No workflow JSON is copied into this image. The operator file is bind-mounted
 # at /opt/comfyfleet/instance/default_workflow.json and the entrypoint refuses
@@ -62,6 +69,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcudnn9-cuda-13=9.20.0.48-1 \
         bash \
         gcc \
+        libc6-dev \
         git \
         libxcb1 \
         libx11-6 \
@@ -158,6 +166,7 @@ RUN pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt \
 # libggml-cuda needs libcuda.so.1 (the host driver, not in this image).
 # docker/llama_import_smoke.py imports Llama with a temporary gcc stub and
 # deletes that stub in the same step. It is not on the runtime linker path.
+# That gcc -shared link needs crti.o from libc6-dev, installed above.
 COPY docker/llama_import_smoke.py /opt/comfyfleet/llama_import_smoke.py
 RUN unset CXX CC CMAKE_ARGS \
     && /opt/venv/bin/python -m pip install --no-cache-dir 'llama-cpp-python==0.3.36' \
