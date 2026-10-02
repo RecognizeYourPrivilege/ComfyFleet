@@ -16,6 +16,9 @@
 # libxcb1, libx11-6, libxext6, libice6, libsm6, libglib2.0-0, and libgl1
 # cover that plugin plus the libGL and libglib imports cv2 itself performs.
 # numpy==2.2.6 is written into torch-constraints.txt next to the torch pins.
+# torchaudio==2.6.0+cu124 is installed with torch and torchvision. Pinned
+# ComfyUI-Manager logs "PyTorch is not installed" when pip list is missing
+# any of the three; it does not import torch. See docker/PINS.txt.
 
 FROM debian:bookworm-slim
 
@@ -67,16 +70,20 @@ RUN mkdir -p /opt/comfyfleet \
     && pip install --no-cache-dir \
         torch==2.6.0+cu124 \
         torchvision==0.21.0+cu124 \
+        torchaudio==2.6.0+cu124 \
         --index-url https://download.pytorch.org/whl/cu124 \
         --extra-index-url https://pypi.org/simple \
     && python -c 'import torch; v = torch.__version__; assert v.startswith("2.6.0") and "cu124" in v, v' \
+    && python -c 'import importlib.metadata as metadata; expected = (("torch", "2.6.0+cu124"), ("torchvision", "0.21.0+cu124"), ("torchaudio", "2.6.0+cu124")); mismatches = {name: metadata.version(name) for name, pin in expected if metadata.version(name) != pin}; assert not mismatches, mismatches' \
     && pip install --no-cache-dir numpy==2.2.6 \
     && python -c 'import numpy; assert numpy.__version__ == "2.2.6", numpy.__version__' \
-    && printf '%s\n' 'torch==2.6.0+cu124' 'torchvision==0.21.0+cu124' 'numpy==2.2.6' > /opt/comfyfleet/torch-constraints.txt
+    && printf '%s\n' 'torch==2.6.0+cu124' 'torchvision==0.21.0+cu124' 'torchaudio==2.6.0+cu124' 'numpy==2.2.6' > /opt/comfyfleet/torch-constraints.txt
 
-# Manager custom-node installs run `python -m pip install -U` and do not pass
-# -c themselves. PIP_CONSTRAINT is the same file, so those installs cannot
-# replace torch, torchvision, or numpy.
+# Manager installs run `python -m pip install <pkg>` and do not pass -c
+# (pinned 14b5aaab does not pass -U either). PIP_CONSTRAINT is the same file,
+# so those installs cannot replace torch, torchvision, torchaudio, or numpy.
+# Afterwards PIPFixer.fix_broken reads `pip list` and logs
+# "PyTorch is not installed" if any of those three torch packages is absent.
 ENV PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt
 
 # Pure-Python comfy-kitchen (eager backend). The manylinux wheel targets CUDA 13.
