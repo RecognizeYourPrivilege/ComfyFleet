@@ -93,6 +93,11 @@ ENV PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt
 # line (and a second opencv-python pin) so RES4LYF's opencv-python wheel
 # stays. The constraint opencv-python-headless<0 makes a later install fail
 # closed instead of replacing cv2.
+# sam2's pyproject build-system requires torch>=2.5.1. Bookworm's pip applies
+# PIP_CONSTRAINT inside that isolated build, then cannot find
+# torch==2.6.0+cu124 on PyPI (the wheel is only on the cu124 index).
+# --no-build-isolation builds sam2 against the torch already in this venv.
+# SAM2_BUILD_CUDA=0 skips the CUDA extension. The torch pin is unchanged.
 COPY docker/impact_bake.py /opt/comfyfleet/impact_bake.py
 
 # Pure-Python comfy-kitchen (eager backend). The manylinux wheel targets CUDA 13.
@@ -133,7 +138,7 @@ RUN pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt \
     && python -c 'import torch; assert "cu124" in torch.__version__, torch.__version__' \
     && python -c 'import numpy; assert numpy.__version__ == "2.2.6", numpy.__version__' \
     && python /opt/comfyfleet/impact_bake.py \
-    && SAM2_BUILD_CUDA=0 pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt -r /tmp/impact-requirements.txt \
+    && SAM2_BUILD_CUDA=0 pip install --no-cache-dir --no-build-isolation -c /opt/comfyfleet/torch-constraints.txt -r /tmp/impact-requirements.txt \
     && python -c 'import importlib.metadata as metadata; names={dist.metadata["Name"].lower() for dist in metadata.distributions()}; assert "opencv-python-headless" not in names, sorted(n for n in names if "opencv" in n); assert "opencv-python" in names; import cv2' \
     && touch /opt/comfyfleet/baked_custom_nodes/skip_download_model \
     && COMFYUI_PATH=/opt/ComfyUI COMFYUI_MODEL_PATH=/opt/ComfyUI/models python /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Pack/install.py \

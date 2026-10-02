@@ -116,6 +116,10 @@ class ImpactBakeContractTests(unittest.TestCase):
             self.assertNotIn("submodule update", dockerfile)
             self.assertIn("SAM2_BUILD_CUDA=0", dockerfile)
             self.assertIn("impact_bake.py", dockerfile)
+            self.assertIn(
+                "SAM2_BUILD_CUDA=0 pip install --no-cache-dir",
+                dockerfile,
+            )
             self.assertIn("--check-weights", dockerfile)
             self.assertIn("seed_impact_config.py", dockerfile)
             touch = dockerfile.index("touch /opt/comfyfleet/baked_custom_nodes/skip_download_model")
@@ -142,6 +146,22 @@ class ImpactBakeContractTests(unittest.TestCase):
         self.assertIn("import cv2", script)
         self.assertIn("RES4LYF/images.py", script)
         self.assertIn("ComfyUI-Impact-Pack/modules/impact/utils.py", script)
+
+    def test_cu124_sam2_build_uses_the_installed_torch_pin(self):
+        cu124 = (ROOT / "Dockerfile.cu124").read_text(encoding="utf-8")
+        cu130 = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        pins = (ROOT / "docker" / "PINS.cu124.txt").read_text(encoding="utf-8")
+        impact = cu124.split("python /opt/comfyfleet/impact_bake.py", 1)[1]
+        impact_line = impact.split("&&", 2)[1]
+        self.assertIn("--no-build-isolation", impact_line)
+        self.assertIn("SAM2_BUILD_CUDA=0", impact_line)
+        self.assertIn("-c /opt/comfyfleet/torch-constraints.txt", impact_line)
+        self.assertIn("-r /tmp/impact-requirements.txt", impact_line)
+        self.assertNotIn("--no-build-isolation", cu130)
+        self.assertIn("torch==2.6.0+cu124", pins)
+        self.assertIn("torchvision==0.21.0+cu124", pins)
+        self.assertIn("torchaudio==2.6.0+cu124", pins)
+        self.assertIn("--no-build-isolation", pins)
 
     def test_requirement_filter_drops_headless_and_keeps_the_git_line(self):
         bake = _load(ROOT / "docker" / "impact_bake.py", "impact_bake")
