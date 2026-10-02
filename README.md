@@ -27,9 +27,9 @@ Primary tags are `cu130` and `cu124`. Aliases are the same published digests, an
 
 | Image | Pull | Local tag from `install.sh` | Role |
 |---|---|---|---|
-| Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:c843418f18cbe37e24bee1e16951ccce9328d2fbca4d82ed3c6e76d52e21ed73` | `comfyfleet-manager:latest` | Control HTTP and web UI. No CUDA stack. Includes `git` and `unzip` for create-time node seeding. |
-| Instance cu130 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2735a1bcccce1932d8180793340dd8342e86d4fff094ac7bc49805d23bb1db87` | `comfyfleet:cu130`, `comfyfleet:latest` | ComfyUI v0.37.4. Python 3.14.7, CUDA 13.0 runtime, torch `2.13.0+cu130`. Host driver CUDA 13.0. |
-| Instance cu124 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:d8eaa73135490896c491e98ad84d9b5fff750117ee6bd7ad2e2741c2a4ca7be5` | `comfyfleet:cu124`, `comfyfleet:phase1` | ComfyUI v0.38.0. CPython 3.11, CUDA 12.4 runtime, torch `2.6.0+cu124`. Host driver CUDA 12.4. |
+| Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:271970754272baf770cc226f6208e2934587b9e9dd4619f6af061950f6893379` | `comfyfleet-manager:latest` | Control HTTP and web UI. No CUDA stack. Includes `git` and `unzip` for create-time node seeding. |
+| Instance cu130 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:25b0f209abc1075ab2631505d513d2c919d5a9704d91c4a45a631cac65531591` | `comfyfleet:cu130`, `comfyfleet:latest` | ComfyUI v0.37.4. Python 3.14.7, CUDA 13.0 runtime, torch `2.13.0+cu130`. Host driver CUDA 13.0. |
+| Instance cu124 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:807f1b782147bd663c17352a5ecfc80b0eed0b992d63344f72671cc2d90ed462` | `comfyfleet:cu124`, `comfyfleet:phase1` | ComfyUI v0.38.0. CPython 3.11, CUDA 12.4 runtime, torch `2.6.0+cu124`. Host driver CUDA 12.4. |
 
 Each publish also tags the git SHA (`<sha>` and `<sha>-cu130` for cu130, `<sha>-cu124` for cu124).
 
@@ -45,7 +45,7 @@ export COMFYFLEET_MANAGER_DIGEST=sha256:<manager-digest>
 
 `install.sh`, `compose.yaml`, and the digests in the table pin an image by digest. A floating tag does not move a digest-pinned install.
 
-Those digests are GHCR publish run [37051412900](https://github.com/RecognizeYourPrivilege/ComfyFleet/actions/runs/37051412900) at main `a11f0c0e`. That run published the manager and both instance lines after the cu124 Impact sam2 bake. `install.sh` and `compose.yaml` pin the same three digests. A later publish needs a new digest bump. Do not replace these with placeholders.
+Those digests are GHCR publish run [37074457097](https://github.com/RecognizeYourPrivilege/ComfyFleet/actions/runs/37074457097) at main `d314df63`. That run published the manager and both instance lines after the cu130 llama smoke libc6-dev install. `install.sh` and `compose.yaml` pin the same three digests. A later publish needs a new digest bump. Do not replace these with placeholders.
 
 ### Instance image contents
 
@@ -173,11 +173,11 @@ export COMFYFLEET_PUBLIC_HOST=192.168.1.20
 Same start without the script, for the cu130 default. Pull that instance digest and the manager digest, tag the local names (including the `latest` alias), then run the manager:
 
 ```bash
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2735a1bcccce1932d8180793340dd8342e86d4fff094ac7bc49805d23bb1db87
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:c843418f18cbe37e24bee1e16951ccce9328d2fbca4d82ed3c6e76d52e21ed73
-docker tag ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2735a1bcccce1932d8180793340dd8342e86d4fff094ac7bc49805d23bb1db87 comfyfleet:cu130
-docker tag ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2735a1bcccce1932d8180793340dd8342e86d4fff094ac7bc49805d23bb1db87 comfyfleet:latest
-docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:c843418f18cbe37e24bee1e16951ccce9328d2fbca4d82ed3c6e76d52e21ed73 comfyfleet-manager:latest
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:25b0f209abc1075ab2631505d513d2c919d5a9704d91c4a45a631cac65531591
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:271970754272baf770cc226f6208e2934587b9e9dd4619f6af061950f6893379
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:25b0f209abc1075ab2631505d513d2c919d5a9704d91c4a45a631cac65531591 comfyfleet:cu130
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:25b0f209abc1075ab2631505d513d2c919d5a9704d91c4a45a631cac65531591 comfyfleet:latest
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:271970754272baf770cc226f6208e2934587b9e9dd4619f6af061950f6893379 comfyfleet-manager:latest
 
 docker run -d --name comfyfleet-manager \
   --restart unless-stopped \
@@ -188,18 +188,18 @@ docker run -d --name comfyfleet-manager \
   -e COMFYFLEET_PASSWORD=replace-with-a-long-secret \
   -e COMFYFLEET_PUBLIC_HOST=192.168.1.20 \
   -e COMFYFLEET_CUDA_TAG=cu130 \
-  -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2735a1bcccce1932d8180793340dd8342e86d4fff094ac7bc49805d23bb1db87 \
-  ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:c843418f18cbe37e24bee1e16951ccce9328d2fbca4d82ed3c6e76d52e21ed73
+  -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:25b0f209abc1075ab2631505d513d2c919d5a9704d91c4a45a631cac65531591 \
+  ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:271970754272baf770cc226f6208e2934587b9e9dd4619f6af061950f6893379
 ```
 
-For a CUDA 12.4 host, pull `ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:d8eaa73135490896c491e98ad84d9b5fff750117ee6bd7ad2e2741c2a4ca7be5`, tag `comfyfleet:cu124` and `comfyfleet:phase1`, and set `COMFYFLEET_CUDA_TAG=cu124` with that ref as `COMFYFLEET_INSTANCE_IMAGE`. To mirror `--cuda-tag both`, pull and tag that image as well and leave `COMFYFLEET_CUDA_TAG=cu130`.
+For a CUDA 12.4 host, pull `ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:807f1b782147bd663c17352a5ecfc80b0eed0b992d63344f72671cc2d90ed462`, tag `comfyfleet:cu124` and `comfyfleet:phase1`, and set `COMFYFLEET_CUDA_TAG=cu124` with that ref as `COMFYFLEET_INSTANCE_IMAGE`. To mirror `--cuda-tag both`, pull and tag that image as well and leave `COMFYFLEET_CUDA_TAG=cu130`.
 
 [compose.yaml](compose.yaml) is the same service. It does not pull the instance image:
 
 ```bash
 export COMFYFLEET_PASSWORD=replace-with-a-long-secret
 export COMFYFLEET_PUBLIC_HOST=192.168.1.20
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:2735a1bcccce1932d8180793340dd8342e86d4fff094ac7bc49805d23bb1db87
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:25b0f209abc1075ab2631505d513d2c919d5a9704d91c4a45a631cac65531591
 docker compose up -d
 ```
 
