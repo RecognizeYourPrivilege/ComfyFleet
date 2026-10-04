@@ -259,7 +259,7 @@ Maximum body size is 32 MiB (`413` above that). Clients must send `Content-Lengt
 
 #### Optional custom nodes
 
-Blank or absent `custom_node_git_urls` and `custom_nodes_zip` do nothing. Create still requires a workflow. It does not fail because those fields were empty. Nothing is baked into a new instance image. Files land on the host mount `/home/custom_nodes_<name>` (container `/opt/ComfyUI/custom_nodes`).
+Blank or absent `custom_node_git_urls` and `custom_nodes_zip` do nothing. Create still requires a workflow. It does not fail because those fields were empty. Nothing is baked into a new instance image. Files land on the host mount `/home/ComfyFleet/custom_nodes_<name>` (container `/opt/ComfyUI/custom_nodes`).
 
 Allowed git schemes are `https://`, `ssh://`, and scp-style `git@host:path`. Other schemes (`http://`, `file://`, `git://`) are skipped and listed in `warnings`. Each accepted URL is `git clone --depth 1` into its own subdirectory (the repository name, without `.git`). `git` runs on the manager, with no shell. The clone timeout is **120** seconds (`COMFYFLEET_GIT_CLONE_TIMEOUT`). `GIT_TERMINAL_PROMPT=0` and SSH `BatchMode` are set so a credential prompt cannot hang the request.
 
@@ -313,7 +313,7 @@ Stopping an already stopped instance returns 200. The container, mounts, and wor
 
 ### `POST /api/instances/{name}/delete`
 
-Force-stops the container if it is running, removes **only** that container, and deletes `comfyfleet.json`. Host workflow, input, output, and custom-node files are kept (`/home/custom_nodes_<name>` and `/home/files/<name>` stay). The UI asks for confirmation before calling this. `DELETE` on this path is **405** and does not remove the container. There is no second delete API and no purge of host mounts.
+Force-stops the container if it is running, removes **only** that container, and deletes `comfyfleet.json`. Host workflow, input, output, and custom-node files are kept (`/home/ComfyFleet/custom_nodes_<name>` and `/home/ComfyFleet/files/<name>` stay). The UI asks for confirmation before calling this. `DELETE` on this path is **405** and does not remove the container. There is no second delete API and no purge of host mounts.
 
 ```json
 {"ok": true, "deleted": "portrait"}
@@ -355,14 +355,14 @@ Unknown instances are **400** with control's "no instance named …" text, not 4
 
 Session cookie or `Authorization: Bearer`. There is no body and no path argument. The route calls the same helper as `comfyfleet fix-owner`.
 
-That helper resolves the host user and group by the names `comfyui:comfyui`, then recursively chowns only:
+That helper resolves the user and group `comfyui:comfyui`. When either name is missing it creates the account with `groupadd` and `useradd` (`--no-create-home`, home directory `/home/ComfyFleet`, so it does not add `/home/comfyui`). It then recursively chowns only:
 
 | Path | Rule |
 |---|---|
-| `/home/wildcards` | recurse when the directory exists |
-| `/home/models` | recurse when the directory exists |
-| `/home/custom_nodes_*` | recurse each matching directory |
-| `/home/files` | recurse when the directory exists |
+| `/home/ComfyFleet/wildcards` | recurse when the directory exists |
+| `/home/ComfyFleet/models` | recurse when the directory exists |
+| `/home/ComfyFleet/custom_nodes_*` | recurse each matching directory |
+| `/home/ComfyFleet/files` | recurse when the directory exists |
 
 A path outside that allowlist is refused, including `..` and a symlink whose target leaves the allowlist. An unauthenticated call is **401** and does not chown anything.
 
@@ -373,11 +373,11 @@ A path outside that allowlist is refused, including `..` and a symlink whose tar
   "group": "comfyui",
   "uid": 1001,
   "gid": 1001,
-  "paths": ["/home/wildcards", "/home/models", "/home/files"]
+  "paths": ["/home/ComfyFleet/wildcards", "/home/ComfyFleet/models", "/home/ComfyFleet/files"]
 }
 ```
 
-`paths` lists the allowlisted directories that were present. A missing `comfyui` user is **400**.
+`paths` lists the allowlisted directories that were present. A failure to create the `comfyui` user or group is **400**. The error names the host user or group and the `useradd` or `groupadd` failure.
 
 ### `POST /api/host/prune-dangling`
 

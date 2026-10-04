@@ -1,6 +1,6 @@
 """Create-time custom nodes on the instance volume.
 
-Git clones and zip extracts write ``/home/custom_nodes_<name>`` (the host
+Git clones and zip extracts write ``/home/ComfyFleet/custom_nodes_<name>`` (the host
 side of the instance ``custom_nodes`` mount). They do not bake a new image.
 
 Missing nodes are taken only from the create-time workflow JSON. Each one

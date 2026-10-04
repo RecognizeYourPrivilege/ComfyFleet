@@ -413,7 +413,7 @@ services:
       - "9100:9100"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /home:/home
+      - /home/ComfyFleet:/home/ComfyFleet
     environment:
       COMFYFLEET_PASSWORD: ${COMFYFLEET_PASSWORD:?Set COMFYFLEET_PASSWORD}
       COMFYFLEET_PUBLIC_HOST: ${COMFYFLEET_PUBLIC_HOST:?Set COMFYFLEET_PUBLIC_HOST}
@@ -436,7 +436,7 @@ start_run() {
     --gpus all \
     -p "${PORT}:9100" \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    -v /home:/home \
+    -v /home/ComfyFleet:/home/ComfyFleet \
     -e "COMFYFLEET_PASSWORD=${COMFYFLEET_PASSWORD}" \
     -e "COMFYFLEET_PUBLIC_HOST=${COMFYFLEET_PUBLIC_HOST}" \
     -e "COMFYFLEET_INSTANCE_IMAGE=${COMFYFLEET_INSTANCE_IMAGE}" \
