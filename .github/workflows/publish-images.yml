@@ -190,10 +190,10 @@ jobs:
           {
             echo "## GHCR digests"
             echo ""
-            echo "Pushed by this run. They are not pinned in the repo until a human copies them into the README."
+            echo "Pushed by this run. install.sh pulls the moving tags (instance :cu130 and :cu124, manager :latest), so the next install follows this publish. Do not copy these digests into install.sh. COMFYFLEET_INSTANCE_DIGEST and COMFYFLEET_MANAGER_DIGEST are the optional pin."
             echo ""
             echo '```text'
-            echo "instance cu130 and cu124 (aliases latest→cu130, phase1→cu124). Matrix digest output is one leg; copy both from the instance job logs."
+            echo "instance cu130 and cu124 (aliases latest→cu130, phase1→cu124). Matrix digest output is one leg; both tags moved with this publish."
             echo "instance ${{ needs.instance.outputs.image }}@${{ needs.instance.outputs.digest }}"
             echo "manager ${{ needs.manager.outputs.image }}@${{ needs.manager.outputs.digest }}"
             echo '```'

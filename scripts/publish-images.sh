@@ -35,7 +35,9 @@ Tags:
   ghcr.io/<owner>/comfyfleet-manager:latest
   ghcr.io/<owner>/comfyfleet-manager:<git sha>
 
-Prints digests after the push. Record them in the README.
+Prints digests after the push. install.sh follows the moving tags above.
+Those digests are an optional COMFYFLEET_INSTANCE_DIGEST / COMFYFLEET_MANAGER_DIGEST pin.
+Do not copy them into install.sh.
 GHCR rejects a layer over 10 GB and an upload that takes longer than about 10 minutes.
 Re-running the script reuses layers that already uploaded.
 EOF
@@ -123,7 +125,7 @@ print_digest() {
   return 1
 }
 
-echo "comfyfleet-publish: digests (copy into the README; not committed by this script)"
+echo "comfyfleet-publish: digests (optional COMFYFLEET_*_DIGEST pin; install.sh follows the moving tags)"
 failed=0
 print_digest instance-cu130 "${instance}" "cu130" || failed=1
 print_digest instance-cu124 "${instance}" "cu124" || failed=1
@@ -131,6 +133,6 @@ print_digest manager "${manager}" "${sha}" || failed=1
 echo "comfyfleet-publish: a personal-account package is private until a human sets it to public."
 echo "comfyfleet-publish: Actions pushes with GITHUB_TOKEN link the package to the repo. This CLI push relies on the source label."
 if [[ "${failed}" -ne 0 ]]; then
-  echo "comfyfleet-publish: images were pushed. Copy the sha256 from the inspect output above into the README." >&2
+  echo "comfyfleet-publish: images were pushed. install.sh follows the moving tags. The inspect output above is an optional digest pin." >&2
   exit 1
 fi

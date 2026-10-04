@@ -222,16 +222,16 @@ class LlamaBakeContractTests(unittest.TestCase):
             self.assertNotIn("llama-cpp-python", text)
             self.assertNotIn("llama_cpp", text)
 
-    def test_digest_pins_are_unchanged(self):
+    def test_retired_ghcr_digests_are_not_install_pins(self):
         install = (ROOT / "install.sh").read_text(encoding="utf-8")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
         for digest in DIGESTS:
-            self.assertIn(digest, install)
-            self.assertIn(digest, readme)
-        # compose.yaml pins the manager and the cu130 instance. cu124 is install.sh.
-        self.assertIn(DIGESTS[0], compose)
-        self.assertIn(DIGESTS[2], compose)
+            self.assertNotIn(digest, install)
+            self.assertNotIn(digest, readme)
+            self.assertNotIn(digest, compose)
+        self.assertIn("comfyfleet:cu130", install)
+        self.assertIn("comfyfleet-manager:latest", compose)
 
 
 if __name__ == "__main__":
