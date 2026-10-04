@@ -49,7 +49,7 @@ rm -rf /home/ComfyFleet/custom_nodes_<name> /home/ComfyFleet/files/<name>
 rm -rf /home/ComfyFleet/wildcards
 ```
 
-`comfyfleet fix-owner` (and the Host menu **Fix ownership** action) recursively chowns `/home/ComfyFleet/wildcards`, `/home/ComfyFleet/models`, every `/home/ComfyFleet/custom_nodes_*` directory, and `/home/ComfyFleet/files` to `comfyui:comfyui`. It creates the `comfyui` user and group when those names are missing, and it does not create `/home/comfyui`. It refuses every other path. Create's one-shot chown of a newly created `/home/ComfyFleet/wildcards` is not that recursive walk.
+`comfyfleet fix-owner` (and the Host menu **Fix ownership** action) recursively chowns `/home/ComfyFleet/wildcards`, `/home/ComfyFleet/models`, every `/home/ComfyFleet/custom_nodes_*` directory, and `/home/ComfyFleet/files` to `comfyui:comfyui`. It creates the `comfyui` user and group when those names are missing, and it does not create `/home/comfyui`. It refuses every other path. A symlink from `custom_nodes_*` into `/opt/comfyfleet/baked_custom_nodes` does not fail that command and is not followed. Create's one-shot chown of a newly created `/home/ComfyFleet/wildcards` is not that recursive walk.
 
 `/home/ComfyFleet/models` is shared. Remove it only when the model library should go too:
 

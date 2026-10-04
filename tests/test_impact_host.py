@@ -21,7 +21,9 @@ from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
 from comfyfleet.http_api import ApiContext, make_server
 from comfyfleet.ownership import (
+    BAKED_CUSTOM_NODES,
     assert_allowlisted,
+    chown_inode,
     chown_new_directory,
     ensure_wildcards_dir,
     fix_owner,
@@ -376,6 +378,148 @@ class FixOwnerTests(unittest.TestCase):
             self.assertEqual(result.uid, 7)
             self.assertTrue(any(path.endswith("/wildcards") or path.endswith("\\wildcards") for path in result.paths))
 
+    def test_baked_manager_symlink_does_not_abort_and_is_not_followed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ComfyFleet"
+            layout = FleetLayout(root)
+            layout.wildcards.mkdir(parents=True)
+            (layout.wildcards / "nested.txt").write_text("w", encoding="utf-8")
+            layout.models.mkdir()
+            (layout.models / "checkpoints").mkdir()
+            (layout.models / "checkpoints" / "model.safetensors").write_text("m", encoding="utf-8")
+            layout.files.mkdir()
+            (layout.files / "k2fb").mkdir()
+            nodes = layout.root / "custom_nodes_k2fb"
+            nodes.mkdir()
+            local = nodes / "LocalNode"
+            local.mkdir()
+            (local / "node.py").write_text("n", encoding="utf-8")
+            manager = nodes / "ComfyUI-Manager"
+            manager.symlink_to(BAKED_CUSTOM_NODES / "ComfyUI-Manager")
+            impact = nodes / "ComfyUI-Impact-Pack"
+            impact.symlink_to(BAKED_CUSTOM_NODES / "ComfyUI-Impact-Pack")
+            nested = local / "also-baked"
+            nested.symlink_to(BAKED_CUSTOM_NODES / "RES4LYF")
+            assert_allowlisted(manager, layout)
+
+            chowned = []
+
+            def spy(path, uid, gid):
+                chowned.append(Path(path))
+                self.assertEqual((uid, gid), (7, 8))
+
+            result = fix_owner(layout, resolve=lambda: (7, 8), chown=spy)
+            names = {path.name for path in chowned}
+            self.assertIn("wildcards", names)
+            self.assertIn("nested.txt", names)
+            self.assertIn("models", names)
+            self.assertIn("checkpoints", names)
+            self.assertIn("model.safetensors", names)
+            self.assertIn("files", names)
+            self.assertIn("k2fb", names)
+            self.assertIn("custom_nodes_k2fb", names)
+            self.assertIn("LocalNode", names)
+            self.assertIn("node.py", names)
+            self.assertIn(manager, chowned)
+            self.assertIn(impact, chowned)
+            self.assertIn(nested, chowned)
+            for path in chowned:
+                self.assertFalse(path == BAKED_CUSTOM_NODES or BAKED_CUSTOM_NODES in path.parents)
+            self.assertEqual(result.user, "comfyui")
+            self.assertEqual(result.group, "comfyui")
+            self.assertTrue(any(path.endswith("custom_nodes_k2fb") for path in result.paths))
+
+    def test_existing_baked_target_is_not_chowned_through(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ComfyFleet"
+            layout = FleetLayout(root)
+            nodes = layout.root / "custom_nodes_k2fb"
+            nodes.mkdir(parents=True)
+            (nodes / "node.py").write_text("n", encoding="utf-8")
+            baked = Path(tmp) / "image_baked_custom_nodes"
+            image_node = baked / "ComfyUI-Manager"
+            image_node.mkdir(parents=True)
+            secret = image_node / "secret.py"
+            secret.write_text("image", encoding="utf-8")
+            (image_node / "nested").mkdir()
+            (image_node / "nested" / "weight.bin").write_text("w", encoding="utf-8")
+            link = nodes / "ComfyUI-Manager"
+            link.symlink_to(image_node)
+            chowned = []
+
+            def spy(path, uid, gid):
+                chowned.append(Path(path))
+                self.assertEqual((uid, gid), (7, 8))
+
+            with mock.patch("comfyfleet.ownership.BAKED_CUSTOM_NODES", baked):
+                result = fix_owner(layout, resolve=lambda: (7, 8), chown=spy)
+            self.assertEqual(result.user, "comfyui")
+            self.assertEqual(result.group, "comfyui")
+            self.assertIn(nodes / "node.py", chowned)
+            self.assertIn(link, chowned)
+            self.assertNotIn(secret, chowned)
+            self.assertNotIn(image_node, chowned)
+            self.assertNotIn(image_node / "nested" / "weight.bin", chowned)
+            self.assertTrue(all(path != baked and baked not in path.parents for path in chowned))
+
+    def test_symlink_escape_is_still_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ComfyFleet"
+            layout = FleetLayout(root)
+            nodes = layout.root / "custom_nodes_k2fb"
+            nodes.mkdir(parents=True)
+            (nodes / "node.py").write_text("n", encoding="utf-8")
+            manager = nodes / "ComfyUI-Manager"
+            manager.symlink_to(BAKED_CUSTOM_NODES / "ComfyUI-Manager")
+            outside = Path(tmp) / "outside"
+            outside.mkdir()
+            secret = outside / "secret.txt"
+            secret.write_text("nope", encoding="utf-8")
+            escape = nodes / "escape"
+            escape.symlink_to(outside)
+            lookalike = nodes / "lookalike"
+            lookalike.symlink_to(Path("/opt/comfyfleet/baked_custom_nodes_evil/ComfyUI-Manager"))
+            dotted = nodes / "dotted"
+            dotted.symlink_to(BAKED_CUSTOM_NODES / "ComfyUI-Manager" / ".." / ".." / ".." / "etc")
+            named = nodes / "ComfyUI-Impact-Pack"
+            named.symlink_to(secret)
+
+            for path in (escape, lookalike, dotted, named):
+                with self.assertRaises(FleetError) as ctx:
+                    assert_allowlisted(path, layout)
+                message = str(ctx.exception)
+                self.assertIn("refusing symlink that leaves the fix-owner allowlist", message)
+                self.assertNotIn(str(BAKED_CUSTOM_NODES / "ComfyUI-Manager"), message)
+
+            chowned = []
+
+            def spy(path, uid, gid):
+                chowned.append(Path(path))
+                self.assertEqual((uid, gid), (7, 8))
+
+            with self.assertRaises(FleetError) as ctx:
+                fix_owner(layout, resolve=lambda: (7, 8), chown=spy)
+            message = str(ctx.exception)
+            self.assertIn("refusing symlink that leaves the fix-owner allowlist", message)
+            self.assertNotIn(str(BAKED_CUSTOM_NODES / "ComfyUI-Manager"), message)
+            self.assertNotIn(outside, chowned)
+            self.assertNotIn(secret, chowned)
+            self.assertTrue(all(path != outside and outside not in path.parents for path in chowned))
+            self.assertTrue(
+                all(path != BAKED_CUSTOM_NODES and BAKED_CUSTOM_NODES not in path.parents for path in chowned)
+            )
+
+    def test_chown_inode_does_not_follow_symlinks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target.txt"
+            target.write_text("x", encoding="utf-8")
+            link = root / "link"
+            link.symlink_to(target)
+            with mock.patch("comfyfleet.ownership.os.chown") as chown:
+                chown_inode(link, 7, 8)
+            chown.assert_called_once_with(link, 7, 8, follow_symlinks=False)
+
     def test_missing_comfyui_account_is_created_without_a_home_sibling(self):
         users: dict[str, tuple[int, int]] = {}
         groups: dict[str, int] = {}
@@ -617,6 +761,48 @@ class HostApiTests(unittest.TestCase):
         self.assertTrue(chowned)
         status, raw = self._open("GET", "/api/host/fix-owner", auth=True)
         self.assertEqual(status, 405)
+
+    def test_fix_owner_route_accepts_a_baked_manager_symlink(self):
+        nodes = self.layout.root / "custom_nodes_k2fb"
+        nodes.mkdir()
+        (nodes / "node.py").write_text("n", encoding="utf-8")
+        link = nodes / "ComfyUI-Manager"
+        link.symlink_to(BAKED_CUSTOM_NODES / "ComfyUI-Manager")
+        outside = Path(self.tmp.name) / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("nope", encoding="utf-8")
+        chowned = []
+        with mock.patch("comfyfleet.ownership.resolve_comfyui_ids", return_value=(4, 5)), mock.patch(
+            "comfyfleet.ownership.chown_inode",
+            lambda path, uid, gid: chowned.append((str(path), uid, gid)),
+        ):
+            status, raw = self._open("POST", "/api/host/fix-owner", auth=True)
+        self.assertEqual(status, 200, raw)
+        payload = json.loads(raw.decode("utf-8"))
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["user"], "comfyui")
+        self.assertEqual(payload["group"], "comfyui")
+        self.assertTrue(any(path.endswith("custom_nodes_k2fb") for path in payload["paths"]))
+        joined = "\n".join(path for path, _uid, _gid in chowned)
+        self.assertIn("node.py", joined)
+        self.assertIn(str(link), joined)
+        self.assertNotIn(str(BAKED_CUSTOM_NODES / "ComfyUI-Manager"), joined)
+        self.assertNotIn(str(outside), joined)
+
+        escape = nodes / "escape"
+        escape.symlink_to(outside)
+        chowned.clear()
+        with mock.patch("comfyfleet.ownership.resolve_comfyui_ids", return_value=(4, 5)), mock.patch(
+            "comfyfleet.ownership.chown_inode",
+            lambda path, uid, gid: chowned.append((str(path), uid, gid)),
+        ):
+            status, raw = self._open("POST", "/api/host/fix-owner", auth=True)
+        self.assertEqual(status, 400, raw)
+        payload = json.loads(raw.decode("utf-8"))
+        self.assertIn("refusing symlink that leaves the fix-owner allowlist", payload["error"])
+        self.assertIn(str(outside), payload["error"])
+        self.assertNotIn(str(BAKED_CUSTOM_NODES / "ComfyUI-Manager"), payload["error"])
+        self.assertTrue(all(outside.as_posix() not in path for path, _uid, _gid in chowned))
 
     def test_prune_route_keeps_managed_containers(self):
         status, _raw = self._open("POST", "/api/host/prune-dangling", auth=False)
