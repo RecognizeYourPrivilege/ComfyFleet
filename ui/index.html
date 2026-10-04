@@ -270,6 +270,13 @@
     <div class="sheet-card glass confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
       <h2 id="confirm-title">Delete instance</h2>
       <p id="confirm-text"></p>
+      <div id="confirm-fields" hidden>
+        <label class="field-label" for="confirm-user">User</label>
+        <input id="confirm-user" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="comfyuser">
+        <label class="field-label" for="confirm-group">Group</label>
+        <input id="confirm-group" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="comfyuser">
+        <p class="hint">Leave a field blank to use comfyuser. A missing user or group is created with home /home/ComfyFleet.</p>
+      </div>
       <div class="sheet-actions">
         <button id="confirm-yes" class="btn danger" type="button">Delete</button>
         <button id="confirm-no" class="btn secondary" type="button">Cancel</button>

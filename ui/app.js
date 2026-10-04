@@ -312,16 +312,30 @@ function askConfirm(text, options) {
   const message = document.querySelector("#confirm-text");
   const title = document.querySelector("#confirm-title");
   const yes = document.querySelector("#confirm-yes");
+  const fields = document.querySelector("#confirm-fields");
+  const userInput = document.querySelector("#confirm-user");
+  const groupInput = document.querySelector("#confirm-group");
   const opts = options || {};
   title.textContent = opts.title || "Delete instance";
   yes.textContent = opts.yes || "Delete";
   message.textContent = text;
+  const showFields = Boolean(opts.fields);
+  fields.hidden = !showFields;
+  if (showFields) {
+    userInput.value = "";
+    groupInput.value = "";
+  }
   sheet.hidden = false;
   return new Promise((resolve) => {
     function finish(value) {
       sheet.hidden = true;
+      fields.hidden = true;
       sheet.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKey);
+      if (value && showFields) {
+        resolve({ user: userInput.value.trim(), group: groupInput.value.trim() });
+        return;
+      }
       resolve(value);
     }
     function onClick(event) {
@@ -926,13 +940,17 @@ function isAuthFailure(result) {
 }
 
 async function fixOwnership() {
-  const yes = await askConfirm(
-    "Change ownership of /home/ComfyFleet/wildcards, /home/ComfyFleet/models, every /home/ComfyFleet/custom_nodes_* directory, and /home/ComfyFleet/files to comfyui:comfyui? Only those directories are walked.",
-    { title: "Fix ownership", yes: "Fix ownership" }
+  const answer = await askConfirm(
+    "Change ownership of /home/ComfyFleet/wildcards, /home/ComfyFleet/models, every /home/ComfyFleet/custom_nodes_* directory, and /home/ComfyFleet/files? Only those directories are walked. Symlinks into the image baked custom nodes are not followed.",
+    { title: "Fix ownership", yes: "Fix ownership", fields: true }
   );
-  if (!yes) return;
+  if (!answer) return;
   state.busy = true;
-  const result = await call("/api/host/fix-owner", { method: "POST" });
+  const result = await call("/api/host/fix-owner", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user: answer.user || "", group: answer.group || "" }),
+  });
   state.busy = false;
   if (result.sessionExpired || isAuthFailure(result)) return;
   if (!result.ok) {
@@ -940,7 +958,13 @@ async function fixOwnership() {
     return;
   }
   const paths = (result.payload && result.payload.paths) || [];
-  showToast(paths.length ? `Ownership updated on ${paths.length} paths.` : "No allowlisted directories were present.");
+  const owner = (result.payload && result.payload.user) || "comfyuser";
+  const group = (result.payload && result.payload.group) || "comfyuser";
+  showToast(
+    paths.length
+      ? `Ownership updated on ${paths.length} paths for ${owner}:${group}.`
+      : "No allowlisted directories were present."
+  );
   hide(banner);
 }
 
