@@ -789,7 +789,7 @@ def _prepare_dirs(layout: FleetLayout, name: str) -> None:
     except OSError as exc:
         raise FleetError(
             f"cannot create {layout.wildcards}: {exc}. "
-            "Required host path: /home/wildcards (created only when missing; an existing directory is left alone)."
+            "That directory is created only when it is missing; an existing directory is left alone."
         ) from exc
     paths = [
         layout.models,

@@ -450,11 +450,31 @@ class ControlTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             build_parser().parse_args(["create"])
 
-    def test_default_layout_is_home(self):
+    def test_default_layout_is_under_comfyfleet_home(self):
         layout = FleetLayout()
-        self.assertEqual(layout.models, Path("/home/models"))
-        self.assertEqual(layout.custom_nodes("portrait"), Path("/home/custom_nodes_portrait"))
-        self.assertEqual(layout.input_dir("portrait"), Path("/home/files/portrait/input"))
+        root = Path("/home/ComfyFleet")
+        self.assertEqual(layout.root, root)
+        self.assertEqual(layout.models, root / "models")
+        self.assertEqual(layout.wildcards, root / "wildcards")
+        self.assertEqual(layout.files, root / "files")
+        self.assertEqual(layout.custom_nodes("portrait"), root / "custom_nodes_portrait")
+        self.assertEqual(layout.instance_dir("portrait"), root / "files" / "portrait")
+        self.assertEqual(layout.input_dir("portrait"), root / "files" / "portrait" / "input")
+        self.assertEqual(layout.output_dir("portrait"), root / "files" / "portrait" / "output")
+        self.assertEqual(layout.temp_dir("portrait"), root / "files" / "portrait" / "temp")
+        owned = (
+            layout.models,
+            layout.wildcards,
+            layout.files,
+            layout.custom_nodes("portrait"),
+            layout.instance_dir("portrait"),
+        )
+        for path in owned:
+            self.assertIn(
+                path.relative_to(root).parts[0],
+                {"models", "wildcards", "files", "custom_nodes_portrait"},
+            )
+            self.assertNotEqual(path.parent, Path("/home"))
 
 
 if __name__ == "__main__":

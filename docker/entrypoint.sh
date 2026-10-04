@@ -122,7 +122,8 @@ mkdir -p \
 export COMFYFLEET_TRUSTED_INSTALL=1
 /opt/venv/bin/python /opt/comfyfleet/seed_manager_config.py
 # Re-applied on every start so recreate keeps custom_wildcards = /home/wildcards
-# (no quotes). The bind is /home/wildcards:/home/wildcards. SAM weights are not
+# (no quotes). The host directory /home/ComfyFleet/wildcards is bind-mounted
+# at /home/wildcards inside the instance. SAM weights are not
 # in this image; they live on the shared models mount at models/sams.
 /opt/venv/bin/python /opt/comfyfleet/seed_impact_config.py
 

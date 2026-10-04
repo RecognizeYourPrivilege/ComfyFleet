@@ -1,4 +1,7 @@
-"""Host paths locked to ``/home/...`` for Phase 1 (OPEN O-04)."""
+"""Host paths under ``/home/ComfyFleet``.
+
+Fleet data does not use other top-level directories in ``/home``.
+"""
 
 from __future__ import annotations
 
@@ -42,8 +45,12 @@ MODEL_SUBDIRS = (
 
 CONTAINER_PORT = 8188
 WORKFLOW_CONTAINER_PATH = "/opt/comfyfleet/instance/default_workflow.json"
-# Host and container use the same path. Impact's impact-pack.ini is seeded
-# with this value and no quotes.
+# On-host storage root. models, wildcards, custom_nodes_*, and files
+# are directories inside this path, never siblings of it.
+HOST_ROOT = Path("/home/ComfyFleet")
+# Path inside the instance container. The host directory is
+# ``<HOST_ROOT>/wildcards``, bind-mounted here. Impact's impact-pack.ini
+# is seeded with this value and no quotes.
 WILDCARDS_CONTAINER = "/home/wildcards"
 # Primary instance tags. cu130 is the default when the operator does not choose.
 CUDA_TAGS = ("cu130", "cu124")
@@ -59,9 +66,9 @@ CU130_PUBLISHED_DIGEST = (
 
 @dataclass(frozen=True)
 class FleetLayout:
-    """Phase 1 mount root. The CLI always uses ``/home``."""
+    """Host storage root. The CLI always uses ``/home/ComfyFleet``."""
 
-    root: Path = Path("/home")
+    root: Path = HOST_ROOT
 
     @property
     def models(self) -> Path:
