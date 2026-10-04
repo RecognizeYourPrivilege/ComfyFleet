@@ -120,7 +120,7 @@ Delete is `POST /api/instances/{name}/delete`. It removes that container and the
 | `GET` | `/login` | no | `ui/login.html` | Sign-in page |
 | `GET` | `/` and other non-API paths | yes, except login assets | static files under `ui/` | Fleet UI. If `ui/` is missing, an authenticated `/` is a short placeholder |
 
-`{name}` is the instance name from create (the sanitized workflow filename stem). It is URL-safe: lowercase `[a-z0-9_-]`, at most 63 characters.
+`{name}` is the instance name from create. A blank create name is the sanitized workflow filename stem. A typed create name wins and is sanitized the same way. It is URL-safe: lowercase `[a-z0-9_-]`, at most 63 characters.
 
 Query strings are ignored. Send create options in the body so a workflow path is not written into the request line.
 
@@ -200,13 +200,14 @@ Send **one** of:
 
 | Source | How |
 |---|---|
-| File upload | `multipart/form-data` field `workflow` (a `.json` file). The filename stem becomes the instance name, same sanitizer as the CLI. `My Flow.json` → `my_flow`. |
-| Host path | Field `workflow_path`: a `.json` path the `comfyfleet ui` process can read (same user as the server). The path's filename stem is the instance name. |
+| File upload | `multipart/form-data` field `workflow` (a `.json` file). With `name` blank, the filename stem becomes the instance name, same sanitizer as the CLI. `My Flow.json` → `my_flow`. |
+| Host path | Field `workflow_path`: a `.json` path the `comfyfleet ui` process can read (same user as the server). With `name` blank, the path's filename stem is the instance name. |
 
 The JSON body is **create options**, not the Comfy graph. Posting a workflow object as `application/json` does not create an instance.
 
 | Field | Required | Meaning |
 |---|---|---|
+| `name` | no | Container name. Blank uses the workflow JSON filename stem (`Portrait.json` → `portrait`). A typed value wins and is sanitized the same way (lowercase, `[a-z0-9_-]`, at most 63 characters). |
 | `workflow` | one of workflow / `workflow_path` | Multipart file only. |
 | `workflow_path` | one of workflow / `workflow_path` | Host path. |
 | `gpu` | one of `gpu` / `gpus` | One index, for example `"0"`. |

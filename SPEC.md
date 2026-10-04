@@ -91,7 +91,7 @@ Positioning: not a cloud SaaS; local/LAN Docker fleet for multi-workflow Comfy h
 
 ### 3.3 Naming
 
-**FR-N1** **Container name** = stem of the default workflow JSON filename (e.g. `my_flow.json` → `my_flow`).
+**FR-N1** **Container name** = stem of the workflow JSON filename when the operator leaves the name blank (e.g. `my_flow.json` → `my_flow`). A typed name wins and is sanitized with FR-N2.
 
 **FR-N2** If stem is longer than **~63** Docker-safe chars, or contains characters illegal/ugly for Docker names, **shorten/sanitize** deterministically (document algorithm: lowercase, `[a-z0-9_-]`, truncate with stable hash suffix if needed).
 

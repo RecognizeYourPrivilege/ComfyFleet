@@ -87,6 +87,10 @@
       <input id="workflow-path" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="/home/you/flows/portrait.json">
       <p class="hint">Use a path only if this server runs as a user who can read it. Leave it empty when you upload a file.</p>
 
+      <label class="field-label" for="instance-name">Container name <span class="optional-tag">optional</span></label>
+      <input id="instance-name" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="From the workflow file">
+      <p class="hint">Leave blank to use the workflow JSON filename. <code>Portrait.json</code> becomes <code>portrait</code>. A name you type is the container name.</p>
+
       <p class="field-label" id="cuda-label">CUDA line</p>
       <div class="cuda-row" role="radiogroup" aria-labelledby="cuda-label">
         <label class="choice">

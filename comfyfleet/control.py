@@ -26,7 +26,7 @@ from comfyfleet.docker import DockerCLI, build_create_args
 from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu, select_gpus
 from comfyfleet.launch import LaunchConfig, launch_from_json, parse_launch
-from comfyfleet.naming import instance_name_from_workflow, is_instance_name
+from comfyfleet.naming import is_instance_name, resolve_instance_name
 from comfyfleet.ownership import ensure_wildcards_dir
 from comfyfleet.paths import (
     CUDA_TAGS,
@@ -143,12 +143,13 @@ def create_instance(
     node_installer: Callable | None = None,
     node_map: dict[str, str] | None = None,
     git_run: Callable | None = None,
+    name: str | None = None,
 ) -> ActionResult:
     authorize("create")
     launch = _canonicalize_launch(launch)
     source = Path(workflow)
     workflow_data = load_operator_workflow(source)
-    name = instance_name_from_workflow(source)
+    name = resolve_instance_name(source, name)
     _require_name(name)
     previous = _load_if_present(layout, name)
     container_status = docker.status(name)
