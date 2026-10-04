@@ -15,14 +15,14 @@ OWNER="$(printf '%s' "${COMFYFLEET_GHCR_OWNER:-recognizeyourprivilege}" | tr '[:
 INSTANCE_REPO="${REGISTRY}/${OWNER}/comfyfleet"
 MANAGER_REPO="${REGISTRY}/${OWNER}/comfyfleet-manager"
 LOCAL_MANAGER_TAG="comfyfleet-manager:latest"
-# Published primary-tag digests from GHCR publish run 37074457097
-# (main d314df63). Aliases (:latest → cu130, :phase1 → cu124) are the same
+# Published primary-tag digests from GHCR publish run 37210075406
+# (main b903c470). Aliases (:latest → cu130, :phase1 → cu124) are the same
 # images and are not pinned separately. Do not replace these with
 # placeholders. Bump them after the next GHCR publish of cu130, cu124, and
 # the manager image.
-CU130_PIN="sha256:25b0f209abc1075ab2631505d513d2c919d5a9704d91c4a45a631cac65531591"
-CU124_PIN="sha256:807f1b782147bd663c17352a5ecfc80b0eed0b992d63344f72671cc2d90ed462"
-MANAGER_PIN="sha256:271970754272baf770cc226f6208e2934587b9e9dd4619f6af061950f6893379"
+CU130_PIN="sha256:3b4ad9c26b550f945cef0627707653d6015d3782782ee9e05cfcafd2fde4043a"
+CU124_PIN="sha256:b8b5a2281761a7a438e9610182a0eb7ae94cd1d53ff02a14db393d131db91887"
+MANAGER_PIN="sha256:d7fc7835d54a8b35705583daf539781535a82850494b26d92f32c55f05ab925d"
 CUDA_TAG=""
 CUDA_TAG_EXPLICIT=0
 NAME="${COMFYFLEET_CONTAINER_NAME:-comfyfleet-manager}"
