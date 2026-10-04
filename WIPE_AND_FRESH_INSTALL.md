@@ -33,7 +33,7 @@ These host paths stay. They all live under `/home/ComfyFleet`:
 
 4. In the UI, create each instance and start it. The create sheet has the same **cu130** / **cu124** picker. Match the host driver's CUDA major (`nvidia-smi`). A mismatched line can fail when the instance starts. New instances are created stopped unless you use **Create & start**. Every create sets `--shm-size 8g`.
 
-The other line has to be on the host engine before create can use it. `./install.sh --cuda-tag both` pulls both instance images and tags `comfyfleet:cu130` (`comfyfleet:latest`) and `comfyfleet:cu124` (`comfyfleet:phase1`). The manager default stays cu130 unless `COMFYFLEET_INSTANCE_IMAGE` is already a cu124 ref and `COMFYFLEET_INSTANCE_DIGEST` is unset, so create can pick either line. A one-line install can be repeated with the other `--cuda-tag`, or pull that image yourself. See [README.md](README.md) for the curl-to-bash install and the current GHCR digest pins.
+The other line has to be on the host engine before create can use it. `./install.sh --cuda-tag both` pulls both instance images and tags `comfyfleet:cu130` (`comfyfleet:latest`) and `comfyfleet:cu124` (`comfyfleet:phase1`). The manager default stays cu130 unless `COMFYFLEET_INSTANCE_IMAGE` is already a cu124 ref and `COMFYFLEET_INSTANCE_DIGEST` is unset, so create can pick either line. A one-line install can be repeated with the other `--cuda-tag`, or pull that image yourself. See [README.md](README.md) for the curl-to-bash install. That command pulls the moving GHCR tags.
 
 ## Path B — also remove host files
 
@@ -61,7 +61,7 @@ The manager creates these directories as root. Use the same user that owns them.
 
 ## Path C — optional image prune, then pull again
 
-After instances are deleted, drop unused images and pull the current pins:
+After instances are deleted, drop unused images and pull the current tags:
 
 ```bash
 docker image prune -a
@@ -70,9 +70,9 @@ docker image prune -a
 
 `docker image prune -a` removes every unused image on the host, including images that are not ComfyFleet. Images still used by a container stay. `install.sh` then pulls the manager and the CUDA line you select, or both instance images when the choice is **both**.
 
-## Recreate after a digest change
+## Recreate after a publish
 
-A newer digest on the same instance does not require a wipe. Re-run `install.sh` with the same CUDA line (pass `COMFYFLEET_INSTANCE_DIGEST` when you are moving a pin), then for each instance:
+A newer image on the same instance does not require a wipe. Re-run `install.sh` with the same CUDA line. The default pull follows the moving tag. Pass `COMFYFLEET_INSTANCE_DIGEST` only when that pull should stay on one digest. Then for each instance:
 
 1. **Stop** (the instance must be stopped).
 2. **Create** again with the same name: UI checkbox **Replace a stopped instance with the same name**, or CLI `comfyfleet create --force` with the same workflow, GPUs, launch flags, and CUDA line.
