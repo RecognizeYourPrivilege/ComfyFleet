@@ -21,11 +21,13 @@ from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu
 from comfyfleet.http_api import ApiContext, make_server
 from comfyfleet.ownership import (
+    BAKED_CUSTOM_NODES,
     assert_allowlisted,
+    chown_inode,
     chown_new_directory,
     ensure_wildcards_dir,
     fix_owner,
-    resolve_comfyui_ids,
+    resolve_owner_ids,
 )
 from comfyfleet.paths import WILDCARDS_CONTAINER, FleetLayout
 from comfyfleet.prune import (
@@ -251,23 +253,23 @@ class WildcardsBindTests(unittest.TestCase):
             other = docker.containers["other"]["args"]
             self.assertIn(f"{root}/wildcards:{WILDCARDS_CONTAINER}", other)
 
-    def test_manager_process_refuses_a_missing_comfyui_user_on_the_one_shot_chown(self):
+    def test_manager_process_refuses_a_missing_comfyuser_on_the_one_shot_chown(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "wildcards"
             path.mkdir()
             with mock.patch.dict(os.environ, {"COMFYFLEET_MANAGER": "1"}):
                 with mock.patch(
-                    "comfyfleet.ownership.resolve_comfyui_ids",
-                    side_effect=FleetError("cannot resolve host user comfyui by name"),
+                    "comfyfleet.ownership.resolve_owner_ids",
+                    side_effect=FleetError("cannot resolve host user comfyuser by name"),
                 ):
                     with self.assertRaises(FleetError) as ctx:
                         chown_new_directory(path)
-            self.assertIn("comfyui", str(ctx.exception))
+            self.assertIn("comfyuser", str(ctx.exception))
             with mock.patch.dict(os.environ, {"COMFYFLEET_MANAGER": ""}, clear=False):
                 os.environ.pop("COMFYFLEET_MANAGER", None)
                 with mock.patch(
-                    "comfyfleet.ownership.resolve_comfyui_ids",
-                    side_effect=FleetError("cannot resolve host user comfyui by name"),
+                    "comfyfleet.ownership.resolve_owner_ids",
+                    side_effect=FleetError("cannot resolve host user comfyuser by name"),
                 ):
                     chown_new_directory(path)
 
@@ -314,8 +316,15 @@ class FixOwnerTests(unittest.TestCase):
             parser.parse_args(["fix-owner", "/etc"])
         args = parser.parse_args(["fix-owner"])
         self.assertEqual(args.command, "fix-owner")
+        self.assertIsNone(args.user)
+        self.assertIsNone(args.group)
+        chosen = parser.parse_args(["fix-owner", "--user", "alice", "--group", "render"])
+        self.assertEqual(chosen.user, "alice")
+        self.assertEqual(chosen.group, "render")
         parameters = inspect.signature(fix_owner).parameters
         self.assertNotIn("path", parameters)
+        self.assertIn("user", parameters)
+        self.assertIn("group", parameters)
 
     def test_allowlist_refuses_escapes_and_chowns_only_listed_trees(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -372,11 +381,154 @@ class FixOwnerTests(unittest.TestCase):
             self.assertIn("files", names)
             self.assertNotIn("secret", names)
             self.assertNotIn("custom_nodes", names)
-            self.assertEqual(result.user, "comfyui")
+            self.assertEqual(result.user, "comfyuser")
+            self.assertEqual(result.group, "comfyuser")
             self.assertEqual(result.uid, 7)
             self.assertTrue(any(path.endswith("/wildcards") or path.endswith("\\wildcards") for path in result.paths))
 
-    def test_missing_comfyui_account_is_created_without_a_home_sibling(self):
+    def test_baked_manager_symlink_does_not_abort_and_is_not_followed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ComfyFleet"
+            layout = FleetLayout(root)
+            layout.wildcards.mkdir(parents=True)
+            (layout.wildcards / "nested.txt").write_text("w", encoding="utf-8")
+            layout.models.mkdir()
+            (layout.models / "checkpoints").mkdir()
+            (layout.models / "checkpoints" / "model.safetensors").write_text("m", encoding="utf-8")
+            layout.files.mkdir()
+            (layout.files / "k2fb").mkdir()
+            nodes = layout.root / "custom_nodes_k2fb"
+            nodes.mkdir()
+            local = nodes / "LocalNode"
+            local.mkdir()
+            (local / "node.py").write_text("n", encoding="utf-8")
+            manager = nodes / "ComfyUI-Manager"
+            manager.symlink_to(BAKED_CUSTOM_NODES / "ComfyUI-Manager")
+            impact = nodes / "ComfyUI-Impact-Pack"
+            impact.symlink_to(BAKED_CUSTOM_NODES / "ComfyUI-Impact-Pack")
+            nested = local / "also-baked"
+            nested.symlink_to(BAKED_CUSTOM_NODES / "RES4LYF")
+            assert_allowlisted(manager, layout)
+
+            chowned = []
+
+            def spy(path, uid, gid):
+                chowned.append(Path(path))
+                self.assertEqual((uid, gid), (7, 8))
+
+            result = fix_owner(layout, resolve=lambda: (7, 8), chown=spy)
+            names = {path.name for path in chowned}
+            self.assertIn("wildcards", names)
+            self.assertIn("nested.txt", names)
+            self.assertIn("models", names)
+            self.assertIn("checkpoints", names)
+            self.assertIn("model.safetensors", names)
+            self.assertIn("files", names)
+            self.assertIn("k2fb", names)
+            self.assertIn("custom_nodes_k2fb", names)
+            self.assertIn("LocalNode", names)
+            self.assertIn("node.py", names)
+            self.assertIn(manager, chowned)
+            self.assertIn(impact, chowned)
+            self.assertIn(nested, chowned)
+            for path in chowned:
+                self.assertFalse(path == BAKED_CUSTOM_NODES or BAKED_CUSTOM_NODES in path.parents)
+            self.assertEqual(result.user, "comfyuser")
+            self.assertEqual(result.group, "comfyuser")
+            self.assertTrue(any(path.endswith("custom_nodes_k2fb") for path in result.paths))
+
+    def test_existing_baked_target_is_not_chowned_through(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ComfyFleet"
+            layout = FleetLayout(root)
+            nodes = layout.root / "custom_nodes_k2fb"
+            nodes.mkdir(parents=True)
+            (nodes / "node.py").write_text("n", encoding="utf-8")
+            baked = Path(tmp) / "image_baked_custom_nodes"
+            image_node = baked / "ComfyUI-Manager"
+            image_node.mkdir(parents=True)
+            secret = image_node / "secret.py"
+            secret.write_text("image", encoding="utf-8")
+            (image_node / "nested").mkdir()
+            (image_node / "nested" / "weight.bin").write_text("w", encoding="utf-8")
+            link = nodes / "ComfyUI-Manager"
+            link.symlink_to(image_node)
+            chowned = []
+
+            def spy(path, uid, gid):
+                chowned.append(Path(path))
+                self.assertEqual((uid, gid), (7, 8))
+
+            with mock.patch("comfyfleet.ownership.BAKED_CUSTOM_NODES", baked):
+                result = fix_owner(layout, resolve=lambda: (7, 8), chown=spy)
+            self.assertEqual(result.user, "comfyuser")
+            self.assertEqual(result.group, "comfyuser")
+            self.assertIn(nodes / "node.py", chowned)
+            self.assertIn(link, chowned)
+            self.assertNotIn(secret, chowned)
+            self.assertNotIn(image_node, chowned)
+            self.assertNotIn(image_node / "nested" / "weight.bin", chowned)
+            self.assertTrue(all(path != baked and baked not in path.parents for path in chowned))
+
+    def test_symlink_escape_is_still_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ComfyFleet"
+            layout = FleetLayout(root)
+            nodes = layout.root / "custom_nodes_k2fb"
+            nodes.mkdir(parents=True)
+            (nodes / "node.py").write_text("n", encoding="utf-8")
+            manager = nodes / "ComfyUI-Manager"
+            manager.symlink_to(BAKED_CUSTOM_NODES / "ComfyUI-Manager")
+            outside = Path(tmp) / "outside"
+            outside.mkdir()
+            secret = outside / "secret.txt"
+            secret.write_text("nope", encoding="utf-8")
+            escape = nodes / "escape"
+            escape.symlink_to(outside)
+            lookalike = nodes / "lookalike"
+            lookalike.symlink_to(Path("/opt/comfyfleet/baked_custom_nodes_evil/ComfyUI-Manager"))
+            dotted = nodes / "dotted"
+            dotted.symlink_to(BAKED_CUSTOM_NODES / "ComfyUI-Manager" / ".." / ".." / ".." / "etc")
+            named = nodes / "ComfyUI-Impact-Pack"
+            named.symlink_to(secret)
+
+            for path in (escape, lookalike, dotted, named):
+                with self.assertRaises(FleetError) as ctx:
+                    assert_allowlisted(path, layout)
+                message = str(ctx.exception)
+                self.assertIn("refusing symlink that leaves the fix-owner allowlist", message)
+                self.assertNotIn(str(BAKED_CUSTOM_NODES / "ComfyUI-Manager"), message)
+
+            chowned = []
+
+            def spy(path, uid, gid):
+                chowned.append(Path(path))
+                self.assertEqual((uid, gid), (7, 8))
+
+            with self.assertRaises(FleetError) as ctx:
+                fix_owner(layout, resolve=lambda: (7, 8), chown=spy)
+            message = str(ctx.exception)
+            self.assertIn("refusing symlink that leaves the fix-owner allowlist", message)
+            self.assertNotIn(str(BAKED_CUSTOM_NODES / "ComfyUI-Manager"), message)
+            self.assertNotIn(outside, chowned)
+            self.assertNotIn(secret, chowned)
+            self.assertTrue(all(path != outside and outside not in path.parents for path in chowned))
+            self.assertTrue(
+                all(path != BAKED_CUSTOM_NODES and BAKED_CUSTOM_NODES not in path.parents for path in chowned)
+            )
+
+    def test_chown_inode_does_not_follow_symlinks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "target.txt"
+            target.write_text("x", encoding="utf-8")
+            link = root / "link"
+            link.symlink_to(target)
+            with mock.patch("comfyfleet.ownership.os.chown") as chown:
+                chown_inode(link, 7, 8)
+            chown.assert_called_once_with(link, 7, 8, follow_symlinks=False)
+
+    def test_missing_comfyuser_account_is_created_without_a_home_sibling(self):
         users: dict[str, tuple[int, int]] = {}
         groups: dict[str, int] = {}
         calls: list[list[str]] = []
@@ -404,28 +556,75 @@ class FixOwnerTests(unittest.TestCase):
 
         with mock.patch("comfyfleet.ownership.pwd.getpwnam", getpwnam), mock.patch(
             "comfyfleet.ownership.grp.getgrnam", getgrnam
-        ), mock.patch("comfyfleet.ownership._account_binary", lambda name, _kind: name):
-            uid, gid = resolve_comfyui_ids(run=run)
+        ), mock.patch("comfyfleet.ownership._account_binary", lambda tool, _kind, _account: tool):
+            uid, gid = resolve_owner_ids(run=run)
+            blank_uid, blank_gid = resolve_owner_ids("  ", "", run=run)
 
         self.assertEqual((uid, gid), (1101, 1100))
-        self.assertEqual(calls[0], ["groupadd", "comfyui"])
+        self.assertEqual((blank_uid, blank_gid), (1101, 1100))
+        self.assertEqual(calls[0], ["groupadd", "comfyuser"])
         useradd = calls[1]
         self.assertEqual(useradd[0], "useradd")
         self.assertIn("--no-create-home", useradd)
         self.assertNotIn("--create-home", useradd)
         self.assertNotIn("-m", useradd)
+        self.assertEqual(useradd[useradd.index("--gid") + 1], "comfyuser")
         self.assertEqual(useradd[useradd.index("--home-dir") + 1], "/home/ComfyFleet")
+        self.assertNotIn("/home/comfyuser", useradd)
         self.assertNotIn("/home/comfyui", useradd)
         self.assertTrue(all("adduser" not in part for part in useradd))
-        self.assertEqual(useradd[-1], "comfyui")
+        self.assertEqual(useradd[-1], "comfyuser")
+        self.assertEqual(calls[2:], [])
 
         calls.clear()
         with mock.patch("comfyfleet.ownership.pwd.getpwnam", getpwnam), mock.patch(
             "comfyfleet.ownership.grp.getgrnam", getgrnam
         ):
-            again = resolve_comfyui_ids(run=run)
+            again = resolve_owner_ids(run=run)
         self.assertEqual(again, (1101, 1100))
         self.assertEqual(calls, [])
+
+    def test_requested_account_is_created_without_a_home_sibling(self):
+        users: dict[str, tuple[int, int]] = {}
+        groups: dict[str, int] = {}
+        calls: list[list[str]] = []
+
+        def getpwnam(name):
+            if name not in users:
+                raise KeyError(name)
+            uid, gid = users[name]
+            return mock.Mock(pw_uid=uid, pw_gid=gid)
+
+        def getgrnam(name):
+            if name not in groups:
+                raise KeyError(name)
+            return mock.Mock(gr_gid=groups[name])
+
+        def run(argv):
+            calls.append(list(argv))
+            if argv[0] == "groupadd":
+                groups[argv[-1]] = 20
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            if argv[0] == "useradd":
+                users[argv[-1]] = (21, 20)
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            raise AssertionError(argv)
+
+        with mock.patch("comfyfleet.ownership.pwd.getpwnam", getpwnam), mock.patch(
+            "comfyfleet.ownership.grp.getgrnam", getgrnam
+        ), mock.patch("comfyfleet.ownership._account_binary", lambda tool, _kind, _account: tool):
+            uid, gid = resolve_owner_ids("alice", "render", run=run)
+
+        self.assertEqual((uid, gid), (21, 20))
+        self.assertEqual(calls[0], ["groupadd", "render"])
+        useradd = calls[1]
+        self.assertEqual(useradd[-1], "alice")
+        self.assertEqual(useradd[useradd.index("--gid") + 1], "render")
+        self.assertEqual(useradd[useradd.index("--home-dir") + 1], "/home/ComfyFleet")
+        self.assertIn("--no-create-home", useradd)
+        self.assertNotIn("/home/alice", useradd)
+        self.assertNotIn("/home/comfyuser", useradd)
+        self.assertNotIn("/home/comfyui", useradd)
 
     def test_fix_owner_chowns_after_creating_a_missing_account(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -436,12 +635,12 @@ class FixOwnerTests(unittest.TestCase):
             chowned = []
 
             def getpwnam(name):
-                if name != "comfyui" or not state["user"]:
+                if name != "comfyuser" or not state["user"]:
                     raise KeyError(name)
                 return mock.Mock(pw_uid=42, pw_gid=43)
 
             def getgrnam(name):
-                if name != "comfyui":
+                if name != "comfyuser":
                     raise KeyError(name)
                 return mock.Mock(gr_gid=43)
 
@@ -456,18 +655,36 @@ class FixOwnerTests(unittest.TestCase):
 
             with mock.patch("comfyfleet.ownership.pwd.getpwnam", getpwnam), mock.patch(
                 "comfyfleet.ownership.grp.getgrnam", getgrnam
-            ), mock.patch("comfyfleet.ownership._account_binary", lambda name, _kind: name):
-                result = fix_owner(layout, resolve=lambda: resolve_comfyui_ids(run=run), chown=spy)
+            ), mock.patch("comfyfleet.ownership._account_binary", lambda tool, _kind, _account: tool):
+                result = fix_owner(layout, resolve=lambda: resolve_owner_ids(run=run), chown=spy)
 
             self.assertEqual((result.uid, result.gid), (42, 43))
+            self.assertEqual(result.user, "comfyuser")
+            self.assertEqual(result.group, "comfyuser")
             self.assertEqual(chowned, [(layout.models, 42, 43)])
             self.assertEqual(created[0][0], "useradd")
             self.assertNotIn("groupadd", [item[0] for item in created])
             self.assertIn("--no-create-home", created[0])
+            self.assertEqual(created[0][-1], "comfyuser")
+
+    def test_invalid_account_name_does_not_chown(self):
+        chowned = []
+        with tempfile.TemporaryDirectory() as tmp:
+            layout = FleetLayout(Path(tmp) / "ComfyFleet")
+            layout.models.mkdir(parents=True)
+            with self.assertRaises(FleetError) as ctx:
+                fix_owner(
+                    layout,
+                    user="alice bob",
+                    group="comfyuser",
+                    chown=lambda *args: chowned.append(args),
+                )
+        self.assertIn("host user name is invalid", str(ctx.exception))
+        self.assertEqual(chowned, [])
 
     def test_account_create_failure_names_the_host_user(self):
         def getpwnam(_name):
-            raise KeyError("comfyui")
+            raise KeyError("comfyuser")
 
         def getgrnam(_name):
             return mock.Mock(gr_gid=7)
@@ -477,25 +694,26 @@ class FixOwnerTests(unittest.TestCase):
 
         with mock.patch("comfyfleet.ownership.pwd.getpwnam", getpwnam), mock.patch(
             "comfyfleet.ownership.grp.getgrnam", getgrnam
-        ), mock.patch("comfyfleet.ownership._account_binary", lambda name, _kind: name):
+        ), mock.patch("comfyfleet.ownership._account_binary", lambda tool, _kind, _account: tool):
             with self.assertRaises(FleetError) as ctx:
-                resolve_comfyui_ids(run=run)
+                resolve_owner_ids("alice", run=run)
         message = str(ctx.exception)
-        self.assertIn("cannot resolve host user comfyui by name", message)
+        self.assertIn("cannot resolve host user alice by name", message)
         self.assertIn("Permission denied", message)
+        self.assertNotIn("comfyui", message)
         self.assertNotIn("hose", message)
-        self.assertNotIn("Create the comfyui user before running fix-owner", message)
+        self.assertNotIn("Create the comfyuser user before running fix-owner", message)
 
         chowned = []
         with tempfile.TemporaryDirectory() as tmp:
             layout = FleetLayout(Path(tmp))
             layout.files.mkdir()
             with mock.patch(
-                "comfyfleet.ownership.resolve_comfyui_ids",
+                "comfyfleet.ownership.resolve_owner_ids",
                 side_effect=FleetError(message),
             ):
                 with self.assertRaises(FleetError) as blocked:
-                    fix_owner(layout, chown=lambda *args: chowned.append(args))
+                    fix_owner(layout, user="alice", chown=lambda *args: chowned.append(args))
             self.assertEqual(str(blocked.exception), message)
             self.assertEqual(chowned, [])
 
@@ -587,11 +805,18 @@ class HostApiTests(unittest.TestCase):
         self.thread.join(timeout=5)
         self.tmp.cleanup()
 
-    def _open(self, method, path, auth=True):
-        headers = {}
+    def _open(self, method, path, auth=True, data=None, headers=None):
+        request_headers = {}
         if auth:
-            headers["Authorization"] = f"Bearer {PASSWORD}"
-        request = urllib.request.Request(self.base + path, headers=headers, method=method)
+            request_headers["Authorization"] = f"Bearer {PASSWORD}"
+        if headers:
+            request_headers.update(headers)
+        request = urllib.request.Request(
+            self.base + path,
+            data=data,
+            headers=request_headers,
+            method=method,
+        )
         try:
             with urllib.request.urlopen(request, timeout=5) as response:
                 return response.status, response.read()
@@ -603,7 +828,7 @@ class HostApiTests(unittest.TestCase):
         status, raw = self._open("POST", "/api/host/fix-owner", auth=False)
         self.assertEqual(status, 401)
         self.assertEqual(chowned, [])
-        with mock.patch("comfyfleet.ownership.resolve_comfyui_ids", return_value=(4, 5)), mock.patch(
+        with mock.patch("comfyfleet.ownership.resolve_owner_ids", return_value=(4, 5)) as resolve, mock.patch(
             "comfyfleet.ownership.chown_inode",
             lambda path, uid, gid: chowned.append((str(path), uid, gid)),
         ):
@@ -612,11 +837,84 @@ class HostApiTests(unittest.TestCase):
         payload = json.loads(raw.decode("utf-8"))
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["uid"], 4)
-        self.assertEqual(payload["user"], "comfyui")
+        self.assertEqual(payload["user"], "comfyuser")
+        self.assertEqual(payload["group"], "comfyuser")
+        resolve.assert_called_once_with("comfyuser", "comfyuser")
         self.assertTrue(any(path.endswith("wildcards") for path in payload["paths"]))
         self.assertTrue(chowned)
         status, raw = self._open("GET", "/api/host/fix-owner", auth=True)
         self.assertEqual(status, 405)
+
+    def test_fix_owner_route_uses_a_requested_account(self):
+        body = json.dumps({"user": "alice", "group": ""}).encode("utf-8")
+        with mock.patch("comfyfleet.ownership.resolve_owner_ids", return_value=(9, 9)) as resolve, mock.patch(
+            "comfyfleet.ownership.chown_inode",
+            lambda *_args: None,
+        ):
+            status, raw = self._open(
+                "POST",
+                "/api/host/fix-owner",
+                data=body,
+                headers={"Content-Type": "application/json"},
+            )
+        self.assertEqual(status, 200, raw)
+        payload = json.loads(raw.decode("utf-8"))
+        self.assertEqual(payload["user"], "alice")
+        self.assertEqual(payload["group"], "comfyuser")
+        resolve.assert_called_once_with("alice", "comfyuser")
+
+        status, raw = self._open(
+            "POST",
+            "/api/host/fix-owner",
+            data=b'{"user":"bad name"}',
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 400, raw)
+        payload = json.loads(raw.decode("utf-8"))
+        self.assertIn("host user name is invalid", payload["error"])
+        self.assertNotIn("comfyui", payload["error"])
+
+    def test_fix_owner_route_accepts_a_baked_manager_symlink(self):
+        nodes = self.layout.root / "custom_nodes_k2fb"
+        nodes.mkdir()
+        (nodes / "node.py").write_text("n", encoding="utf-8")
+        link = nodes / "ComfyUI-Manager"
+        link.symlink_to(BAKED_CUSTOM_NODES / "ComfyUI-Manager")
+        outside = Path(self.tmp.name) / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("nope", encoding="utf-8")
+        chowned = []
+        with mock.patch("comfyfleet.ownership.resolve_owner_ids", return_value=(4, 5)), mock.patch(
+            "comfyfleet.ownership.chown_inode",
+            lambda path, uid, gid: chowned.append((str(path), uid, gid)),
+        ):
+            status, raw = self._open("POST", "/api/host/fix-owner", auth=True)
+        self.assertEqual(status, 200, raw)
+        payload = json.loads(raw.decode("utf-8"))
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["user"], "comfyuser")
+        self.assertEqual(payload["group"], "comfyuser")
+        self.assertTrue(any(path.endswith("custom_nodes_k2fb") for path in payload["paths"]))
+        joined = "\n".join(path for path, _uid, _gid in chowned)
+        self.assertIn("node.py", joined)
+        self.assertIn(str(link), joined)
+        self.assertNotIn(str(BAKED_CUSTOM_NODES / "ComfyUI-Manager"), joined)
+        self.assertNotIn(str(outside), joined)
+
+        escape = nodes / "escape"
+        escape.symlink_to(outside)
+        chowned.clear()
+        with mock.patch("comfyfleet.ownership.resolve_owner_ids", return_value=(4, 5)), mock.patch(
+            "comfyfleet.ownership.chown_inode",
+            lambda path, uid, gid: chowned.append((str(path), uid, gid)),
+        ):
+            status, raw = self._open("POST", "/api/host/fix-owner", auth=True)
+        self.assertEqual(status, 400, raw)
+        payload = json.loads(raw.decode("utf-8"))
+        self.assertIn("refusing symlink that leaves the fix-owner allowlist", payload["error"])
+        self.assertIn(str(outside), payload["error"])
+        self.assertNotIn(str(BAKED_CUSTOM_NODES / "ComfyUI-Manager"), payload["error"])
+        self.assertTrue(all(outside.as_posix() not in path for path, _uid, _gid in chowned))
 
     def test_prune_route_keeps_managed_containers(self):
         status, _raw = self._open("POST", "/api/host/prune-dangling", auth=False)

@@ -237,7 +237,7 @@ Wildcards
   Host /home/wildcards is bind-mounted at /home/wildcards on every create.
   The directory is created only when it is missing. An existing directory
   is not wiped and is not recursively chowned on create. A directory this
-  lane creates is chowned once, not recursively, to comfyui:comfyui.
+  lane creates is chowned once, not recursively, to comfyuser:comfyuser.
 
 No workflow JSON is baked into this image. The operator file is bind-mounted
 to /opt/comfyfleet/instance/default_workflow.json and loaded on every start.

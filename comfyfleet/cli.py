@@ -185,11 +185,22 @@ def build_parser() -> argparse.ArgumentParser:
     owner = sub.add_parser(
         "fix-owner",
         help=(
-            "chown -R comfyui:comfyui on /home/ComfyFleet/wildcards, "
-            "/home/ComfyFleet/models, /home/ComfyFleet/custom_nodes_*, and "
-            "/home/ComfyFleet/files. Creates the comfyui user and group when "
-            "those names are missing. No path argument."
+            "chown -R on /home/ComfyFleet/wildcards, /home/ComfyFleet/models, "
+            "/home/ComfyFleet/custom_nodes_*, and /home/ComfyFleet/files. "
+            "Blank --user and --group mean comfyuser. Creates that user and "
+            "group when the names are missing, with home /home/ComfyFleet. "
+            "No path argument."
         ),
+    )
+    owner.add_argument(
+        "--user",
+        default=None,
+        help="Host user to own the allowlisted trees. Blank uses comfyuser.",
+    )
+    owner.add_argument(
+        "--group",
+        default=None,
+        help="Host group to own the allowlisted trees. Blank uses comfyuser.",
     )
     owner.set_defaults(func=_cmd_fix_owner)
 
@@ -345,8 +356,8 @@ def _cmd_list(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_fix_owner(_args: argparse.Namespace) -> int:
-    result = fix_owner(FleetLayout())
+def _cmd_fix_owner(args: argparse.Namespace) -> int:
+    result = fix_owner(FleetLayout(), user=args.user, group=args.group)
     print(f"owner: {result.user}:{result.group} ({result.uid}:{result.gid})")
     if not result.paths:
         print("  no allowlisted directories were present")
