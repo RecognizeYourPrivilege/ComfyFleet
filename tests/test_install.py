@@ -9,9 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-INSTANCE = "ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:3b4ad9c26b550f945cef0627707653d6015d3782782ee9e05cfcafd2fde4043a"
-INSTANCE_CU124 = "ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:b8b5a2281761a7a438e9610182a0eb7ae94cd1d53ff02a14db393d131db91887"
-MANAGER = "ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:d7fc7835d54a8b35705583daf539781535a82850494b26d92f32c55f05ab925d"
+INSTANCE = "ghcr.io/recognizeyourprivilege/comfyfleet:cu130"
+INSTANCE_CU124 = "ghcr.io/recognizeyourprivilege/comfyfleet:cu124"
+MANAGER = "ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest"
 
 
 class InstallScriptTests(unittest.TestCase):
@@ -124,10 +124,12 @@ class InstallScriptTests(unittest.TestCase):
             )
             self.assertEqual(silent.returncode, 0, silent.stderr)
             pulled = log.read_text(encoding="utf-8")
-            self.assertIn(f"pull {INSTANCE}", pulled)
+            self.assertIn(f"pull {INSTANCE}\n", pulled)
+            self.assertIn(f"pull {MANAGER}\n", pulled)
             self.assertIn(f"tag {INSTANCE} comfyfleet:cu130", pulled)
             self.assertIn(f"tag {INSTANCE} comfyfleet:latest", pulled)
             self.assertNotIn(":cu124", pulled)
+            self.assertNotIn("@sha256:", pulled)
 
             log.write_text("", encoding="utf-8")
             chosen = subprocess.run(
@@ -162,10 +164,12 @@ class InstallScriptTests(unittest.TestCase):
             )
             self.assertEqual(both.returncode, 0, both.stderr)
             pulled = log.read_text(encoding="utf-8")
-            self.assertIn(f"pull {INSTANCE}", pulled)
+            self.assertIn(f"pull {INSTANCE}\n", pulled)
+            self.assertIn(f"pull {MANAGER}\n", pulled)
             self.assertIn(f"tag {INSTANCE} comfyfleet:cu130", pulled)
             self.assertIn(f"tag {INSTANCE} comfyfleet:latest", pulled)
             self.assertIn(f"pull {INSTANCE_CU124}\n", pulled)
+            self.assertNotIn("@sha256:", pulled)
             self.assertIn(
                 f"tag {INSTANCE_CU124} comfyfleet:cu124\n",
                 pulled,
@@ -193,8 +197,12 @@ class InstallScriptTests(unittest.TestCase):
             started_log = log.read_text(encoding="utf-8")
             self.assertIn("COMFYFLEET_CUDA_TAG=cu130", started_log)
             self.assertNotIn("COMFYFLEET_CUDA_TAG=both", started_log)
-            self.assertIn(f"pull {INSTANCE}", started_log)
+            self.assertIn(f"pull {INSTANCE}\n", started_log)
+            self.assertIn(f"pull {MANAGER}\n", started_log)
             self.assertIn(f"pull {INSTANCE_CU124}\n", started_log)
+            self.assertIn(f"run -d --name comfyfleet-manager", started_log)
+            self.assertTrue(started_log.rstrip().endswith(MANAGER))
+            self.assertNotIn("@sha256:", started_log)
             self.assertNotIn("not-printed", started.stdout + started.stderr)
 
             log.write_text("", encoding="utf-8")
@@ -225,10 +233,11 @@ class InstallScriptTests(unittest.TestCase):
             )
             self.assertEqual(kept.returncode, 0, kept.stderr)
             pulled = log.read_text(encoding="utf-8")
-            self.assertIn(f"pull {INSTANCE}", pulled)
+            self.assertIn(f"pull {INSTANCE}\n", pulled)
             self.assertIn(f"tag {INSTANCE} comfyfleet:cu130", pulled)
             self.assertIn(f"tag {INSTANCE} comfyfleet:latest", pulled)
             self.assertIn("pull ghcr.io/recognizeyourprivilege/comfyfleet:cu124\n", pulled)
+            self.assertNotIn("@sha256:", pulled)
             self.assertIn(
                 "tag ghcr.io/recognizeyourprivilege/comfyfleet:cu124 comfyfleet:phase1\n",
                 pulled,
@@ -307,19 +316,97 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("cu130", empty_text)
         self.assertIn("cu124", empty_text)
         self.assertIn("both", empty_text)
-        self.assertIn(f"pull {INSTANCE}", empty_log)
+        self.assertIn(f"pull {INSTANCE}\n", empty_log)
+        self.assertIn(f"pull {MANAGER}\n", empty_log)
         self.assertNotIn(":cu124", empty_log)
+        self.assertNotIn("@sha256:", empty_log)
 
         both_code, both_text, both_log = run_tty("both\n")
         self.assertEqual(both_code, 0, both_text)
         self.assertIn("manager default cu130", both_text)
-        self.assertIn(f"pull {INSTANCE}", both_log)
+        self.assertIn(f"pull {INSTANCE}\n", both_log)
+        self.assertIn(f"pull {MANAGER}\n", both_log)
         self.assertIn(f"pull {INSTANCE_CU124}\n", both_log)
+        self.assertNotIn("@sha256:", both_log)
         self.assertIn(f"tag {INSTANCE} comfyfleet:latest", both_log)
         self.assertIn(
             f"tag {INSTANCE_CU124} comfyfleet:phase1\n",
             both_log,
         )
+
+    def test_default_refs_are_moving_tags_and_digest_override_wins(self):
+        script = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertNotRegex(script, r"sha256:[0-9a-f]{64}")
+        self.assertNotIn("MANAGER_PIN", script)
+        self.assertNotIn("CU130_PIN", script)
+        self.assertNotIn("CU124_PIN", script)
+        self.assertIn("${INSTANCE_REPO}:cu130", script)
+        self.assertIn("${INSTANCE_REPO}:cu124", script)
+        self.assertIn("${MANAGER_REPO}:latest", script)
+        self.assertNotIn("${INSTANCE_REPO}:cu130@", script)
+        self.assertNotIn("${MANAGER_REPO}:latest@", script)
+
+        instance_digest = "sha256:" + ("ab" * 32)
+        manager_digest = "sha256:" + ("cd" * 32)
+        instance_pin = f"ghcr.io/recognizeyourprivilege/comfyfleet@{instance_digest}"
+        manager_pin = f"ghcr.io/recognizeyourprivilege/comfyfleet-manager@{manager_digest}"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            log = Path(tmp) / "docker.log"
+            fake = bin_dir / "docker"
+            fake.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+            base = {"PATH": f"{bin_dir}{os.pathsep}/usr/bin:/bin", "DOCKER_LOG": str(log)}
+
+            pinned = subprocess.run(
+                ["bash", str(ROOT / "install.sh"), "--pull-only", "--cuda-tag", "both"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **base,
+                    "COMFYFLEET_INSTANCE_DIGEST": instance_digest,
+                    "COMFYFLEET_MANAGER_DIGEST": manager_digest,
+                },
+            )
+            self.assertEqual(pinned.returncode, 0, pinned.stderr)
+            pulled = log.read_text(encoding="utf-8")
+            self.assertIn(f"pull {instance_pin}\n", pulled)
+            self.assertIn(f"pull {manager_pin}\n", pulled)
+            self.assertIn(f"pull {INSTANCE_CU124}\n", pulled)
+            self.assertNotIn(f"pull {INSTANCE}\n", pulled)
+            self.assertNotIn(f"pull {MANAGER}\n", pulled)
+
+            log.write_text("", encoding="utf-8")
+            cu124_pinned = subprocess.run(
+                ["bash", str(ROOT / "install.sh"), "--cuda-tag", "cu124"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **base,
+                    "COMFYFLEET_PASSWORD": "not-printed",
+                    "COMFYFLEET_PUBLIC_HOST": "192.168.1.20",
+                    "COMFYFLEET_INSTANCE_DIGEST": "abcd",
+                    "COMFYFLEET_MANAGER_DIGEST": manager_digest,
+                },
+            )
+            self.assertEqual(cu124_pinned.returncode, 0, cu124_pinned.stderr)
+            pinned_log = log.read_text(encoding="utf-8")
+            bare_instance = "ghcr.io/recognizeyourprivilege/comfyfleet@sha256:abcd"
+            self.assertIn(f"pull {bare_instance}\n", pinned_log)
+            self.assertIn(f"pull {manager_pin}\n", pinned_log)
+            self.assertNotIn(f"pull {INSTANCE_CU124}\n", pinned_log)
+            self.assertNotIn(f"pull {MANAGER}\n", pinned_log)
+            self.assertTrue(pinned_log.rstrip().endswith(manager_pin))
+            self.assertNotIn("not-printed", cu124_pinned.stdout + cu124_pinned.stderr)
 
     def test_publish_script_pushes_both_dockerfiles(self):
         script = ROOT / "scripts" / "publish-images.sh"

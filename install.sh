@@ -15,14 +15,9 @@ OWNER="$(printf '%s' "${COMFYFLEET_GHCR_OWNER:-recognizeyourprivilege}" | tr '[:
 INSTANCE_REPO="${REGISTRY}/${OWNER}/comfyfleet"
 MANAGER_REPO="${REGISTRY}/${OWNER}/comfyfleet-manager"
 LOCAL_MANAGER_TAG="comfyfleet-manager:latest"
-# Published primary-tag digests from GHCR publish run 37210075406
-# (main b903c470). Aliases (:latest → cu130, :phase1 → cu124) are the same
-# images and are not pinned separately. Do not replace these with
-# placeholders. Bump them after the next GHCR publish of cu130, cu124, and
-# the manager image.
-CU130_PIN="sha256:3b4ad9c26b550f945cef0627707653d6015d3782782ee9e05cfcafd2fde4043a"
-CU124_PIN="sha256:b8b5a2281761a7a438e9610182a0eb7ae94cd1d53ff02a14db393d131db91887"
-MANAGER_PIN="sha256:d7fc7835d54a8b35705583daf539781535a82850494b26d92f32c55f05ab925d"
+# Default pulls are the moving GHCR tags. The next publish of those tags is
+# what the next install gets. Do not pin a digest here. An operator who wants
+# one image frozen sets COMFYFLEET_INSTANCE_DIGEST or COMFYFLEET_MANAGER_DIGEST.
 CUDA_TAG=""
 CUDA_TAG_EXPLICIT=0
 NAME="${COMFYFLEET_CONTAINER_NAME:-comfyfleet-manager}"
@@ -48,20 +43,21 @@ CUDA line (pick the one that matches the host NVIDIA driver major):
   cu130   host driver CUDA 13.0. Default when this prompt is skipped
           (stdin is not a terminal, or the choice is left empty).
           Does not pull cu124.
-          ${INSTANCE_REPO}:cu130@${CU130_PIN}
+          ${INSTANCE_REPO}:cu130
   cu124   host driver CUDA 12.4.
-          ${INSTANCE_REPO}:cu124@${CU124_PIN}
+          ${INSTANCE_REPO}:cu124
           A wrong line can fail when an instance starts.
   both    pull and tag cu130 and cu124. Manager COMFYFLEET_CUDA_TAG stays
           cu130 unless COMFYFLEET_INSTANCE_IMAGE is already a cu124 ref.
           Create can pick either line because both images are local.
 
-Default images when the line is cu130:
-  ${INSTANCE_REPO}:cu130@${CU130_PIN}
-  ${MANAGER_REPO}:latest@${MANAGER_PIN}
+Default images when the line is cu130 (moving tags; the next publish wins):
+  ${INSTANCE_REPO}:cu130
+  ${MANAGER_REPO}:latest
 
   COMFYFLEET_INSTANCE_IMAGE / COMFYFLEET_MANAGER_IMAGE replace those refs.
-  COMFYFLEET_INSTANCE_DIGEST / COMFYFLEET_MANAGER_DIGEST (sha256:...) pull a different digest.
+  COMFYFLEET_INSTANCE_DIGEST / COMFYFLEET_MANAGER_DIGEST (sha256:...) pin that
+  pull. Unset, install follows the tags above.
 
 The instance image is tagged comfyfleet:<cuda tag>. The manager image is tagged
 ${LOCAL_MANAGER_TAG}. The running manager gets COMFYFLEET_INSTANCE_IMAGE and
@@ -158,16 +154,11 @@ digest_ref() {
   printf '%s@%s\n' "${repo}" "${digest}"
 }
 
-# A ref that still carries the published cu130 digest is that line, even when
-# the tag says phase1. phase1 without that digest is the cu124 alias.
+# :latest is the cu130 alias. :phase1 is the cu124 alias.
 image_line() {
   local ref="$1"
   if [[ -z "${ref}" ]]; then
     printf '%s\n' ""
-    return
-  fi
-  if [[ "${ref}" == *"${CU130_PIN}"* ]]; then
-    printf '%s\n' "cu130"
     return
   fi
   case "${ref}" in
@@ -179,13 +170,7 @@ image_line() {
 
 default_line_ref() {
   local tag="$1"
-  if [[ "${tag}" == "cu130" ]]; then
-    printf '%s\n' "${INSTANCE_REPO}:cu130@${CU130_PIN}"
-  elif [[ -n "${CU124_PIN}" ]]; then
-    printf '%s\n' "${INSTANCE_REPO}:cu124@${CU124_PIN}"
-  else
-    printf '%s\n' "${INSTANCE_REPO}:cu124"
-  fi
+  printf '%s\n' "${INSTANCE_REPO}:${tag}"
 }
 
 choose_cuda_tag() {
@@ -232,9 +217,7 @@ elif [[ -n "${COMFYFLEET_INSTANCE_IMAGE:-}" && "${COMFYFLEET_INSTANCE_IMAGE}" ==
 elif [[ -n "${COMFYFLEET_INSTANCE_IMAGE:-}" && "$(image_line "${COMFYFLEET_INSTANCE_IMAGE}")" == "${MANAGER_CUDA_TAG}" ]]; then
   INSTANCE_REF="${COMFYFLEET_INSTANCE_IMAGE}"
 elif [[ "${MANAGER_CUDA_TAG}" == "cu130" ]]; then
-  INSTANCE_REF="${INSTANCE_REPO}:cu130@${CU130_PIN}"
-elif [[ -n "${CU124_PIN}" ]]; then
-  INSTANCE_REF="${INSTANCE_REPO}:cu124@${CU124_PIN}"
+  INSTANCE_REF="${INSTANCE_REPO}:cu130"
 else
   INSTANCE_REF="${INSTANCE_REPO}:cu124"
 fi
@@ -244,7 +227,7 @@ if [[ -n "${COMFYFLEET_MANAGER_DIGEST:-}" ]]; then
 elif [[ -n "${COMFYFLEET_MANAGER_IMAGE:-}" ]]; then
   MANAGER_REF="${COMFYFLEET_MANAGER_IMAGE}"
 else
-  MANAGER_REF="${MANAGER_REPO}:latest@${MANAGER_PIN}"
+  MANAGER_REF="${MANAGER_REPO}:latest"
 fi
 
 # Create reads this name on the host engine. install always sets it.
