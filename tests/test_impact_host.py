@@ -25,6 +25,7 @@ from comfyfleet.ownership import (
     chown_new_directory,
     ensure_wildcards_dir,
     fix_owner,
+    resolve_comfyui_ids,
 )
 from comfyfleet.paths import WILDCARDS_CONTAINER, FleetLayout
 from comfyfleet.prune import (
@@ -138,7 +139,7 @@ class ImpactBakeContractTests(unittest.TestCase):
             entry.index("/opt/comfyfleet/seed_impact_config.py"),
             entry.index("exec /opt/venv/bin/python main.py"),
         )
-        self.assertIn("/home/models/sams", readme)
+        self.assertIn("/home/ComfyFleet/models/sams", readme)
         self.assertIn("custom_wildcards = /home/wildcards", readme)
         self.assertIn("comfyfleet fix-owner", readme)
         script = (ROOT / "docker" / "verify_image_pins.py").read_text(encoding="utf-8")
@@ -374,6 +375,129 @@ class FixOwnerTests(unittest.TestCase):
             self.assertEqual(result.user, "comfyui")
             self.assertEqual(result.uid, 7)
             self.assertTrue(any(path.endswith("/wildcards") or path.endswith("\\wildcards") for path in result.paths))
+
+    def test_missing_comfyui_account_is_created_without_a_home_sibling(self):
+        users: dict[str, tuple[int, int]] = {}
+        groups: dict[str, int] = {}
+        calls: list[list[str]] = []
+
+        def getpwnam(name):
+            if name not in users:
+                raise KeyError(name)
+            uid, gid = users[name]
+            return mock.Mock(pw_uid=uid, pw_gid=gid)
+
+        def getgrnam(name):
+            if name not in groups:
+                raise KeyError(name)
+            return mock.Mock(gr_gid=groups[name])
+
+        def run(argv):
+            calls.append(list(argv))
+            if argv[0] == "groupadd":
+                groups[argv[-1]] = 1100
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            if argv[0] == "useradd":
+                users[argv[-1]] = (1101, 1100)
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            raise AssertionError(argv)
+
+        with mock.patch("comfyfleet.ownership.pwd.getpwnam", getpwnam), mock.patch(
+            "comfyfleet.ownership.grp.getgrnam", getgrnam
+        ), mock.patch("comfyfleet.ownership._account_binary", lambda name, _kind: name):
+            uid, gid = resolve_comfyui_ids(run=run)
+
+        self.assertEqual((uid, gid), (1101, 1100))
+        self.assertEqual(calls[0], ["groupadd", "comfyui"])
+        useradd = calls[1]
+        self.assertEqual(useradd[0], "useradd")
+        self.assertIn("--no-create-home", useradd)
+        self.assertNotIn("--create-home", useradd)
+        self.assertNotIn("-m", useradd)
+        self.assertEqual(useradd[useradd.index("--home-dir") + 1], "/home/ComfyFleet")
+        self.assertNotIn("/home/comfyui", useradd)
+        self.assertTrue(all("adduser" not in part for part in useradd))
+        self.assertEqual(useradd[-1], "comfyui")
+
+        calls.clear()
+        with mock.patch("comfyfleet.ownership.pwd.getpwnam", getpwnam), mock.patch(
+            "comfyfleet.ownership.grp.getgrnam", getgrnam
+        ):
+            again = resolve_comfyui_ids(run=run)
+        self.assertEqual(again, (1101, 1100))
+        self.assertEqual(calls, [])
+
+    def test_fix_owner_chowns_after_creating_a_missing_account(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            layout = FleetLayout(Path(tmp) / "ComfyFleet")
+            layout.models.mkdir(parents=True)
+            state = {"user": False}
+            created = []
+            chowned = []
+
+            def getpwnam(name):
+                if name != "comfyui" or not state["user"]:
+                    raise KeyError(name)
+                return mock.Mock(pw_uid=42, pw_gid=43)
+
+            def getgrnam(name):
+                if name != "comfyui":
+                    raise KeyError(name)
+                return mock.Mock(gr_gid=43)
+
+            def run(argv):
+                created.append(list(argv))
+                if argv[0] == "useradd":
+                    state["user"] = True
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            def spy(path, uid, gid):
+                chowned.append((Path(path), uid, gid))
+
+            with mock.patch("comfyfleet.ownership.pwd.getpwnam", getpwnam), mock.patch(
+                "comfyfleet.ownership.grp.getgrnam", getgrnam
+            ), mock.patch("comfyfleet.ownership._account_binary", lambda name, _kind: name):
+                result = fix_owner(layout, resolve=lambda: resolve_comfyui_ids(run=run), chown=spy)
+
+            self.assertEqual((result.uid, result.gid), (42, 43))
+            self.assertEqual(chowned, [(layout.models, 42, 43)])
+            self.assertEqual(created[0][0], "useradd")
+            self.assertNotIn("groupadd", [item[0] for item in created])
+            self.assertIn("--no-create-home", created[0])
+
+    def test_account_create_failure_names_the_host_user(self):
+        def getpwnam(_name):
+            raise KeyError("comfyui")
+
+        def getgrnam(_name):
+            return mock.Mock(gr_gid=7)
+
+        def run(argv):
+            return subprocess.CompletedProcess(argv, 1, "", "useradd: Permission denied")
+
+        with mock.patch("comfyfleet.ownership.pwd.getpwnam", getpwnam), mock.patch(
+            "comfyfleet.ownership.grp.getgrnam", getgrnam
+        ), mock.patch("comfyfleet.ownership._account_binary", lambda name, _kind: name):
+            with self.assertRaises(FleetError) as ctx:
+                resolve_comfyui_ids(run=run)
+        message = str(ctx.exception)
+        self.assertIn("cannot resolve host user comfyui by name", message)
+        self.assertIn("Permission denied", message)
+        self.assertNotIn("hose", message)
+        self.assertNotIn("Create the comfyui user before running fix-owner", message)
+
+        chowned = []
+        with tempfile.TemporaryDirectory() as tmp:
+            layout = FleetLayout(Path(tmp))
+            layout.files.mkdir()
+            with mock.patch(
+                "comfyfleet.ownership.resolve_comfyui_ids",
+                side_effect=FleetError(message),
+            ):
+                with self.assertRaises(FleetError) as blocked:
+                    fix_owner(layout, chown=lambda *args: chowned.append(args))
+            self.assertEqual(str(blocked.exception), message)
+            self.assertEqual(chowned, [])
 
 
 class PruneTests(unittest.TestCase):

@@ -165,7 +165,7 @@ class LaunchParseTests(unittest.TestCase):
                 "port": 8188,
                 "gpus": [0],
                 "image": DEFAULT_IMAGE,
-                "workflow_host_path": "/home/files/portrait/default_workflow.json",
+                "workflow_host_path": "/home/ComfyFleet/files/portrait/default_workflow.json",
             },
             Path("comfyfleet.json"),
         )

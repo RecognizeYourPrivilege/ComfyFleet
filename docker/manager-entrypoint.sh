@@ -40,10 +40,10 @@ if ! command -v nvidia-smi >/dev/null 2>&1; then
   echo "comfyfleet: this image does not ship a CUDA stack. Create and start fail until the probe succeeds." >&2
 fi
 
-if ! awk '$2 == "/home" { found = 1 } END { exit found ? 0 : 1 }' /proc/mounts; then
-  echo "comfyfleet: /home is not a bind mount." >&2
-  echo "comfyfleet: mount the host parent with -v /home:/home so instance files, models, and workflow JSON are on the host." >&2
-  echo "comfyfleet: sibling containers receive those same host paths. A /home that exists only inside the manager is not visible to them." >&2
+if ! awk '$2 == "/home/ComfyFleet" { found = 1 } END { exit found ? 0 : 1 }' /proc/mounts; then
+  echo "comfyfleet: /home/ComfyFleet is not a bind mount." >&2
+  echo "comfyfleet: mount the host storage root with -v /home/ComfyFleet:/home/ComfyFleet so instance files, models, and workflow JSON are on the host." >&2
+  echo "comfyfleet: sibling containers receive those same host paths. A /home/ComfyFleet that exists only inside the manager is not visible to them." >&2
 fi
 
 echo "comfyfleet: Open Comfy uses the browser host and the instance port. COMFYFLEET_PUBLIC_HOST is not used for that link." >&2

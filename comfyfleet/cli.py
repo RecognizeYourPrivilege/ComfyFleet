@@ -185,8 +185,10 @@ def build_parser() -> argparse.ArgumentParser:
     owner = sub.add_parser(
         "fix-owner",
         help=(
-            "chown -R comfyui:comfyui on /home/wildcards, /home/models, "
-            "/home/custom_nodes_*, and /home/files. No path argument."
+            "chown -R comfyui:comfyui on /home/ComfyFleet/wildcards, "
+            "/home/ComfyFleet/models, /home/ComfyFleet/custom_nodes_*, and "
+            "/home/ComfyFleet/files. Creates the comfyui user and group when "
+            "those names are missing. No path argument."
         ),
     )
     owner.set_defaults(func=_cmd_fix_owner)
