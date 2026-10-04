@@ -364,7 +364,7 @@ That helper resolves the user and group `comfyui:comfyui`. When either name is m
 | `/home/ComfyFleet/custom_nodes_*` | recurse each matching directory |
 | `/home/ComfyFleet/files` | recurse when the directory exists |
 
-A path outside that allowlist is refused, including `..` and a symlink whose target leaves the allowlist. An unauthenticated call is **401** and does not chown anything.
+A path outside that allowlist is refused, including `..` and a symlink whose target leaves the allowlist. A symlink that resolves to `/opt/comfyfleet/baked_custom_nodes` or a path under it is the instance entrypoint's link to an image directory (`ComfyUI-Manager` and the other baked custom nodes). That link does not fail the walk. The symlink inode on the host volume is chowned to `comfyui:comfyui` and the image directory is not entered, so the baked files are not chowned. A symlink that resolves anywhere else outside the allowlist still refuses the run. An unauthenticated call is **401** and does not chown anything.
 
 ```json
 {

@@ -3,7 +3,9 @@
 ``comfyfleet fix-owner`` and ``POST /api/host/fix-owner`` both call
 :func:`fix_owner`. The allowlist is fixed: there is no path argument.
 Recursive ``chown`` runs only on those trees, and a path that escapes them
-is refused before it is chowned.
+is refused before it is chowned. A symlink whose target is the image
+directory ``/opt/comfyfleet/baked_custom_nodes`` (ComfyUI-Manager and the
+other baked custom nodes) is not followed and does not abort the walk.
 
 Instance create uses :func:`ensure_wildcards_dir`, which creates
 ``/home/ComfyFleet/wildcards`` only when it is missing and chowns that new
@@ -26,6 +28,10 @@ from comfyfleet.paths import HOST_ROOT, FleetLayout
 
 OWNER_NAME = "comfyui"
 GROUP_NAME = "comfyui"
+# Absolute directory inside the instance image. The entrypoint symlinks each
+# baked custom node into the host ``custom_nodes_*`` volume with this prefix.
+# It is not a host path under ``/home/ComfyFleet``.
+BAKED_CUSTOM_NODES = Path("/opt/comfyfleet/baked_custom_nodes")
 _CUSTOM_NODES_PREFIX = "custom_nodes_"
 _NODE_SUFFIX = re.compile(r"[A-Za-z0-9._-]+\Z")
 
@@ -204,6 +210,8 @@ def fix_owner(
     """Recursively chown the fixed allowlist to ``comfyui:comfyui``.
 
     No caller-supplied path. Roots outside ``layout.root`` are refused.
+    Symlinks into ``/opt/comfyfleet/baked_custom_nodes`` do not fail the
+    walk and are not followed.
     """
 
     from comfyfleet.control import authorize
@@ -253,8 +261,11 @@ def assert_allowlisted(path: Path, layout: FleetLayout) -> Path:
     """Raise ``FleetError`` unless ``path`` stays inside an allowlisted root.
 
     ``..``, absolute paths outside the fleet root, and symlinks whose
-    target leaves the allowlist are refused. The returned path is
-    normalized without following symlinks.
+    target leaves the allowlist are refused. A symlink that resolves to
+    ``/opt/comfyfleet/baked_custom_nodes`` or a path under it is the
+    instance entrypoint's link to an image directory. That link is not an
+    escape. The caller chowns the symlink inode and does not follow it.
+    The returned path is normalized without following symlinks.
     """
 
     root = _abs(layout.root)
@@ -263,6 +274,8 @@ def assert_allowlisted(path: Path, layout: FleetLayout) -> Path:
         raise FleetError(f"refusing path outside the {root} allowlist: {path}")
     if not _is_allowlisted_lexical(normalized, layout):
         raise FleetError(f"refusing path outside the fix-owner allowlist: {path}")
+    if _is_baked_custom_node_symlink(path):
+        return normalized
     if path.is_symlink() or path.exists():
         real = Path(os.path.realpath(path))
         real_norm = _abs(real)
@@ -274,7 +287,12 @@ def assert_allowlisted(path: Path, layout: FleetLayout) -> Path:
 
 
 def chown_tree(root: Path, uid: int, gid: int, layout: FleetLayout, chown) -> None:
-    """``chown`` ``root`` and its descendants. Symlinks are not followed."""
+    """``chown`` ``root`` and its descendants. Symlinks are not followed.
+
+    A symlink into the image baked custom nodes is chowned as a symlink
+    inode and is not entered. Any other symlink whose target leaves the
+    allowlist is refused before it is chowned.
+    """
 
     assert_allowlisted(root, layout)
     if not root.exists() and not root.is_symlink():
@@ -308,6 +326,22 @@ def chown_inode(path: Path, uid: int, gid: int) -> None:
         os.chown(path, uid, gid, follow_symlinks=False)
     except OSError as exc:
         raise FleetError(f"cannot chown {path} to {uid}:{gid}: {exc}") from exc
+
+
+def _is_baked_custom_node_symlink(path: Path) -> bool:
+    """True when ``path`` is a symlink into the image baked custom nodes.
+
+    The resolved target is compared with the literal baked directory.
+    ``..`` and a lookalike prefix such as ``baked_custom_nodes_evil`` do
+    not match. The baked directory itself is not realpath'd, so a host
+    symlink planted at that path cannot widen the match onto another tree.
+    """
+
+    if not path.is_symlink():
+        return False
+    real = _abs(Path(os.path.realpath(path)))
+    baked = _abs(BAKED_CUSTOM_NODES)
+    return _is_under(real, baked)
 
 
 def _is_custom_nodes_name(name: str) -> bool:
