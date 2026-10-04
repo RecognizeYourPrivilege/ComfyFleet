@@ -71,6 +71,7 @@ _MISSING_WORKFLOW = (
     "There is no baked default workflow."
 )
 _CREATE_FIELDS = (
+    "name",
     "workflow_path",
     "gpu",
     "gpus",
@@ -246,6 +247,7 @@ class _Upload:
 @dataclass
 class _CreateForm:
     upload: _Upload | None
+    name: str | None
     workflow_path: str | None
     gpu: str | None
     gpus: str | None
@@ -832,6 +834,7 @@ def _create(context: ApiContext, body: bytes, content_type: str | None) -> Respo
                 preview_size=form.preview_size,
                 extra_args=form.extra_args,
             ),
+            name=form.name,
             custom_node_git_urls=form.custom_node_git_urls,
             custom_nodes_zip=_zip_payload(form.custom_nodes_zips),
             custom_nodes_zip_names=form.custom_nodes_zip_names or None,
@@ -1100,6 +1103,7 @@ def _parse_create_form(body: bytes, content_type: str | None) -> _CreateForm:
         )
     return _CreateForm(
         upload=upload,
+        name=_optional_str(fields.get("name")),
         workflow_path=_optional_str(fields.get("workflow_path")),
         gpu=_optional_str(fields.get("gpu")),
         gpus=_optional_str(fields.get("gpus")),

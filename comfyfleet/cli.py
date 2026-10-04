@@ -63,6 +63,14 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Path to the operator workflow JSON. Required. There is no baked default.",
     )
+    create.add_argument(
+        "--name",
+        default=None,
+        help=(
+            "Container name. Blank uses the workflow JSON filename. "
+            "A typed name wins and is sanitized the same way as that filename."
+        ),
+    )
     create.add_argument("--gpu", help="One GPU index (non-interactive), for example 0")
     create.add_argument("--gpus", help="GPU indices, for example 0,1 or all")
     create.add_argument("--image", default=DEFAULT_IMAGE, help=f"Image ref override (default {DEFAULT_IMAGE})")
@@ -282,6 +290,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
             preview_size=args.preview_size,
             extra_args=combine_extra_args(args.extra_args, args.comfy_extra_args),
         ),
+        name=args.name,
         custom_node_git_urls=args.custom_node_git_urls,
         custom_nodes_zip=zip_bytes,
         custom_nodes_zip_names=args.custom_nodes_zip_names,

@@ -629,6 +629,7 @@ class CliForwardTests(unittest.TestCase):
         self.assertTrue(args.install_missing_from_workflow)
         self.assertIsNone(args.custom_node_git_urls)
         self.assertIsNone(args.custom_nodes_zip)
+        self.assertIsNone(args.name)
         skipped = build_parser().parse_args(
             [
                 "create",
@@ -679,6 +680,8 @@ class CliForwardTests(unittest.TestCase):
                         "https://github.com/a/b",
                         "--custom-nodes-zip",
                         str(archive),
+                        "--name",
+                        "My Studio",
                         "--comfy-extra-args=--mmap-torch-files",
                     ]
                 )
@@ -686,6 +689,7 @@ class CliForwardTests(unittest.TestCase):
             kwargs = create.call_args.kwargs
             self.assertEqual(kwargs["custom_node_git_urls"], ["https://github.com/a/b"])
             self.assertEqual(kwargs["custom_nodes_zip"], archive.read_bytes())
+            self.assertEqual(kwargs["name"], "My Studio")
             self.assertIsNone(kwargs["custom_nodes_zip_names"])
             self.assertEqual(kwargs["custom_nodes_zip_labels"], ["nodes.zip"])
             self.assertTrue(kwargs["install_missing_from_workflow"])
