@@ -104,6 +104,19 @@ class ControlTests(unittest.TestCase):
             **kwargs,
         )
 
+    def test_typed_container_name_wins_over_the_workflow_filename(self):
+        result = self._create("Portrait.json", name="My Studio")
+        self.assertEqual(result.instance.name, "my_studio")
+        self.assertEqual(self.docker.status("my_studio"), "created")
+        self.assertIsNone(self.docker.status("portrait"))
+        self.assertTrue((self.root / "files" / "my_studio" / "default_workflow.json").is_file())
+        self.assertFalse((self.root / "files" / "portrait").exists())
+
+    def test_blank_container_name_uses_the_workflow_filename(self):
+        result = self._create("My Flow.json", name="   ")
+        self.assertEqual(result.instance.name, "my_flow")
+        self.assertEqual(self.docker.status("my_flow"), "created")
+
     def test_create_without_start_reserves_mounts_and_port(self):
         result = self._create("Portrait.json")
         self.assertFalse(result.started)

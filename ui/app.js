@@ -24,6 +24,7 @@ const gpuNote = document.querySelector("#gpu-note");
 const fileInput = document.querySelector("#workflow-file");
 const fileName = document.querySelector("#file-name");
 const pathInput = document.querySelector("#workflow-path");
+const instanceNameInput = document.querySelector("#instance-name");
 const forceInput = document.querySelector("#force");
 const instanceImageInput = document.querySelector("#instance-image");
 const reserveInput = document.querySelector("#reserve-vram");
@@ -447,6 +448,7 @@ async function submitCreate(start) {
   const body = new FormData();
   if (file) body.append("workflow", file, file.name);
   if (workflowPath) body.append("workflow_path", workflowPath);
+  body.append("name", instanceNameInput.value.trim());
   body.append("gpus", chosen.join(","));
   body.append("cuda_tag", selectedCudaTag());
   const imageOverride = instanceImageInput.value.trim();
@@ -488,6 +490,7 @@ async function submitCreate(start) {
   fileInput.value = "";
   fileName.textContent = "No file chosen";
   pathInput.value = "";
+  instanceNameInput.value = "";
   forceInput.checked = false;
   instanceImageInput.value = "";
   gitUrlsInput.value = "";
