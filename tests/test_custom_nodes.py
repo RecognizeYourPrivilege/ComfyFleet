@@ -14,6 +14,7 @@ from comfyfleet.control import ActionResult, Instance, create_instance
 from comfyfleet.custom_nodes import (
     clone_git_urls,
     extract_custom_nodes_zip,
+    extract_custom_nodes_zips,
     is_allowed_git_url,
     parse_node_map,
     plan_missing_installs,
@@ -82,6 +83,16 @@ def _zip(members: dict[str, bytes]) -> bytes:
         for name, data in members.items():
             archive.writestr(name, data)
     return buffer.getvalue()
+
+
+def _pyproject(name: str, display: str = "Pretty Label") -> bytes:
+    return (
+        "[project]\n"
+        f'name = "{name}"\n'
+        "\n"
+        "[tool.comfy]\n"
+        f'DisplayName = "{display}"\n'
+    ).encode()
 
 
 class CustomNodeUnitTests(unittest.TestCase):
@@ -180,6 +191,115 @@ class CustomNodeUnitTests(unittest.TestCase):
             self.assertEqual(warnings, [])
             self.assertTrue(extracted)
             self.assertIn("MyNode", (dest / "MyNode" / "__init__.py").read_text(encoding="utf-8"))
+
+    def test_blank_name_uses_pyproject_not_display_name_or_json(self):
+        with TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "nodes"
+            warnings, extracted = extract_custom_nodes_zip(
+                _zip(
+                    {
+                        "ComfyUI-Impact-Pack-main/__init__.py": b"zipped\n",
+                        "ComfyUI-Impact-Pack-main/pyproject.toml": _pyproject(
+                            "comfyui-impact-pack"
+                        ),
+                        "ComfyUI-Impact-Pack-main/node_list.json": b'{"name": "not-the-pack"}\n',
+                    }
+                ),
+                dest,
+                directory="  ",
+            )
+            self.assertEqual(warnings, [])
+            self.assertTrue(extracted)
+            packed = dest / "comfyui-impact-pack" / "__init__.py"
+            self.assertEqual(packed.read_text(encoding="utf-8"), "zipped\n")
+            self.assertFalse((dest / "ComfyUI-Impact-Pack-main").exists())
+            self.assertFalse((dest / "Pretty Label").exists())
+            self.assertFalse((dest / "not-the-pack").exists())
+
+    def test_typed_name_wins_over_pyproject(self):
+        with TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "nodes"
+            warnings, extracted = extract_custom_nodes_zip(
+                _zip(
+                    {
+                        "Repo-main/__init__.py": b"typed\n",
+                        "Repo-main/pyproject.toml": _pyproject("from-toml"),
+                    }
+                ),
+                dest,
+                directory="ComfyUI-Impact-Pack",
+            )
+            self.assertEqual(warnings, [])
+            self.assertTrue(extracted)
+            self.assertEqual(
+                (dest / "ComfyUI-Impact-Pack" / "__init__.py").read_text(encoding="utf-8"),
+                "typed\n",
+            )
+            self.assertFalse((dest / "from-toml").exists())
+
+    def test_flat_registry_zip_uses_project_name(self):
+        with TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "nodes"
+            warnings, extracted = extract_custom_nodes_zip(
+                _zip(
+                    {
+                        "__init__.py": b"flat\n",
+                        "pyproject.toml": _pyproject("flat-pack"),
+                    }
+                ),
+                dest,
+            )
+            self.assertEqual(warnings, [])
+            self.assertTrue(extracted)
+            self.assertEqual(
+                (dest / "flat-pack" / "__init__.py").read_text(encoding="utf-8"),
+                "flat\n",
+            )
+            self.assertFalse((dest / "__init__.py").exists())
+
+    def test_invalid_name_writes_nothing(self):
+        with TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "nodes"
+            warnings, extracted = extract_custom_nodes_zip(
+                _zip({"Ok/a.py": b"x=1\n", "Ok/pyproject.toml": _pyproject("ok-pack")}),
+                dest,
+                directory="../etc",
+            )
+            self.assertFalse(extracted)
+            self.assertIn("name is invalid", warnings[0])
+            self.assertFalse(dest.exists())
+
+    def test_several_zips_each_keep_their_own_name(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dest = root / "nodes"
+            warnings, extracted = extract_custom_nodes_zips(
+                [
+                    _zip(
+                        {
+                            "A-main/__init__.py": b"aaa\n",
+                            "A-main/pyproject.toml": _pyproject("pack-a"),
+                        }
+                    ),
+                    _zip({"../outside.txt": b"pwned", "Ok/a.py": b"x"}),
+                    _zip(
+                        {
+                            "C-main/__init__.py": b"ccc\n",
+                            "C-main/pyproject.toml": _pyproject("pack-c"),
+                        }
+                    ),
+                ],
+                dest,
+                names=["", " ", "TypedPack"],
+                labels=["a.zip", "bad.zip", "c.zip"],
+            )
+            self.assertTrue(extracted)
+            self.assertTrue(any(item.startswith("bad.zip:") and "rejected" in item for item in warnings))
+            self.assertEqual((dest / "pack-a" / "__init__.py").read_text(encoding="utf-8"), "aaa\n")
+            self.assertEqual((dest / "TypedPack" / "__init__.py").read_text(encoding="utf-8"), "ccc\n")
+            self.assertFalse((dest / "pack-c").exists())
+            self.assertFalse((root / "outside.txt").exists())
+            self.assertFalse((dest / "Ok").exists())
 
     def test_malformed_and_absent_zip(self):
         with TemporaryDirectory() as tmp:
@@ -400,6 +520,28 @@ class CreateCustomNodeTests(unittest.TestCase):
         self.assertEqual((nodes / "FromZip" / "__init__.py").read_text(encoding="utf-8"), "zipped\n")
         self.assertNotIn(("start", "portrait"), self.docker.calls)
 
+    def test_create_names_each_zip(self):
+        result = self._create(
+            "Portrait.json",
+            custom_nodes_zip=[
+                _zip(
+                    {
+                        "A-main/__init__.py": b"aaa\n",
+                        "A-main/pyproject.toml": _pyproject("pack-a"),
+                    }
+                ),
+                _zip({"B-main/__init__.py": b"bbb\n", "B-main/pyproject.toml": _pyproject("pack-b")}),
+            ],
+            custom_nodes_zip_names=["", "TypedB"],
+            install_missing_from_workflow=False,
+        )
+        self.assertEqual(result.warnings, [])
+        nodes = self.layout.custom_nodes("portrait")
+        self.assertEqual((nodes / "pack-a" / "__init__.py").read_text(encoding="utf-8"), "aaa\n")
+        self.assertEqual((nodes / "TypedB" / "__init__.py").read_text(encoding="utf-8"), "bbb\n")
+        self.assertTrue(str(nodes).startswith(str(self.layout.root)))
+        self.assertIn("/custom_nodes_portrait", str(nodes).replace("\\", "/"))
+
     def test_default_install_missing_posts_only_that_workflow_node(self):
         seen = []
 
@@ -544,8 +686,60 @@ class CliForwardTests(unittest.TestCase):
             kwargs = create.call_args.kwargs
             self.assertEqual(kwargs["custom_node_git_urls"], ["https://github.com/a/b"])
             self.assertEqual(kwargs["custom_nodes_zip"], archive.read_bytes())
+            self.assertIsNone(kwargs["custom_nodes_zip_names"])
+            self.assertEqual(kwargs["custom_nodes_zip_labels"], ["nodes.zip"])
             self.assertTrue(kwargs["install_missing_from_workflow"])
             self.assertIn("--mmap-torch-files", kwargs["launch"].argv())
+
+    def test_cli_forwards_several_zips_and_names(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflow = root / "Portrait.json"
+            workflow.write_text("{}\n", encoding="utf-8")
+            first = root / "a.zip"
+            second = root / "b.zip"
+            first.write_bytes(_zip({"A/a.py": b"x"}))
+            second.write_bytes(_zip({"B/b.py": b"y"}))
+            instance = Instance(
+                name="portrait",
+                port=8188,
+                gpus=[0],
+                image="img",
+                workflow_host_path=str(workflow),
+                workflow_source=str(workflow),
+                created_at="now",
+                launch=LaunchConfig(),
+            )
+            with (
+                mock.patch("comfyfleet.cli.detect_gpus", return_value=[Gpu(0, "GPU0", "1")]),
+                mock.patch("comfyfleet.cli.DockerCLI"),
+                mock.patch(
+                    "comfyfleet.cli.create_instance",
+                    return_value=ActionResult(instance=instance, started=False),
+                ) as create,
+            ):
+                code = main(
+                    [
+                        "create",
+                        "--workflow",
+                        str(workflow),
+                        "--gpu",
+                        "0",
+                        "--custom-nodes-zip",
+                        str(first),
+                        "--custom-nodes-zip-name",
+                        "",
+                        "--custom-nodes-zip",
+                        str(second),
+                        "--custom-nodes-zip-name",
+                        "TypedB",
+                    ]
+                )
+            self.assertEqual(code, 0)
+            kwargs = create.call_args.kwargs
+            self.assertEqual(kwargs["custom_nodes_zip"], [first.read_bytes(), second.read_bytes()])
+            self.assertEqual(kwargs["custom_nodes_zip_names"], ["", "TypedB"])
+            self.assertEqual(kwargs["custom_nodes_zip_labels"], ["a.zip", "b.zip"])
 
 
 if __name__ == "__main__":

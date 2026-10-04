@@ -695,6 +695,11 @@ pre {
 
 .file-well p { margin: 0; font-size: 17px; }
 
+.zip-packs { display: flex; flex-direction: column; gap: 12px; }
+.zip-packs:empty { display: none; }
+.zip-pack { display: flex; flex-direction: column; gap: 6px; }
+.zip-pack-file { font-size: 14px; color: var(--muted); word-break: break-all; }
+
 .text-input {
   width: 100%;
   min-height: var(--hit);

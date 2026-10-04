@@ -260,7 +260,8 @@ class _CreateForm:
     preview_size: str | None = None
     extra_args: str | None = None
     custom_node_git_urls: list[str] = field(default_factory=list)
-    custom_nodes_zip: bytes | None = None
+    custom_nodes_zips: list[tuple[str, bytes]] = field(default_factory=list)
+    custom_nodes_zip_names: list[str] = field(default_factory=list)
     install_missing_from_workflow: bool = True
     cuda_tag: str | None = None
     instance_image: str | None = None
@@ -832,7 +833,9 @@ def _create(context: ApiContext, body: bytes, content_type: str | None) -> Respo
                 extra_args=form.extra_args,
             ),
             custom_node_git_urls=form.custom_node_git_urls,
-            custom_nodes_zip=form.custom_nodes_zip,
+            custom_nodes_zip=_zip_payload(form.custom_nodes_zips),
+            custom_nodes_zip_names=form.custom_nodes_zip_names or None,
+            custom_nodes_zip_labels=[name for name, _data in form.custom_nodes_zips] or None,
             install_missing_from_workflow=form.install_missing_from_workflow,
             node_installer=context.node_installer,
             node_map=context.node_map,
@@ -1063,9 +1066,20 @@ def _safe_static(ui_dir: Path, url_path: str) -> Path | None:
     return None
 
 
+def _zip_payload(uploads: list[tuple[str, bytes]]) -> bytes | list[bytes] | None:
+    """One archive stays ``bytes`` so the single-zip path is unchanged."""
+
+    if not uploads:
+        return None
+    if len(uploads) == 1:
+        return uploads[0][1]
+    return [data for _name, data in uploads]
+
+
 def _parse_create_form(body: bytes, content_type: str | None) -> _CreateForm:
     media = (content_type or "").split(";", 1)[0].strip().lower()
-    zip_bytes: bytes | None = None
+    zip_uploads: list[tuple[str, bytes]] = []
+    zip_names: list[str] = []
     if body == b"" and media in {"", "application/json", "application/x-www-form-urlencoded"}:
         fields: dict[str, str] = {}
         git_urls: list[str] = []
@@ -1077,7 +1091,7 @@ def _parse_create_form(body: bytes, content_type: str | None) -> _CreateForm:
         fields, git_urls = _urlencoded_fields(body)
         upload = None
     elif media == "multipart/form-data":
-        fields, upload, git_urls, zip_bytes = _multipart_fields(content_type or "", body)
+        fields, upload, git_urls, zip_uploads, zip_names = _multipart_fields(content_type or "", body)
     else:
         raise HTTPStatusError(
             415,
@@ -1100,7 +1114,8 @@ def _parse_create_form(body: bytes, content_type: str | None) -> _CreateForm:
         preview_size=_optional_str(fields.get("preview_size")),
         extra_args=combine_extra_args(fields.get("extra_args"), fields.get("comfy_extra_args")),
         custom_node_git_urls=git_urls,
-        custom_nodes_zip=zip_bytes,
+        custom_nodes_zips=zip_uploads,
+        custom_nodes_zip_names=zip_names,
         install_missing_from_workflow=_as_bool(
             fields.get("install_missing_from_workflow"),
             default=True,
@@ -1169,12 +1184,13 @@ def _urlencoded_fields(body: bytes) -> tuple[dict[str, str], list[str]]:
 def _multipart_fields(
     content_type: str,
     body: bytes,
-) -> tuple[dict[str, str], _Upload | None, list[str], bytes | None]:
+) -> tuple[dict[str, str], _Upload | None, list[str], list[tuple[str, bytes]], list[str]]:
     boundary = _boundary(content_type)
     fields: dict[str, str] = {}
     upload: _Upload | None = None
     git_urls: list[str] = []
-    zip_bytes: bytes | None = None
+    zip_uploads: list[tuple[str, bytes]] = []
+    zip_names: list[str] = []
     for headers, data in _multipart_parts(boundary, body):
         name = headers.get("name")
         if not name:
@@ -1182,11 +1198,10 @@ def _multipart_fields(
         filename = headers.get("filename")
         if filename:
             if name == "custom_nodes_zip":
-                if zip_bytes is not None:
-                    raise FleetError("duplicate custom_nodes_zip upload")
-                _zip_filename(filename)
-                zip_bytes = data
+                zip_uploads.append((_zip_filename(filename), data))
                 continue
+            if name == "custom_nodes_zip_name":
+                raise FleetError("custom_nodes_zip_name must be a text field, not a file")
             safe = _upload_filename(filename)
             if name != "workflow":
                 raise FleetError("upload the workflow JSON as the multipart field 'workflow'")
@@ -1200,10 +1215,15 @@ def _multipart_fields(
             except UnicodeDecodeError as exc:
                 raise FleetError("form field 'custom_node_git_urls' is not UTF-8") from exc
             continue
+        if name == "custom_nodes_zip_name":
+            try:
+                zip_names.append(data.decode("utf-8").strip())
+            except UnicodeDecodeError as exc:
+                raise FleetError("form field 'custom_nodes_zip_name' is not UTF-8") from exc
+            continue
         if name == "custom_nodes_zip":
-            # A text field is not a zip. Blank is a no-op; other text is ignored
-            # with a warning at create time by treating it as an empty archive
-            # only when bytes were uploaded. Non-file values are not read from disk.
+            # A text field is not a zip. Blank is a no-op. Non-file values are
+            # not read from disk.
             if data.strip():
                 raise FleetError(
                     "custom_nodes_zip must be a multipart file, not a text field"
@@ -1217,7 +1237,7 @@ def _multipart_fields(
             fields[name] = data.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise FleetError(f"form field {name!r} is not UTF-8") from exc
-    return fields, upload, git_urls, zip_bytes
+    return fields, upload, git_urls, zip_uploads, zip_names
 
 
 def _git_url_values(value: object) -> list[str]:
@@ -1246,10 +1266,11 @@ def _split_git_url_field(value: str) -> list[str]:
     return found
 
 
-def _zip_filename(filename: str) -> None:
+def _zip_filename(filename: str) -> str:
     base = filename.replace("\\", "/").split("/")[-1]
     if not base or base in {".", ".."} or "\x00" in base:
         raise FleetError("custom_nodes_zip filename is invalid")
+    return base
 
 
 def _boundary(content_type: str) -> bytes:

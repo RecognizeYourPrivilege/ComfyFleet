@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,7 +17,7 @@ from pathlib import Path
 from comfyfleet.auth import AuthError, http_auth_state
 from comfyfleet.custom_nodes import (
     clone_git_urls,
-    extract_custom_nodes_zip,
+    extract_custom_nodes_zips,
     node_map_from_env,
     plan_missing_installs,
     trusted_manager_install,
@@ -136,7 +136,9 @@ def create_instance(
     use_env_limit: bool = False,
     launch: LaunchConfig | None = None,
     custom_node_git_urls: list[str] | None = None,
-    custom_nodes_zip: bytes | None = None,
+    custom_nodes_zip: bytes | Sequence[bytes] | None = None,
+    custom_nodes_zip_names: Sequence[str] | None = None,
+    custom_nodes_zip_labels: Sequence[str] | None = None,
     install_missing_from_workflow: bool = True,
     node_installer: Callable | None = None,
     node_map: dict[str, str] | None = None,
@@ -215,7 +217,12 @@ def create_instance(
             run=git_run,
         )
         node_warnings.extend(clone_warnings)
-        zip_warnings, _extracted = extract_custom_nodes_zip(custom_nodes_zip, nodes_dir)
+        zip_warnings, _extracted = extract_custom_nodes_zips(
+            custom_nodes_zip,
+            nodes_dir,
+            names=custom_nodes_zip_names,
+            labels=custom_nodes_zip_labels,
+        )
         node_warnings.extend(zip_warnings)
         if install_missing_from_workflow:
             resolved_map = node_map
