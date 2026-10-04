@@ -541,6 +541,7 @@ h2 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
 
 .confirm-card { width: min(480px, 100%); }
 .confirm-card p { margin: 12px 0 0; font-size: 16px; }
+#confirm-fields[hidden] { display: none; }
 
 .actions .btn { flex: 1 1 120px; }
 

@@ -26,8 +26,9 @@ from pathlib import Path
 from comfyfleet.errors import FleetError
 from comfyfleet.paths import HOST_ROOT, FleetLayout
 
-OWNER_NAME = "comfyui"
-GROUP_NAME = "comfyui"
+DEFAULT_OWNER_NAME = "comfyuser"
+DEFAULT_GROUP_NAME = "comfyuser"
+_ACCOUNT_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_-]{0,31}\Z")
 # Absolute directory inside the instance image. The entrypoint symlinks each
 # baked custom node into the host ``custom_nodes_*`` volume with this prefix.
 # It is not a host path under ``/home/ComfyFleet``.
@@ -45,92 +46,117 @@ class FixOwnerResult:
     paths: tuple[str, ...]
 
 
-def resolve_comfyui_ids(*, run=None) -> tuple[int, int]:
-    """Uid and gid of ``comfyui:comfyui``.
+def normalize_owner_names(user: str | None, group: str | None) -> tuple[str, str]:
+    """User and group for a chown. Blank values are ``comfyuser``."""
 
-    A missing user or group is created with ``useradd`` and ``groupadd``
-    (the same tools on Arch and on the Debian manager image). ``useradd``
-    does not create ``/home/comfyui``.
+    return (
+        _account_name(user, DEFAULT_OWNER_NAME, "user"),
+        _account_name(group, DEFAULT_GROUP_NAME, "group"),
+    )
+
+
+def _account_name(value: str | None, default: str, kind: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return default
+    if _ACCOUNT_NAME.fullmatch(text) is None:
+        raise FleetError(
+            f"host {kind} name is invalid: {text!r}. "
+            "Use a letter or underscore, then letters, digits, underscore, or hyphen."
+        )
+    return text
+
+
+def resolve_owner_ids(
+    user: str | None = None,
+    group: str | None = None,
+    *,
+    run=None,
+) -> tuple[int, int]:
+    """Uid and gid for ``user:group``.
+
+    Blank names are ``comfyuser``. A missing user or group is created with
+    ``useradd`` and ``groupadd`` (the same tools on Arch and on the Debian
+    manager image). ``useradd`` uses home ``/home/ComfyFleet`` and does not
+    create ``/home/<name>``.
     """
 
-    if _named_user() is None or _named_group() is None:
-        _ensure_comfyui_account(run or _run_account_tool)
-    user = _named_user()
-    group = _named_group()
-    if user is None:
-        raise FleetError(
-            "cannot resolve host user comfyui by name. "
-            "Creating the comfyui user failed."
-        )
-    if group is None:
-        raise FleetError(
-            "cannot resolve host group comfyui by name. "
-            "Creating the comfyui group failed."
-        )
-    return user.pw_uid, group.gr_gid
+    owner, group_name = normalize_owner_names(user, group)
+    if _named_user(owner) is None or _named_group(group_name) is None:
+        _ensure_account(owner, group_name, run or _run_account_tool)
+    user_row = _named_user(owner)
+    group_row = _named_group(group_name)
+    if user_row is None:
+        raise FleetError(_unresolved("user", owner))
+    if group_row is None:
+        raise FleetError(_unresolved("group", group_name))
+    return user_row.pw_uid, group_row.gr_gid
 
 
-def _named_user():
+def _named_user(name: str):
     try:
-        return pwd.getpwnam(OWNER_NAME)
+        return pwd.getpwnam(name)
     except KeyError:
         return None
 
 
-def _named_group():
+def _named_group(name: str):
     try:
-        return grp.getgrnam(GROUP_NAME)
+        return grp.getgrnam(name)
     except KeyError:
         return None
 
 
-def _ensure_comfyui_account(run) -> None:
-    if _named_group() is None:
-        binary = _account_binary("groupadd", "group")
-        detail = _invoke_account_tool(run, [binary, GROUP_NAME])
-        if _named_group() is None:
+def _ensure_account(user: str, group: str, run) -> None:
+    if _named_group(group) is None:
+        binary = _account_binary("groupadd", "group", group)
+        detail = _invoke_account_tool(run, [binary, group])
+        if _named_group(group) is None:
             raise FleetError(
-                "cannot resolve host group comfyui by name. "
-                "Creating the comfyui group failed: "
-                f"{detail or 'groupadd did not create the group.'}"
+                _unresolved("group", group, detail or "groupadd did not create the group.")
             )
-    if _named_user() is None:
-        binary = _account_binary("useradd", "user")
-        detail = _invoke_account_tool(run, _useradd_argv(binary))
-        if _named_user() is None:
+    if _named_user(user) is None:
+        binary = _account_binary("useradd", "user", user)
+        detail = _invoke_account_tool(run, _useradd_argv(binary, user, group))
+        if _named_user(user) is None:
             raise FleetError(
-                "cannot resolve host user comfyui by name. "
-                "Creating the comfyui user failed: "
-                f"{detail or 'useradd did not create the user.'}"
+                _unresolved("user", user, detail or "useradd did not create the user.")
             )
 
 
-def _useradd_argv(binary: str) -> list[str]:
-    """``useradd`` arguments that do not add a ``/home/comfyui`` directory."""
+def _useradd_argv(binary: str, user: str, group: str) -> list[str]:
+    """``useradd`` arguments that do not add a ``/home/<user>`` directory."""
 
     return [
         binary,
         "--no-create-home",
         "--no-user-group",
         "--gid",
-        GROUP_NAME,
+        group,
         "--home-dir",
         str(HOST_ROOT),
-        OWNER_NAME,
+        user,
     ]
 
 
-def _account_binary(name: str, kind: str) -> str:
-    found = shutil.which(name)
+def _account_binary(tool: str, kind: str, account: str) -> str:
+    found = shutil.which(tool)
     if found:
         return found
-    for candidate in (f"/usr/sbin/{name}", f"/sbin/{name}", f"/usr/bin/{name}"):
+    for candidate in (f"/usr/sbin/{tool}", f"/sbin/{tool}", f"/usr/bin/{tool}"):
         if os.access(candidate, os.X_OK):
             return candidate
-    raise FleetError(
-        f"cannot resolve host {kind} comfyui by name. "
-        f"Creating the comfyui {kind} failed: {name} is not available."
+    raise FleetError(_unresolved(kind, account, f"{tool} is not available."))
+
+
+def _unresolved(kind: str, name: str, detail: str = "") -> str:
+    message = (
+        f"cannot resolve host {kind} {name} by name. "
+        f"Creating the {name} {kind} failed"
     )
+    if detail:
+        return f"{message}: {detail}"
+    return f"{message}."
 
 
 def _invoke_account_tool(run, argv: list[str]) -> str:
@@ -174,18 +200,19 @@ def ensure_wildcards_dir(layout: FleetLayout) -> bool:
 
 
 def chown_new_directory(path: Path) -> None:
-    """``chown comfyui:comfyui`` on one directory. Not recursive.
+    """``chown comfyuser:comfyuser`` on one directory. Not recursive.
 
     The manager entrypoint exports ``COMFYFLEET_MANAGER=1`` and runs as root.
     In that process a failed account create or a failed chown is an error.
-    A missing ``comfyui`` user is created first. A unit test or a host
+    A missing ``comfyuser`` user is created first. A unit test or a host
     checkout without that variable leaves the new directory as-is when
     create or chown fails. ``fix_owner`` does not use this skip.
     """
 
     strict = os.environ.get("COMFYFLEET_MANAGER") == "1"
+    owner, group_name = normalize_owner_names(None, None)
     try:
-        uid, gid = resolve_comfyui_ids()
+        uid, gid = resolve_owner_ids(owner, group_name)
     except FleetError:
         if strict:
             raise
@@ -196,7 +223,7 @@ def chown_new_directory(path: Path) -> None:
         if not strict:
             return
         raise FleetError(
-            f"cannot chown {path} to {OWNER_NAME}:{GROUP_NAME} ({uid}:{gid}): {exc}. "
+            f"cannot chown {path} to {owner}:{group_name} ({uid}:{gid}): {exc}. "
             "The manager image runs as root so it can set the owner of a directory it just created."
         ) from exc
 
@@ -204,20 +231,27 @@ def chown_new_directory(path: Path) -> None:
 def fix_owner(
     layout: FleetLayout,
     *,
+    user: str | None = None,
+    group: str | None = None,
     resolve=None,
     chown=None,
 ) -> FixOwnerResult:
-    """Recursively chown the fixed allowlist to ``comfyui:comfyui``.
+    """Recursively chown the fixed allowlist.
 
-    No caller-supplied path. Roots outside ``layout.root`` are refused.
-    Symlinks into ``/opt/comfyfleet/baked_custom_nodes`` do not fail the
-    walk and are not followed.
+    Blank ``user`` and ``group`` are ``comfyuser``. No caller-supplied
+    path. Roots outside ``layout.root`` are refused. Symlinks into
+    ``/opt/comfyfleet/baked_custom_nodes`` do not fail the walk and are
+    not followed.
     """
 
     from comfyfleet.control import authorize
 
     authorize("fix-owner")
-    uid, gid = (resolve or resolve_comfyui_ids)()
+    owner, group_name = normalize_owner_names(user, group)
+    if resolve is None:
+        uid, gid = resolve_owner_ids(owner, group_name)
+    else:
+        uid, gid = resolve()
     actor = chown or chown_inode
     changed: list[str] = []
     for path in allowlisted_roots(layout):
@@ -227,8 +261,8 @@ def fix_owner(
     return FixOwnerResult(
         uid=uid,
         gid=gid,
-        user=OWNER_NAME,
-        group=GROUP_NAME,
+        user=owner,
+        group=group_name,
         paths=tuple(changed),
     )
 
