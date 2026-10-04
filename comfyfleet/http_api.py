@@ -568,7 +568,7 @@ def _fleet(
     del host_header  # Open Comfy does not use the request host or a pinned public host.
     if path == "/api/host/fix-owner":
         _require_method(method, "POST")
-        return _fix_owner(context)
+        return _fix_owner(context, body, content_type)
     if path == "/api/host/prune-dangling":
         _require_method(method, "POST")
         return _prune_dangling(context)
@@ -889,8 +889,32 @@ def _force_stop(context: ApiContext, name: str) -> Response:
     return _json(200, {"ok": True, "instance": _instance_json(instance, status)})
 
 
-def _fix_owner(context: ApiContext) -> Response:
-    result = fix_owner(context.layout)
+def _fix_owner_names(body: bytes, content_type: str | None) -> tuple[str | None, str | None]:
+    """Optional user and group. An empty body leaves both for the default."""
+
+    if not body or not body.strip():
+        return None, None
+    media = (content_type or "").split(";", 1)[0].strip().lower()
+    if media not in {"", "application/json"}:
+        raise FleetError("fix-owner body must be a JSON object with optional user and group")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise FleetError(f"fix-owner body is not valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise FleetError("fix-owner body must be a JSON object with optional user and group")
+    user = payload.get("user")
+    group = payload.get("group")
+    if user is not None and not isinstance(user, str):
+        raise FleetError("fix-owner user must be a string")
+    if group is not None and not isinstance(group, str):
+        raise FleetError("fix-owner group must be a string")
+    return user, group
+
+
+def _fix_owner(context: ApiContext, body: bytes, content_type: str | None) -> Response:
+    user, group = _fix_owner_names(body, content_type)
+    result = fix_owner(context.layout, user=user, group=group)
     return _json(
         200,
         {

@@ -353,9 +353,9 @@ Unknown instances are **400** with control's "no instance named …" text, not 4
 
 ### `POST /api/host/fix-owner`
 
-Session cookie or `Authorization: Bearer`. There is no body and no path argument. The route calls the same helper as `comfyfleet fix-owner`.
+Session cookie or `Authorization: Bearer`. There is no path argument. The route calls the same helper as `comfyfleet fix-owner`.
 
-That helper resolves the user and group `comfyui:comfyui`. When either name is missing it creates the account with `groupadd` and `useradd` (`--no-create-home`, home directory `/home/ComfyFleet`, so it does not add `/home/comfyui`). It then recursively chowns only:
+An empty body chowns to `comfyuser:comfyuser`. A JSON object may set `user` and `group`. A blank or omitted field uses `comfyuser` for that name. When either name is missing it creates the account with `groupadd` and `useradd` (`--no-create-home`, home directory `/home/ComfyFleet`, so it does not add `/home/<name>`). It then recursively chowns only:
 
 | Path | Rule |
 |---|---|
@@ -364,20 +364,20 @@ That helper resolves the user and group `comfyui:comfyui`. When either name is m
 | `/home/ComfyFleet/custom_nodes_*` | recurse each matching directory |
 | `/home/ComfyFleet/files` | recurse when the directory exists |
 
-A path outside that allowlist is refused, including `..` and a symlink whose target leaves the allowlist. An unauthenticated call is **401** and does not chown anything.
+A path outside that allowlist is refused, including `..` and a symlink whose target leaves the allowlist. A symlink that resolves to `/opt/comfyfleet/baked_custom_nodes` or a path under it is the instance entrypoint's link to an image directory (`ComfyUI-Manager` and the other baked custom nodes). That link does not fail the walk. The symlink inode on the host volume is chowned to the requested user and group, and the image directory is not entered, so the baked files are not chowned. A symlink that resolves anywhere else outside the allowlist still refuses the run. An unauthenticated call is **401** and does not chown anything.
 
 ```json
 {
   "ok": true,
-  "user": "comfyui",
-  "group": "comfyui",
+  "user": "comfyuser",
+  "group": "comfyuser",
   "uid": 1001,
   "gid": 1001,
   "paths": ["/home/ComfyFleet/wildcards", "/home/ComfyFleet/models", "/home/ComfyFleet/files"]
 }
 ```
 
-`paths` lists the allowlisted directories that were present. A failure to create the `comfyui` user or group is **400**. The error names the host user or group and the `useradd` or `groupadd` failure.
+`paths` lists the allowlisted directories that were present. A failure to create the requested user or group is **400**. The error names that host user or group and the `useradd` or `groupadd` failure. An invalid account name is **400** and does not chown anything.
 
 ### `POST /api/host/prune-dangling`
 
@@ -434,6 +434,10 @@ curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
 curl -s -b /tmp/comfyfleet.cookies -X POST http://127.0.0.1:9100/api/logout
 
 curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
+  -X POST http://127.0.0.1:9100/api/host/fix-owner
+curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
+  -H 'Content-Type: application/json' \
+  -d '{"user":"comfyuser","group":"comfyuser"}' \
   -X POST http://127.0.0.1:9100/api/host/fix-owner
 
 curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
