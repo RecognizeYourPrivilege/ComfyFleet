@@ -142,8 +142,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     create.add_argument(
         "--custom-nodes-zip",
+        action="append",
         default=None,
-        help="Zip of custom node packs to extract into this instance's custom_nodes.",
+        help=(
+            "Zip of a custom node pack to extract into this instance's custom_nodes. "
+            "Repeat for more than one archive."
+        ),
+    )
+    create.add_argument(
+        "--custom-nodes-zip-name",
+        action="append",
+        default=None,
+        dest="custom_nodes_zip_names",
+        help=(
+            "Folder name for the matching --custom-nodes-zip, in the same order. "
+            "Blank uses [project].name from that zip's pyproject.toml."
+        ),
     )
     create.add_argument(
         "--install-missing-from-workflow",
@@ -243,7 +257,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _cmd_create(args: argparse.Namespace) -> int:
     gpus = detect_gpus()
-    zip_bytes = _read_zip(args.custom_nodes_zip)
+    zip_bytes, zip_labels = _read_zips(args.custom_nodes_zip)
     result = create_instance(
         Path(args.workflow),
         layout=FleetLayout(),
@@ -270,6 +284,8 @@ def _cmd_create(args: argparse.Namespace) -> int:
         ),
         custom_node_git_urls=args.custom_node_git_urls,
         custom_nodes_zip=zip_bytes,
+        custom_nodes_zip_names=args.custom_nodes_zip_names,
+        custom_nodes_zip_labels=zip_labels,
         install_missing_from_workflow=args.install_missing_from_workflow,
     )
     _print_warning(result.warning)
@@ -290,14 +306,27 @@ def _cmd_create(args: argparse.Namespace) -> int:
     return 0
 
 
-def _read_zip(path: str | None) -> bytes | None:
-    if path is None or not str(path).strip():
-        return None
-    zip_path = Path(path)
-    try:
-        return zip_path.read_bytes()
-    except OSError as exc:
-        raise FleetError(f"cannot read custom nodes zip {zip_path}: {exc}") from exc
+def _read_zips(paths: list[str] | None) -> tuple[bytes | list[bytes] | None, list[str] | None]:
+    """One path stays ``bytes``. Several paths stay a list. No paths is a no-op."""
+
+    if not paths:
+        return None, None
+    payloads: list[bytes] = []
+    labels: list[str] = []
+    for raw in paths:
+        if raw is None or not str(raw).strip():
+            continue
+        zip_path = Path(raw)
+        try:
+            payloads.append(zip_path.read_bytes())
+        except OSError as exc:
+            raise FleetError(f"cannot read custom nodes zip {zip_path}: {exc}") from exc
+        labels.append(zip_path.name)
+    if not payloads:
+        return None, None
+    if len(payloads) == 1:
+        return payloads[0], labels
+    return payloads, labels
 
 
 def _cmd_start(args: argparse.Namespace) -> int:

@@ -115,9 +115,11 @@
         <p class="hint">One URL per line. Blank lines are ignored.</p>
         <label class="field-label" for="custom-nodes-zip">Zip of node packs</label>
         <div class="file-well">
-          <input id="custom-nodes-zip" type="file" accept=".zip,application/zip">
+          <input id="custom-nodes-zip" type="file" accept=".zip,application/zip" multiple>
           <p id="zip-name">No zip chosen</p>
         </div>
+        <div id="zip-packs" class="zip-packs"></div>
+        <p class="hint">One or more zip files. Each row can set that pack's folder name. Leave a name blank to use <code>[project].name</code> from that zip's <code>pyproject.toml</code>. A name you type wins.</p>
         <label class="check install-missing">
           <input id="install-missing-from-workflow" type="checkbox" checked>
           <span>Install nodes missing from this workflow<small>Trusted Manager path only. Not the whole registry. Uncheck to skip.</small></span>

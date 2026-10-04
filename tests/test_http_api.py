@@ -720,6 +720,59 @@ class HttpApiTests(unittest.TestCase):
         self.assertFalse((self.layout.root / "outside.txt").exists())
         self.assertFalse((self.layout.custom_nodes("packed") / "Ok" / "a.py").exists())
 
+    def test_several_zips_apply_a_name_per_archive(self):
+        import io
+        import zipfile
+
+        def packed(members):
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                for name, data in members.items():
+                    archive.writestr(name, data)
+            return buffer.getvalue()
+
+        toml = b'[project]\nname = "pack-a"\n\n[tool.comfy]\nDisplayName = "Pretty"\n'
+        body, content_type = _multipart(
+            [
+                ("gpu", "0"),
+                ("custom_nodes_zip_name", ""),
+                ("custom_nodes_zip_name", "TypedB"),
+                ("install_missing_from_workflow", "false"),
+            ],
+            [
+                ("workflow", "Packed.json", _workflow("zip")),
+                (
+                    "custom_nodes_zip",
+                    "a.zip",
+                    packed(
+                        {
+                            "A-main/__init__.py": b"aaa\n",
+                            "A-main/pyproject.toml": toml,
+                        }
+                    ),
+                ),
+                (
+                    "custom_nodes_zip",
+                    "b.zip",
+                    packed({"B-main/__init__.py": b"bbb\n", "B-main/pyproject.toml": b'[project]\nname = "pack-b"\n'}),
+                ),
+            ],
+        )
+        status, raw = self._open(
+            "POST",
+            "/api/instances",
+            data=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 200, raw)
+        payload = self._body(status, raw)
+        self.assertEqual(payload["warnings"], [])
+        nodes = self.layout.custom_nodes("packed")
+        self.assertEqual((nodes / "pack-a" / "__init__.py").read_text(encoding="utf-8"), "aaa\n")
+        self.assertEqual((nodes / "TypedB" / "__init__.py").read_text(encoding="utf-8"), "bbb\n")
+        self.assertFalse((nodes / "Pretty").exists())
+        self.assertFalse((nodes / "pack-b").exists())
+
     def test_create_cuda_tag_is_returned_and_shm_stays(self):
         path = Path(self.tmp.name) / "Portrait.json"
         path.write_bytes(_workflow("line"))
