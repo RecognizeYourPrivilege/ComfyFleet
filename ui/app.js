@@ -927,7 +927,7 @@ function isAuthFailure(result) {
 
 async function fixOwnership() {
   const yes = await askConfirm(
-    "Change ownership of /home/wildcards, /home/models, every /home/custom_nodes_* directory, and /home/files to comfyui:comfyui? Only those directories are walked.",
+    "Change ownership of /home/ComfyFleet/wildcards, /home/ComfyFleet/models, every /home/ComfyFleet/custom_nodes_* directory, and /home/ComfyFleet/files to comfyui:comfyui? Only those directories are walked.",
     { title: "Fix ownership", yes: "Fix ownership" }
   );
   if (!yes) return;

@@ -6,8 +6,8 @@ Recursive ``chown`` runs only on those trees, and a path that escapes them
 is refused before it is chowned.
 
 Instance create uses :func:`ensure_wildcards_dir`, which creates
-``/home/wildcards`` only when it is missing and chowns that new directory
-once. It does not walk an existing tree.
+``/home/ComfyFleet/wildcards`` only when it is missing and chowns that new
+directory once. It does not walk an existing tree.
 """
 
 from __future__ import annotations
@@ -16,11 +16,13 @@ import os
 import pwd
 import grp
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from comfyfleet.errors import FleetError
-from comfyfleet.paths import FleetLayout
+from comfyfleet.paths import HOST_ROOT, FleetLayout
 
 OWNER_NAME = "comfyui"
 GROUP_NAME = "comfyui"
@@ -37,24 +39,113 @@ class FixOwnerResult:
     paths: tuple[str, ...]
 
 
-def resolve_comfyui_ids() -> tuple[int, int]:
-    """Uid and gid of the host ``comfyui:comfyui`` names."""
+def resolve_comfyui_ids(*, run=None) -> tuple[int, int]:
+    """Uid and gid of ``comfyui:comfyui``.
 
-    try:
-        user = pwd.getpwnam(OWNER_NAME)
-    except KeyError as exc:
+    A missing user or group is created with ``useradd`` and ``groupadd``
+    (the same tools on Arch and on the Debian manager image). ``useradd``
+    does not create ``/home/comfyui``.
+    """
+
+    if _named_user() is None or _named_group() is None:
+        _ensure_comfyui_account(run or _run_account_tool)
+    user = _named_user()
+    group = _named_group()
+    if user is None:
         raise FleetError(
             "cannot resolve host user comfyui by name. "
-            "Create the comfyui user before running fix-owner."
-        ) from exc
-    try:
-        group = grp.getgrnam(GROUP_NAME)
-    except KeyError as exc:
+            "Creating the comfyui user failed."
+        )
+    if group is None:
         raise FleetError(
             "cannot resolve host group comfyui by name. "
-            "Create the comfyui group before running fix-owner."
-        ) from exc
+            "Creating the comfyui group failed."
+        )
     return user.pw_uid, group.gr_gid
+
+
+def _named_user():
+    try:
+        return pwd.getpwnam(OWNER_NAME)
+    except KeyError:
+        return None
+
+
+def _named_group():
+    try:
+        return grp.getgrnam(GROUP_NAME)
+    except KeyError:
+        return None
+
+
+def _ensure_comfyui_account(run) -> None:
+    if _named_group() is None:
+        binary = _account_binary("groupadd", "group")
+        detail = _invoke_account_tool(run, [binary, GROUP_NAME])
+        if _named_group() is None:
+            raise FleetError(
+                "cannot resolve host group comfyui by name. "
+                "Creating the comfyui group failed: "
+                f"{detail or 'groupadd did not create the group.'}"
+            )
+    if _named_user() is None:
+        binary = _account_binary("useradd", "user")
+        detail = _invoke_account_tool(run, _useradd_argv(binary))
+        if _named_user() is None:
+            raise FleetError(
+                "cannot resolve host user comfyui by name. "
+                "Creating the comfyui user failed: "
+                f"{detail or 'useradd did not create the user.'}"
+            )
+
+
+def _useradd_argv(binary: str) -> list[str]:
+    """``useradd`` arguments that do not add a ``/home/comfyui`` directory."""
+
+    return [
+        binary,
+        "--no-create-home",
+        "--no-user-group",
+        "--gid",
+        GROUP_NAME,
+        "--home-dir",
+        str(HOST_ROOT),
+        OWNER_NAME,
+    ]
+
+
+def _account_binary(name: str, kind: str) -> str:
+    found = shutil.which(name)
+    if found:
+        return found
+    for candidate in (f"/usr/sbin/{name}", f"/sbin/{name}", f"/usr/bin/{name}"):
+        if os.access(candidate, os.X_OK):
+            return candidate
+    raise FleetError(
+        f"cannot resolve host {kind} comfyui by name. "
+        f"Creating the comfyui {kind} failed: {name} is not available."
+    )
+
+
+def _invoke_account_tool(run, argv: list[str]) -> str:
+    """Run ``argv``. Return ``""`` on success, or a failure detail."""
+
+    try:
+        completed = run(argv)
+    except OSError as exc:
+        return str(exc)
+    if getattr(completed, "returncode", 1) == 0:
+        return ""
+    stderr = getattr(completed, "stderr", "") or ""
+    stdout = getattr(completed, "stdout", "") or ""
+    detail = stderr.strip() or stdout.strip()
+    if detail:
+        return detail
+    return f"exit {completed.returncode}"
+
+
+def _run_account_tool(argv: list[str]):
+    return subprocess.run(argv, check=False, capture_output=True, text=True)
 
 
 def ensure_wildcards_dir(layout: FleetLayout) -> bool:
@@ -80,10 +171,10 @@ def chown_new_directory(path: Path) -> None:
     """``chown comfyui:comfyui`` on one directory. Not recursive.
 
     The manager entrypoint exports ``COMFYFLEET_MANAGER=1`` and runs as root.
-    In that process a missing ``comfyui`` user or a failed chown is an error.
-    A unit test or a host checkout without that variable cannot chown to a
-    user that is not there; those calls leave the new directory as-is.
-    ``fix_owner`` does not use this skip.
+    In that process a failed account create or a failed chown is an error.
+    A missing ``comfyui`` user is created first. A unit test or a host
+    checkout without that variable leaves the new directory as-is when
+    create or chown fails. ``fix_owner`` does not use this skip.
     """
 
     strict = os.environ.get("COMFYFLEET_MANAGER") == "1"
@@ -137,8 +228,9 @@ def fix_owner(
 def allowlisted_roots(layout: FleetLayout) -> list[Path]:
     """Existing allowlisted directories under the fleet root.
 
-    ``/home/wildcards``, ``/home/models``, ``/home/files``, and every
-    ``/home/custom_nodes_*`` directory. Missing entries are skipped.
+    ``/home/ComfyFleet/wildcards``, ``/home/ComfyFleet/models``,
+    ``/home/ComfyFleet/files``, and every ``/home/ComfyFleet/custom_nodes_*``
+    directory. Missing entries are skipped.
     """
 
     found: list[Path] = []
@@ -168,7 +260,7 @@ def assert_allowlisted(path: Path, layout: FleetLayout) -> Path:
     root = _abs(layout.root)
     normalized = _abs(path)
     if normalized != root and not _is_under(normalized, root):
-        raise FleetError(f"refusing path outside the /home allowlist: {path}")
+        raise FleetError(f"refusing path outside the {root} allowlist: {path}")
     if not _is_allowlisted_lexical(normalized, layout):
         raise FleetError(f"refusing path outside the fix-owner allowlist: {path}")
     if path.is_symlink() or path.exists():

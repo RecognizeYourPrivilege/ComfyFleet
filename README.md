@@ -86,7 +86,7 @@ Baked custom nodes (also `docker/PINS.txt`):
 
 `RES4LYF` and Impact Pack both import `cv2`. The wheel is `opencv-python`, which needs `libxcb.so.1` on bookworm-slim. The image installs `libxcb1`, `libx11-6`, `libxext6`, `libice6`, `libsm6`, `libglib2.0-0`, and `libgl1`, and the build imports `cv2` so a missing library fails the build. Impact's `requirements.txt` names `opencv-python-headless`. That wheel is not installed. `opencv-python-headless<0` is in the pip constraint file so a later install cannot replace `cv2`. The build also runs each pack's `install.py` with Impact's `skip_download_model` sentinel, then removes the sentinel. SAM weights are not copied into the image.
 
-SAM checkpoints belong in the shared host directory `/home/models/sams` (container `/opt/ComfyUI/models/sams`). Create makes that directory. A first-run download into that shared path is fine. The pack's usual file is `sam_vit_b_01ec64.pth` from `https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth`. The entrypoint seeds `custom_wildcards = /home/wildcards` with no quotes in `impact-pack.ini` on every start.
+SAM checkpoints belong in the shared host directory `/home/ComfyFleet/models/sams` (container `/opt/ComfyUI/models/sams`). Create makes that directory. A first-run download into that shared path is fine. The pack's usual file is `sam_vit_b_01ec64.pth` from `https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth`. The entrypoint seeds `custom_wildcards = /home/wildcards` with no quotes in `impact-pack.ini` on every start. That path is inside the instance. The host directory is `/home/ComfyFleet/wildcards`.
 
 ### cu124 instance image
 
@@ -130,7 +130,7 @@ An open gate answers `POST /customnode/install/git_url` with **400** and `expect
 - Linux with Docker.
 - A working NVIDIA driver. `nvidia-smi` must succeed on the host. Pick **cu130** when the driver supports CUDA 13.0, or **cu124** when it supports CUDA 12.4. The host does not need the CUDA toolkit installed. The wrong line can fail at runtime.
 - The [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), so `docker create --gpus device=N` works.
-- Permission to create `/home/models`, `/home/wildcards`, `/home/custom_nodes_<name>`, and `/home/files/<name>/...`. `/home/wildcards` is created only when it is missing. An existing directory is not wiped, and create does not recursively chown it.
+- Permission to create `/home/ComfyFleet` and the directories inside it: `models`, `wildcards`, `custom_nodes_<name>`, and `files/<name>/...`. `wildcards` is created only when it is missing. An existing directory is not wiped, and create does not recursively chown it. Fleet data is not stored in other top-level `/home` directories.
 
 The host does not need Debian or a local image rebuild. It does need a driver that matches the instance line you pick (CUDA 13.0 or CUDA 12.4).
 
@@ -166,7 +166,7 @@ export COMFYFLEET_PUBLIC_HOST=192.168.1.20
 ./install.sh --compose
 ```
 
-`replace-with-a-long-secret` is a placeholder. Open `http://192.168.1.20:9100/`. The script pulls the manager and the chosen instance line (both instance images when the choice is **both**), tags the local names, removes an existing `comfyfleet-manager` container, and starts the manager with `--gpus all`, `-p 9100:9100`, the Docker socket, `/home`, `COMFYFLEET_PASSWORD`, `COMFYFLEET_PUBLIC_HOST`, `COMFYFLEET_INSTANCE_IMAGE`, and `COMFYFLEET_CUDA_TAG`. Re-running it updates the manager. It does not delete workflow instances. To wipe instances and install again, see [WIPE_AND_FRESH_INSTALL.md](WIPE_AND_FRESH_INSTALL.md).
+`replace-with-a-long-secret` is a placeholder. Open `http://192.168.1.20:9100/`. The script pulls the manager and the chosen instance line (both instance images when the choice is **both**), tags the local names, removes an existing `comfyfleet-manager` container, and starts the manager with `--gpus all`, `-p 9100:9100`, the Docker socket, `/home/ComfyFleet`, `COMFYFLEET_PASSWORD`, `COMFYFLEET_PUBLIC_HOST`, `COMFYFLEET_INSTANCE_IMAGE`, and `COMFYFLEET_CUDA_TAG`. Re-running it updates the manager. It does not delete workflow instances. To wipe instances and install again, see [WIPE_AND_FRESH_INSTALL.md](WIPE_AND_FRESH_INSTALL.md).
 
 ### Manual run
 
@@ -184,7 +184,7 @@ docker run -d --name comfyfleet-manager \
   --gpus all \
   -p 9100:9100 \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /home:/home \
+  -v /home/ComfyFleet:/home/ComfyFleet \
   -e COMFYFLEET_PASSWORD=replace-with-a-long-secret \
   -e COMFYFLEET_PUBLIC_HOST=192.168.1.20 \
   -e COMFYFLEET_CUDA_TAG=cu130 \
@@ -211,23 +211,23 @@ The GPU probe is `nvidia-smi` inside the manager. The manager image has no CUDA 
 
 ### Mounts
 
-Create writes under `/home` in the manager, then passes those same paths to `docker create -v`. Mount the host parent:
+Create writes under `/home/ComfyFleet` in the manager, then passes those same paths to `docker create -v`. Mount that host directory:
 
 ```text
--v /home:/home
+-v /home/ComfyFleet:/home/ComfyFleet
 ```
 
 | Host path | Instance container |
 |---|---|
-| `/home/models` | `/opt/ComfyUI/models` (shared, read-write). SAM weights go in `/home/models/sams`. |
-| `/home/wildcards` | `/home/wildcards` (shared, read-write). Impact `custom_wildcards`. |
-| `/home/custom_nodes_<name>` | `/opt/ComfyUI/custom_nodes` |
-| `/home/files/<name>/input` | `/opt/ComfyUI/input` |
-| `/home/files/<name>/output` | `/opt/ComfyUI/output` |
-| `/home/files/<name>/temp` | `/opt/ComfyUI/temp` |
-| `/home/files/<name>` | `/opt/comfyfleet/instance` |
+| `/home/ComfyFleet/models` | `/opt/ComfyUI/models` (shared, read-write). SAM weights go in `/home/ComfyFleet/models/sams`. |
+| `/home/ComfyFleet/wildcards` | `/home/wildcards` (shared, read-write). Impact `custom_wildcards`. |
+| `/home/ComfyFleet/custom_nodes_<name>` | `/opt/ComfyUI/custom_nodes` |
+| `/home/ComfyFleet/files/<name>/input` | `/opt/ComfyUI/input` |
+| `/home/ComfyFleet/files/<name>/output` | `/opt/ComfyUI/output` |
+| `/home/ComfyFleet/files/<name>/temp` | `/opt/ComfyUI/temp` |
+| `/home/ComfyFleet/files/<name>` | `/opt/comfyfleet/instance` |
 
-`/home/models` is shared and read-write. If `/home` is not a bind mount, the manager warns at startup.
+`/home/ComfyFleet/models` is shared and read-write. If `/home/ComfyFleet` is not a bind mount, the manager warns at startup. Nothing the fleet owns is created as a sibling of `/home/ComfyFleet`.
 
 ### Create-time custom nodes
 
@@ -235,7 +235,7 @@ Optional. Leave the git URL list and the zip blank to skip them. Create still re
 
 ## Use
 
-Open the manager URL and sign in with `COMFYFLEET_PASSWORD`. The header **Host** menu (not an instance card) has **Fix ownership**, **Prune dangling containers**, and **Log out**. Fix ownership and prune ask for confirmation. Fix ownership runs `comfyfleet fix-owner` through the API: recursive `chown` to `comfyui:comfyui` on `/home/wildcards`, `/home/models`, every `/home/custom_nodes_*` directory, and `/home/files`. Prune removes stopped containers that are not fleet instances. A container labeled `comfyfleet.managed=true` is kept whether it is running or stopped. Log out calls `POST /api/logout`.
+Open the manager URL and sign in with `COMFYFLEET_PASSWORD`. The header **Host** menu (not an instance card) has **Fix ownership**, **Prune dangling containers**, and **Log out**. Fix ownership and prune ask for confirmation. Fix ownership runs `comfyfleet fix-owner` through the API: recursive `chown` to `comfyui:comfyui` on `/home/ComfyFleet/wildcards`, `/home/ComfyFleet/models`, every `/home/ComfyFleet/custom_nodes_*` directory, and `/home/ComfyFleet/files`. If the host has no `comfyui` user or group, that action creates them with `useradd` and `groupadd` and does not create `/home/comfyui`. Prune removes stopped containers that are not fleet instances. A container labeled `comfyfleet.managed=true` is kept whether it is running or stopped. Log out calls `POST /api/logout`.
 
 Upload a workflow JSON, pick the CUDA line (`cu130` for host driver CUDA 13.0, `cu124` for CUDA 12.4), pick GPUs, then create. The instance card shows the line. New instances stay stopped. Each instance card has an icon row: **Start**, **Stop**, **Force stop** (`docker kill`), **Open** (a shell proxied by the manager), **Open Comfy**, **Flags**, and **Delete**. **Open Comfy** uses `window.location.hostname` plus the instance's published port and is enabled only while the instance is running. **Flags** (pencil) reveals that instance's Comfy arguments, including **Reserve VRAM** and **VRAM headroom** (GB, sent as `--reserve-vram` and `--vram-headroom`). The panel stays open until you close it. The same two numbers are in the create sheet under **Advanced / ComfyUI flags**, next to the VRAM choices. **Delete** asks for confirmation, then removes that container and its fleet record. Host files stay. The create sheet keeps Comfy args under **Advanced / ComfyUI flags**, collapsed until you open them.
 
@@ -244,7 +244,7 @@ On a multi-GPU host, create asks which GPUs to attach. A single GPU still has to
 CLI inside the manager (local process, not the browser session):
 
 ```bash
-docker exec -it comfyfleet-manager comfyfleet create --workflow /home/files/incoming/portrait.json --gpu 0
+docker exec -it comfyfleet-manager comfyfleet create --workflow /home/ComfyFleet/files/incoming/portrait.json --gpu 0
 docker exec -it comfyfleet-manager comfyfleet list
 docker exec -it comfyfleet-manager comfyfleet fix-owner
 docker exec -it comfyfleet-manager comfyfleet start portrait

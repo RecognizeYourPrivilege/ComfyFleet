@@ -42,14 +42,14 @@ Positioning: not a cloud SaaS; local/LAN Docker fleet for multi-workflow Comfy h
 |---------|------|-------|
 | **S-1 Image** | Slim Debian + CUDA **12.4** runtime; Torch wheel matched to 12.4; ComfyUI + baked nodes | P1 |
 | **S-2 Host control** | Create / start / stop / list / port / GPU assign — CLI or thin host tool | P1 |
-| **S-3 Host mounts** | `/home/models`, `/home/custom_nodes_<name>`, `/home/files/<name>/{input,output,temp}` | P1 |
+| **S-3 Host mounts** | `/home/ComfyFleet/models`, `/home/ComfyFleet/custom_nodes_<name>`, `/home/ComfyFleet/files/<name>/{input,output,temp}` | P1 |
 | **S-4 Auth gate** | Login / token before control actions | P2 (stub only in P1) |
 | **S-5 iOS control UI** | Phone UI to create/start/stop fleet | P3 (stub only in P1) |
 
 **Roles**
 
 - **Operator:** Creates many instances, starts/stops few, picks GPU(s), opens `http://<host>:<port>`.
-- **Host owner:** Prepares `/home/models` and per-name dirs; installs Docker + NVIDIA Container Toolkit.
+- **Host owner:** Prepares `/home/ComfyFleet/models` and per-name dirs under `/home/ComfyFleet`; installs Docker + NVIDIA Container Toolkit.
 
 ---
 
@@ -79,15 +79,15 @@ Positioning: not a cloud SaaS; local/LAN Docker fleet for multi-workflow Comfy h
 
 | Host path | Container path (Comfy convention) |
 |-----------|-----------------------------------|
-| `/home/models` | Comfy **models** root (shared across instances) |
-| `/home/custom_nodes_<name>` | Comfy **custom_nodes** for that instance |
-| `/home/files/<name>/input` | Comfy **input** |
-| `/home/files/<name>/output` | Comfy **output** |
-| `/home/files/<name>/temp` | Comfy **temp** |
+| `/home/ComfyFleet/models` | Comfy **models** root (shared across instances) |
+| `/home/ComfyFleet/custom_nodes_<name>` | Comfy **custom_nodes** for that instance |
+| `/home/ComfyFleet/files/<name>/input` | Comfy **input** |
+| `/home/ComfyFleet/files/<name>/output` | Comfy **output** |
+| `/home/ComfyFleet/files/<name>/temp` | Comfy **temp** |
 
 **FR-M2** `<name>` = instance name derived from workflow stem (see FR-N*). Tool creates missing host dirs on create (or fails with a clear message listing required paths).
 
-**FR-M3** Shared `/home/models` is read-write unless operator configures otherwise; document that concurrent writers can conflict.
+**FR-M3** Shared `/home/ComfyFleet/models` is read-write unless operator configures otherwise; document that concurrent writers can conflict. Host fleet data lives only under `/home/ComfyFleet`.
 
 ### 3.3 Naming
 
@@ -178,7 +178,7 @@ Positioning: not a cloud SaaS; local/LAN Docker fleet for multi-workflow Comfy h
 | **OS-02** | iOS / mobile control UI (Phase 3) |
 | **OS-03** | Kubernetes / swarm orchestration |
 | **OS-04** | Automatic load-balancing across GPUs or auto-stop on idle (unless later RELEASE) |
-| **OS-05** | Baking full model weights into the image (models live on `/home/models`) |
+| **OS-05** | Baking full model weights into the image (models live on `/home/ComfyFleet/models`) |
 | **OS-06** | Guaranteeing every custom node works offline without host network on first Manager use |
 | **OS-07** | Windows-native non-Docker host path (Docker Desktop may work; not primary DoD) |
 | **OS-08** | Replacing ComfyUI’s own graph editor UX |
@@ -210,7 +210,7 @@ Positioning: not a cloud SaaS; local/LAN Docker fleet for multi-workflow Comfy h
 | ID | Assumption |
 |----|------------|
 | **A-01** | Host is Linux with Docker + NVIDIA Container Toolkit; `nvidia-smi` works on the host. |
-| **A-02** | Operator can write under `/home/models`, `/home/custom_nodes_*`, `/home/files/*` (or configures equivalent documented overrides later). |
+| **A-02** | Operator can write under `/home/ComfyFleet/models`, `/home/ComfyFleet/custom_nodes_*`, `/home/ComfyFleet/files/*` (or configures equivalent documented overrides later). |
 | **A-03** | “Full pixaroma” means the complete public pixaroma ComfyUI node distribution known to the fleet; pin in Dockerfile when BACK/COMFY implement. |
 | **A-04** | ComfyUI-ComfyDock install follows that repo’s documented custom_node / route shape. |
 | **A-05** | Repo `RecognizeYourPrivilege/ComfyFleet` is created by human/SeraVale/SCM — SPEC writes workspace SPEC first; pushes when credentials exist. |
@@ -226,7 +226,7 @@ Positioning: not a cloud SaaS; local/LAN Docker fleet for multi-workflow Comfy h
 | **O-01** | Exact ComfyUI git tag/commit + pixaroma pin | “Current stable at implement time”; pin in PR |
 | **O-02** | Change GPU assignment without full recreate | Recreate instance; optional later command |
 | **O-03** | Default max concurrent running warning threshold | Warn at > number of GPUs; never hard-block unless configured |
-| **O-04** | Override base mount root instead of `/home/...` | `/home/...` locked for P1; override flag later |
+| **O-04** | Override base mount root instead of `/home/ComfyFleet/...` | `/home/ComfyFleet/...` is the host root; override flag later |
 | **O-05** | Compose vs plain `docker run` wrapper | Either OK if DoD met; document one primary path |
 
 ---
