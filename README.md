@@ -231,7 +231,7 @@ Create writes under `/home/ComfyFleet` in the manager, then passes those same pa
 
 ### Create-time custom nodes
 
-Optional. Leave the git URL list and the zip blank to skip them. Create still requires a workflow and does not fail because those fields were empty. `install_missing_from_workflow` defaults to true and installs only nodes referenced by **that** workflow JSON that are not already in the baked image or on the volume, via Manager's git-URL install (`COMFYFLEET_TRUSTED_INSTALL`). It does not install the Manager registry. A failed clone, extract, or install is a `warnings` entry. The instance is still created. No new instance image is published for this. Delete is `POST /api/instances/{name}/delete` (container and fleet record only). Host mounts, including `custom_nodes`, stay.
+Optional. Leave the git URL list and the zip list blank to skip them. Several zip files can be added in one create. Each zip has its own folder name; leave that blank to use `[project].name` from the zip's `pyproject.toml`, or type a name to override it. Create still requires a workflow and does not fail because those fields were empty. `install_missing_from_workflow` defaults to true and installs only nodes referenced by **that** workflow JSON that are not already in the baked image or on the volume, via Manager's git-URL install (`COMFYFLEET_TRUSTED_INSTALL`). It does not install the Manager registry. A failed clone, extract, or install is a `warnings` entry. The instance is still created. No new instance image is published for this. Delete is `POST /api/instances/{name}/delete` (container and fleet record only). Host mounts, including `custom_nodes`, stay.
 
 ## Use
 

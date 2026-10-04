@@ -225,7 +225,8 @@ The JSON body is **create options**, not the Comfy graph. Posting a workflow obj
 | `extra_args` | no | Free-text `main.py` arguments for flags that are not in the panel. Appended last. `--listen` and `--port` are stripped. |
 | `comfy_extra_args` | no | Same channel as `extra_args`. A string or a JSON array of strings. Appended after `extra_args` when both are set. `--listen` and `--port` are stripped. Blank is ignored. |
 | `custom_node_git_urls` | no | HTTPS or SSH git URLs cloned into this instance's `custom_nodes` volume. JSON array, a newline- or comma-separated string, or repeated form fields. Blank entries are ignored. |
-| `custom_nodes_zip` | no | Multipart file only. Extracted into the same `custom_nodes` volume. Absent or empty is a no-op. |
+| `custom_nodes_zip` | no | Repeatable multipart file. Each archive is extracted into the same `custom_nodes` volume. Absent or empty is a no-op. One file is the same path as before. |
+| `custom_nodes_zip_name` | no | Repeatable text field, in the same order as `custom_nodes_zip`. The folder name for that archive. Blank uses `[project].name` from that zip's `pyproject.toml`. A typed name wins. |
 | `install_missing_from_workflow` | no | Default **true** when the field is omitted. Install custom nodes referenced by this workflow that are not already present. `false` skips that step. |
 
 `start` and `force` accept JSON booleans and the strings `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`.
@@ -263,7 +264,9 @@ Blank or absent `custom_node_git_urls` and `custom_nodes_zip` do nothing. Create
 
 Allowed git schemes are `https://`, `ssh://`, and scp-style `git@host:path`. Other schemes (`http://`, `file://`, `git://`) are skipped and listed in `warnings`. Each accepted URL is `git clone --depth 1` into its own subdirectory (the repository name, without `.git`). `git` runs on the manager, with no shell. The clone timeout is **120** seconds (`COMFYFLEET_GIT_CLONE_TIMEOUT`). `GIT_TERMINAL_PROMPT=0` and SSH `BatchMode` are set so a credential prompt cannot hang the request.
 
-`custom_nodes_zip` is a multipart file. The archive is rejected, and nothing from it is written, when any member is absolute, contains `..`, contains NUL, is a symlink, or is encrypted. A malformed zip is a warning. Extraction is in-process (the manager image also includes `unzip` for operators).
+`custom_nodes_zip` is a multipart file, repeated once per archive. Each archive is checked on its own: a rejected archive writes nothing from that zip, and the others are still extracted. An archive is rejected when any member is absolute, contains `..`, contains NUL, is a symlink, or is encrypted. A malformed zip is a warning. Extraction is in-process (the manager image also includes `unzip` for operators).
+
+A matching `custom_nodes_zip_name` sets that pack's directory under `custom_nodes`. Leave it blank to use `[project].name` from `pyproject.toml` in the zip. That is the pack id. A Comfy registry zip does not put this id in JSON (`node_list.json` lists renamed node classes). `[tool.comfy].DisplayName` is a label and is not the folder. A name you type wins. One shared top directory inside the zip (a GitHub archive's `Repo-main/` wrapper) is removed so the pack's files sit in that folder. With no typed name and no project name, members keep the paths stored in the zip.
 
 `install_missing_from_workflow` defaults to **true**. It reads only the workflow JSON from this create. A node is a candidate when it has an embedded git URL or `aux_id` (`owner/repo`, installed as `https://github.com/owner/repo`), or when its class name is in `COMFYFLEET_EXTENSION_NODE_MAP` (a JSON file of class name → git URL, or Manager's extension-node-map object). Class names the workflow does not reference are not installed. Nodes already present are skipped: a `NODE_CLASS_MAPPINGS` entry on the volume, a pack directory already in that volume, or a baked pack (`ComfyUI-Manager`, `ComfyUI-Pixaroma`, `ComfyUI-ComfyDock`, `RES4LYF`, `comfyfleet_default_workflow`). Core nodes with no git URL and no map entry are left alone. This does not install the Manager registry.
 
@@ -414,6 +417,9 @@ curl -s -H "Authorization: Bearer $COMFYFLEET_PASSWORD" \
   -F "custom_node_git_urls=https://github.com/ltdrdata/ComfyUI-Impact-Pack" \
   -F "custom_node_git_urls=ssh://git@github.com/example/Another-Node.git" \
   -F "custom_nodes_zip=@./nodes.zip;type=application/zip" \
+  -F "custom_nodes_zip_name=" \
+  -F "custom_nodes_zip=@./other.zip;type=application/zip" \
+  -F "custom_nodes_zip_name=OtherPack" \
   -F "install_missing_from_workflow=true" \
   -F "comfy_extra_args=--mmap-torch-files" \
   http://127.0.0.1:9100/api/instances
