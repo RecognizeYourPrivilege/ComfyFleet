@@ -9,8 +9,11 @@ with one ``POST /customnode/install/git_url`` inside the instance — the
 ``COMFYFLEET_TRUSTED_INSTALL`` gate from PR #12. The Manager registry is
 not installed as a catalog.
 
-Blank URL lists and a missing zip are no-ops. Clone, extract, and install
-failures are warnings. They do not raise.
+Blank URL lists and a missing zip are no-ops. Several zip files in one
+create are extracted into the same ``custom_nodes_<name>`` directory.
+Each archive can name its own folder. A blank name uses
+``[project].name`` from that zip's ``pyproject.toml``. A typed name wins.
+Clone, extract, and install failures are warnings. They do not raise.
 
 Timeouts (seconds), overridable by environment:
 
@@ -31,7 +34,9 @@ import re
 import shutil
 import subprocess
 import time
+import tomllib
 import zipfile
+from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -206,12 +211,22 @@ def clone_git_urls(
     return warnings, cloned
 
 
-def extract_custom_nodes_zip(payload: bytes | None, dest_dir: Path) -> tuple[list[str], bool]:
+def extract_custom_nodes_zip(
+    payload: bytes | None,
+    dest_dir: Path,
+    *,
+    directory: str | None = None,
+) -> tuple[list[str], bool]:
     """Extract a custom-node zip into ``dest_dir``.
 
     Any absolute path, ``..``, NUL, symlink, or encrypted member rejects the
     whole archive: nothing from that zip is written. A malformed zip is a
     warning. ``payload is None`` (field absent) is a no-op.
+
+    ``directory`` is the folder under ``dest_dir``. Blank uses
+    ``[project].name`` from that archive's ``pyproject.toml`` when the file
+    identifies one pack. A typed directory wins over that name. With neither,
+    members keep the paths stored in the zip.
     """
 
     if payload is None:
@@ -259,14 +274,81 @@ def extract_custom_nodes_zip(payload: bytes | None, dest_dir: Path) -> tuple[lis
                     f"custom_nodes_zip rejected (path escapes custom_nodes): {info.filename!r}"
                 ], False
             if not info.is_dir():
-                planned.append((info, target))
+                planned.append((info, relative))
+        chosen, name_error = _resolve_pack_directory(directory, archive, planned)
+        if name_error:
+            return [name_error], False
+        if chosen:
+            stripped = _strip_single_root([relative for _info, relative in planned])
+            planned = [
+                (info, Path(chosen, *relative.parts))
+                for (info, _old), relative in zip(planned, stripped, strict=True)
+            ]
+        writes: list[tuple[zipfile.ZipInfo, Path]] = []
+        root = dest_dir.resolve()
+        for info, relative in planned:
+            target = (dest_dir / relative).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                return [
+                    f"custom_nodes_zip rejected (path escapes custom_nodes): {info.filename!r}"
+                ], False
+            writes.append((info, target))
+        if not writes:
+            return ["custom_nodes_zip contained no files; nothing was extracted"], False
         dest_dir.mkdir(parents=True, exist_ok=True)
-        for info, target in planned:
+        for info, target in writes:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(archive.read(info))
-    if not planned:
-        return ["custom_nodes_zip contained no files; nothing was extracted"], False
     return [], True
+
+
+def extract_custom_nodes_zips(
+    payloads: bytes | Sequence[bytes] | None,
+    dest_dir: Path,
+    *,
+    names: Sequence[str] | None = None,
+    labels: Sequence[str] | None = None,
+) -> tuple[list[str], bool]:
+    """Extract one or more custom-node zips into ``dest_dir``.
+
+    A single ``bytes`` value is the one-archive path. Each archive is
+    checked on its own: a rejected archive writes nothing from that zip,
+    and archives that pass are still extracted into the same directory.
+    ``names`` lines up with the archives. A blank entry uses that zip's
+    ``pyproject.toml`` project name. A typed entry wins. ``None`` and an
+    empty sequence are no-ops.
+    """
+
+    if payloads is None:
+        return [], False
+    if isinstance(payloads, (bytes, bytearray)):
+        items = [bytes(payloads)]
+    else:
+        items = [bytes(item) for item in payloads]
+    if not items:
+        return [], False
+    requested = [names] if isinstance(names, str) else list(names or [])
+    shown = [labels] if isinstance(labels, str) else list(labels or [])
+    warnings: list[str] = []
+    extracted_any = False
+    for index, payload in enumerate(items):
+        directory = requested[index] if index < len(requested) else None
+        if directory is not None and not str(directory).strip():
+            directory = None
+        one_warnings, extracted = extract_custom_nodes_zip(
+            payload,
+            dest_dir,
+            directory=directory,
+        )
+        label = shown[index] if index < len(shown) else ""
+        label = str(label).strip() if label else ""
+        if label:
+            one_warnings = [f"{label}: {item}" for item in one_warnings]
+        warnings.extend(one_warnings)
+        extracted_any = extracted_any or extracted
+    return warnings, extracted_any
 
 
 def plan_missing_installs(
@@ -554,6 +636,102 @@ def _unsafe_zip_member(info: zipfile.ZipInfo) -> str | None:
     if any(part == ".." for part in parts):
         return "path traversal"
     return None
+
+
+def _resolve_pack_directory(
+    requested: str | None,
+    archive: zipfile.ZipFile,
+    members: list[tuple[zipfile.ZipInfo, Path]],
+) -> tuple[str | None, str | None]:
+    """Return ``(directory, error)``. An error means this zip writes nothing.
+
+    A published Comfy node zip does not store the pack id in JSON.
+    ``node_list.json`` maps renamed node classes. The id ComfyUI-Manager
+    uses as the ``custom_nodes`` subdirectory is ``[project].name`` in
+    ``pyproject.toml``. ``[tool.comfy].DisplayName`` is a label, not a folder.
+    """
+
+    if requested is not None and requested.strip():
+        chosen = _pack_directory_name(requested)
+        if chosen is None:
+            return None, f"custom_nodes_zip name is invalid: {requested.strip()!r}"
+        return chosen, None
+    discovered = _project_name_from_zip(archive, members)
+    if not discovered:
+        return None, None
+    chosen = _pack_directory_name(discovered)
+    if chosen is None:
+        return None, f"custom_nodes_zip name from pyproject.toml is invalid: {discovered!r}"
+    return chosen, None
+
+
+def _project_name_from_zip(
+    archive: zipfile.ZipFile,
+    members: list[tuple[zipfile.ZipInfo, Path]],
+) -> str | None:
+    candidates = [
+        (info, relative)
+        for info, relative in members
+        if relative.name == "pyproject.toml" and len(relative.parts) <= 2
+    ]
+    if len(candidates) != 1:
+        return None
+    info, relative = candidates[0]
+    if len(relative.parts) == 2:
+        root = relative.parts[0]
+        if any(path.parts[0] != root for _info, path in members):
+            return None
+    try:
+        raw = archive.read(info)
+    except (OSError, zipfile.BadZipFile, RuntimeError):
+        return None
+    if len(raw) > _MAX_PY_BYTES:
+        return None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return _project_name_from_toml(text)
+
+
+def _project_name_from_toml(text: str) -> str | None:
+    try:
+        payload = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+    project = payload.get("project")
+    if not isinstance(project, dict):
+        return None
+    name = project.get("name")
+    if not isinstance(name, str):
+        return None
+    name = name.strip()
+    return name or None
+
+
+def _pack_directory_name(text: str) -> str | None:
+    name = text.strip()
+    if (
+        not name
+        or name.startswith(".")
+        or not _SAFE_DIR.fullmatch(name)
+        or name in {".", ".."}
+    ):
+        return None
+    return name
+
+
+def _strip_single_root(paths: list[Path]) -> list[Path]:
+    """Drop one shared top directory so a GitHub zip lands next to its files."""
+
+    if not paths:
+        return paths
+    if any(len(path.parts) < 2 for path in paths):
+        return paths
+    roots = {path.parts[0] for path in paths}
+    if len(roots) != 1:
+        return paths
+    return [Path(*path.parts[1:]) for path in paths]
 
 
 def _zip_relative(name: str) -> Path | None:

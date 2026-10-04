@@ -34,6 +34,7 @@ const extraArgsInput = document.querySelector("#extra-args");
 const gitUrlsInput = document.querySelector("#custom-node-git-urls");
 const zipInput = document.querySelector("#custom-nodes-zip");
 const zipName = document.querySelector("#zip-name");
+const zipPacks = document.querySelector("#zip-packs");
 const installMissingInput = document.querySelector("#install-missing-from-workflow");
 const flagsDisclosure = document.querySelector("#comfy-flags");
 
@@ -71,8 +72,7 @@ fileInput.addEventListener("change", () => {
   fileName.textContent = file ? file.name : "No file chosen";
 });
 zipInput.addEventListener("change", () => {
-  const file = zipInput.files && zipInput.files[0];
-  zipName.textContent = file ? file.name : "No zip chosen";
+  renderZipPacks();
 });
 sheet.addEventListener("click", (event) => {
   if (event.target.closest("[data-close]")) closeSheet();
@@ -465,8 +465,13 @@ async function submitCreate(start) {
   for (const url of gitUrlLines(gitUrlsInput.value)) {
     body.append("custom_node_git_urls", url);
   }
-  const zip = zipInput.files && zipInput.files[0];
-  if (zip) body.append("custom_nodes_zip", zip, zip.name);
+  const zips = [...(zipInput.files || [])];
+  const zipNameInputs = [...document.querySelectorAll("#zip-packs input")];
+  zips.forEach((zip, index) => {
+    body.append("custom_nodes_zip", zip, zip.name);
+    const typed = zipNameInputs[index] ? zipNameInputs[index].value.trim() : "";
+    body.append("custom_nodes_zip_name", typed);
+  });
   body.append("install_missing_from_workflow", installMissingInput.checked ? "true" : "false");
   state.busy = true;
   setCreatePending(true, start);
@@ -487,7 +492,7 @@ async function submitCreate(start) {
   instanceImageInput.value = "";
   gitUrlsInput.value = "";
   zipInput.value = "";
-  zipName.textContent = "No zip chosen";
+  renderZipPacks();
   installMissingInput.checked = true;
   resetLaunch();
   if (flagsDisclosure) flagsDisclosure.open = false;
@@ -498,6 +503,32 @@ async function submitCreate(start) {
   else hide(banner);
   await refresh();
   if (notices.length) showBanner(notices.join(" "));
+}
+
+function renderZipPacks() {
+  const files = [...(zipInput.files || [])];
+  zipPacks.replaceChildren();
+  if (!files.length) {
+    zipName.textContent = "No zip chosen";
+    return;
+  }
+  zipName.textContent = files.length === 1 ? files[0].name : `${files.length} zips chosen`;
+  files.forEach((file) => {
+    const row = document.createElement("label");
+    row.className = "zip-pack";
+    const title = document.createElement("span");
+    title.className = "zip-pack-file";
+    title.textContent = file.name;
+    const input = document.createElement("input");
+    input.className = "text-input";
+    input.type = "text";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.placeholder = "Name from the zip";
+    input.setAttribute("aria-label", `Folder name for ${file.name}`);
+    row.append(title, input);
+    zipPacks.append(row);
+  });
 }
 
 function gitUrlLines(value) {
