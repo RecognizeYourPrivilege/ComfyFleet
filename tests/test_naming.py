@@ -1,6 +1,11 @@
 import unittest
 
-from comfyfleet.naming import MAX_NAME_LENGTH, instance_name_from_workflow, sanitize_stem
+from comfyfleet.naming import (
+    MAX_NAME_LENGTH,
+    instance_name_from_workflow,
+    resolve_instance_name,
+    sanitize_stem,
+)
 
 
 class NamingTests(unittest.TestCase):
@@ -26,6 +31,14 @@ class NamingTests(unittest.TestCase):
 
     def test_punctuation_only_gets_a_fallback_name(self):
         self.assertEqual(sanitize_stem("---"), "wf")
+
+    def test_blank_request_uses_the_workflow_filename(self):
+        self.assertEqual(resolve_instance_name("Portrait.json", None), "portrait")
+        self.assertEqual(resolve_instance_name("My Flow.json", "  "), "my_flow")
+
+    def test_typed_request_wins_and_is_sanitized(self):
+        self.assertEqual(resolve_instance_name("Portrait.json", "studio"), "studio")
+        self.assertEqual(resolve_instance_name("Portrait.json", "My Studio"), "my_studio")
 
 
 if __name__ == "__main__":

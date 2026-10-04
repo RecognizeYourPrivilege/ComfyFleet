@@ -28,6 +28,19 @@ def instance_name_from_workflow(path: str | Path) -> str:
     return sanitize_stem(Path(path).stem)
 
 
+def resolve_instance_name(workflow: str | Path, requested: str | None = None) -> str:
+    """Container name for one create.
+
+    A blank ``requested`` uses the workflow JSON filename stem. A typed
+    value wins and goes through the same sanitizer, so ``Portrait`` and
+    ``Portrait.json`` both become ``portrait``.
+    """
+
+    if requested is not None and requested.strip():
+        return sanitize_stem(requested.strip())
+    return instance_name_from_workflow(workflow)
+
+
 def sanitize_stem(stem: str) -> str:
     original = stem
     cleaned = _UNSAFE.sub("_", stem.lower())

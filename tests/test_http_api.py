@@ -773,6 +773,23 @@ class HttpApiTests(unittest.TestCase):
         self.assertFalse((nodes / "Pretty").exists())
         self.assertFalse((nodes / "pack-b").exists())
 
+    def test_typed_container_name_wins_over_the_workflow_filename(self):
+        path = Path(self.tmp.name) / "Portrait.json"
+        path.write_bytes(_workflow("named"))
+        created = self._post_json(
+            {"workflow_path": str(path), "gpu": "0", "name": "My Studio"}
+        )
+        self.assertEqual(created["instance"]["name"], "my_studio")
+        self.assertEqual(self.docker.status("my_studio"), "created")
+        self.assertIsNone(self.docker.status("portrait"))
+
+        blank = Path(self.tmp.name) / "Other.json"
+        blank.write_bytes(_workflow("blank"))
+        created = self._post_json(
+            {"workflow_path": str(blank), "gpu": "0", "name": "  "}
+        )
+        self.assertEqual(created["instance"]["name"], "other")
+
     def test_create_cuda_tag_is_returned_and_shm_stays(self):
         path = Path(self.tmp.name) / "Portrait.json"
         path.write_bytes(_workflow("line"))
