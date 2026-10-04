@@ -9,9 +9,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-INSTANCE = "ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:25b0f209abc1075ab2631505d513d2c919d5a9704d91c4a45a631cac65531591"
-INSTANCE_CU124 = "ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:807f1b782147bd663c17352a5ecfc80b0eed0b992d63344f72671cc2d90ed462"
-MANAGER = "ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:271970754272baf770cc226f6208e2934587b9e9dd4619f6af061950f6893379"
+INSTANCE = "ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:3b4ad9c26b550f945cef0627707653d6015d3782782ee9e05cfcafd2fde4043a"
+INSTANCE_CU124 = "ghcr.io/recognizeyourprivilege/comfyfleet:cu124@sha256:b8b5a2281761a7a438e9610182a0eb7ae94cd1d53ff02a14db393d131db91887"
+MANAGER = "ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:d7fc7835d54a8b35705583daf539781535a82850494b26d92f32c55f05ab925d"
 
 
 class InstallScriptTests(unittest.TestCase):

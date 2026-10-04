@@ -5,7 +5,7 @@
 # Primary instance tags: comfyfleet:cu130 (host driver CUDA 13.0, default)
 # and comfyfleet:cu124 (host driver CUDA 12.4).
 # Pull the chosen line before create:
-#   docker pull ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:25b0f209abc1075ab2631505d513d2c919d5a9704d91c4a45a631cac65531591
+#   docker pull ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:3b4ad9c26b550f945cef0627707653d6015d3782782ee9e05cfcafd2fde4043a
 # install.sh does that pull, tags comfyfleet:cu130 (or comfyfleet:cu124), and
 # sets COMFYFLEET_INSTANCE_IMAGE and COMFYFLEET_CUDA_TAG.
 # Changing an instance's CUDA line is a recreate, not a restart.
@@ -14,7 +14,7 @@
 
 services:
   manager:
-    image: ${COMFYFLEET_MANAGER_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:271970754272baf770cc226f6208e2934587b9e9dd4619f6af061950f6893379}
+    image: ${COMFYFLEET_MANAGER_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest@sha256:d7fc7835d54a8b35705583daf539781535a82850494b26d92f32c55f05ab925d}
     container_name: comfyfleet-manager
     ports:
       - "9100:9100"
@@ -24,7 +24,7 @@ services:
     environment:
       COMFYFLEET_PASSWORD: ${COMFYFLEET_PASSWORD:?Set COMFYFLEET_PASSWORD}
       COMFYFLEET_PUBLIC_HOST: ${COMFYFLEET_PUBLIC_HOST:-}
-      COMFYFLEET_INSTANCE_IMAGE: ${COMFYFLEET_INSTANCE_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:25b0f209abc1075ab2631505d513d2c919d5a9704d91c4a45a631cac65531591}
+      COMFYFLEET_INSTANCE_IMAGE: ${COMFYFLEET_INSTANCE_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet:cu130@sha256:3b4ad9c26b550f945cef0627707653d6015d3782782ee9e05cfcafd2fde4043a}
       COMFYFLEET_CUDA_TAG: ${COMFYFLEET_CUDA_TAG:-cu130}
       COMFYFLEET_BIND_HOST: 0.0.0.0
       COMFYFLEET_BIND_PORT: "9100"
