@@ -128,7 +128,7 @@ An open gate answers `POST /customnode/install/git_url` with **400** and `expect
 - Linux with Docker.
 - A working NVIDIA driver. `nvidia-smi` must succeed on the host. Pick **cu130** when the driver supports CUDA 13.0, or **cu124** when it supports CUDA 12.4. The host does not need the CUDA toolkit installed. The wrong line can fail at runtime.
 - The [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), so `docker create --gpus device=N` works.
-- Permission to create `/home/ComfyFleet` and the directories inside it: `models`, `wildcards`, `custom_nodes_<name>`, and `files/<name>/...`. `wildcards` is created only when it is missing. An existing directory is not wiped, and create does not recursively chown it. Fleet data is not stored in other top-level `/home` directories.
+- Permission to create `/home/ComfyFleet` and the directories inside it: `models`, `wildcards`, `custom_nodes_<name>`, and `files/<name>/...`. Create chowns each of those directories to `comfyuser:comfyuser` when it makes the directory, so that host user can copy files in. `wildcards` is created only when it is missing. An existing directory is not wiped, and create does not recursively chown it. Fleet data is not stored in other top-level `/home` directories.
 
 The host does not need Debian or a local image rebuild. It does need a driver that matches the instance line you pick (CUDA 13.0 or CUDA 12.4).
 
@@ -225,7 +225,7 @@ Create writes under `/home/ComfyFleet` in the manager, then passes those same pa
 | `/home/ComfyFleet/files/<name>/temp` | `/opt/ComfyUI/temp` |
 | `/home/ComfyFleet/files/<name>` | `/opt/comfyfleet/instance` |
 
-`/home/ComfyFleet/models` is shared and read-write. If `/home/ComfyFleet` is not a bind mount, the manager warns at startup. Nothing the fleet owns is created as a sibling of `/home/ComfyFleet`.
+`/home/ComfyFleet/models` is shared and read-write. If `/home/ComfyFleet` is not a bind mount, the manager warns at startup. Nothing the fleet owns is created as a sibling of `/home/ComfyFleet`. A directory create makes under that root (`models` and its subdirectories, `wildcards`, `custom_nodes_<name>`, and `files/<name>/{input,output,temp}`) is owned by `comfyuser:comfyuser` when it is new. An existing directory is left as it is. The storage root itself is not chowned.
 
 ### Create-time custom nodes
 
