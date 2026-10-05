@@ -1,5 +1,6 @@
 """HTTP adapter: control happy path, missing workflow, no second lifecycle."""
 
+import csv
 import http.client
 import json
 import subprocess
@@ -326,6 +327,43 @@ class HttpApiTests(unittest.TestCase):
         self.assertNotIn("url", started["instance"])
         create_args = self.docker.containers["background"]["args"]
         self.assertEqual(create_args[create_args.index("--gpus") + 1], "device=1")
+
+    def test_create_with_two_gpus_attaches_both_devices(self):
+        """Manager create sends gpus=0,1. Docker must see both device ids.
+
+        ``--gpus`` is CSV. The unquoted value ``device=0,1`` is device 0 plus
+        a count of 1, and the engine rejects it with
+        "cannot set both Count and DeviceIDs on device request".
+        """
+
+        path = Path(self.tmp.name) / "Dual.json"
+        path.write_bytes(_workflow("dual"))
+        body, content_type = _multipart(
+            [
+                ("workflow_path", str(path)),
+                ("gpus", "0,1"),
+                ("cuda_tag", "cu130"),
+                ("start", "false"),
+            ],
+            [],
+        )
+        status, raw = self._open(
+            "POST",
+            "/api/instances",
+            data=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 200, raw)
+        payload = self._body(status, raw)
+        self.assertEqual(payload["instance"]["gpus"], [0, 1])
+        self.assertEqual(payload["instance"]["name"], "dual")
+        self.assertFalse(payload["started"])
+        args = self.docker.containers["dual"]["args"]
+        device_ids, count = _docker_gpu_request(args[args.index("--gpus") + 1])
+        self.assertEqual(device_ids, ["0", "1"])
+        self.assertIsNone(count)
+        self.assertIn("NVIDIA_VISIBLE_DEVICES=0,1", args)
+        self.assertIn("comfyfleet.gpus=0,1", args)
 
     def test_missing_workflow_does_not_create(self):
         cases = [
@@ -829,6 +867,32 @@ class HttpApiTests(unittest.TestCase):
 def _multipart_request(fields):
     body, content_type = _multipart(fields, [])
     return body, {"Content-Type": content_type}
+
+
+def _docker_gpu_request(flag: str) -> tuple[list[str] | None, int | None]:
+    """Parse one ``--gpus`` value the way docker/cli opts/gpus.go does.
+
+    A field without ``=`` is a count. ``device`` is split on commas only
+    after the CSV read. Both set together is the daemon error this regression
+    guards against.
+    """
+
+    fields = next(csv.reader([flag]))
+    device_ids = None
+    count = None
+    for field in fields:
+        key, sep, val = field.partition("=")
+        if not sep:
+            count = int(key)
+            continue
+        if key == "device":
+            device_ids = [part for part in val.split(",") if part != ""]
+            continue
+        if key == "count":
+            count = -1 if val == "all" else int(val)
+            continue
+        raise AssertionError(f"unexpected gpu key {key!r} in {flag!r}")
+    return device_ids, count
 
 
 class RequestHostTests(unittest.TestCase):
