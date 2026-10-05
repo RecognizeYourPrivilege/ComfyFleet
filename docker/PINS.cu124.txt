@@ -56,6 +56,14 @@ ComfyUI
   https://github.com/Comfy-Org/ComfyUI
   tag v0.38.0
   commit 6b747c0428c343e1417219641db93a4fb7cb69ae
+  Checkout is a full git clone plus that commit. ComfyUI keeps its .git.
+  Pinned ComfyUI-Manager reads it at startup: iter_commits for the revision
+  count, plus the commit hash and date. The notice route prints
+  "Your ComfyUI isn't git repo." when that date is still the 1900 default.
+  A depth-1 repo would report revision 1, so this clone is not shallow.
+  The baked custom nodes are fetched with git fetch --depth 1 of the pinned
+  commit, and .git is deleted in that same layer. Same rule as
+  docker/PINS.txt.
 
 ComfyUI-Manager
   https://github.com/Comfy-Org/ComfyUI-Manager
@@ -189,6 +197,10 @@ ComfyUI-Impact-Pack
   setuptools>=70.1 are installed in the venv. The probe imports
   setuptools.command.bdist_wheel before the Impact requirements install.
   The torch, torchvision, and torchaudio pins are unchanged.
+  After that install the build checks metadata.version("torch") ==
+  2.6.0+cu124 and imports sam2. PIP_NO_CACHE_DIR=1 is set before the first
+  pip install, and each RUN that installs Python packages deletes
+  /root/.cache/pip.
   install.py runs at build with baked_custom_nodes/skip_download_model so it
   does not download SAM weights. The sentinel is removed after the run.
   The entrypoint seeds impact-pack.ini:

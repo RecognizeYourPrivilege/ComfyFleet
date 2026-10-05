@@ -53,6 +53,10 @@ PyTorch (CUDA 13.0 wheels)
   2.13.0+cu130 satisfies that specifier (the local version is ignored when
   the specifier has none). torchvision's Requires-Python excludes 3.14.1
   only; 3.14.7 is accepted.
+  PIP_NO_CACHE_DIR=1 is set before the first pip install. Each RUN that
+  installs Python packages also deletes /root/.cache/pip. An isolated
+  sam2 build downloaded a second torch into that cache; sam2 is installed
+  with --no-build-isolation instead (see ComfyUI-Impact-Pack below).
   torchaudio 2.11.0+cu130 is a presence pin. The cu130 index has no
   torchaudio 2.13 wheel (newest cu130 cp314 wheel is 2.11.0+cu130). PyTorch
   2.13 install docs omit torchaudio. TorchAudio 2.11 is built against the
@@ -79,6 +83,20 @@ ComfyUI
   commit 8ff6dc384ba5c410266b40e137799e049459d4f2
   requirements.txt at that commit also installs comfy-kitchen==0.2.35 and
   comfy-aimdo==0.5.5. Those are not overridden.
+  Checkout is a full git clone plus that commit. ComfyUI keeps its .git.
+  Pinned ComfyUI-Manager reads it at startup: iter_commits for the revision
+  count, plus the commit hash and date. The notice route prints
+  "Your ComfyUI isn't git repo." when that date is still the 1900 default.
+  A depth-1 repo would report revision 1, so this clone is not shallow.
+
+Custom node checkouts
+  ComfyUI-Manager, Pixaroma, ComfyDock, RES4LYF, Impact-Pack, and
+  Impact-Subpack are fetched with git fetch --depth 1 of the pinned commit.
+  .git is deleted in that same image layer, including any nested .git under
+  baked_custom_nodes or stock_custom_nodes. Manager's version string is a
+  constant in manager_core.py. It does not read its own .git to import.
+  git remains installed so Manager can clone other nodes onto the host
+  custom_nodes mount.
 
 ComfyUI-Manager
   https://github.com/Comfy-Org/ComfyUI-Manager
@@ -214,6 +232,18 @@ ComfyUI-Impact-Pack
   replace cv2. The previous pin opencv-python-headless<0 matched no
   distribution and the resolver stopped on that name on this line and on
   cu124.
+  The filtered requirements include git+https://github.com/facebookresearch/sam2.
+  That project's build-system requires torch>=2.5.1. The image installs the
+  filtered file with --no-build-isolation so the build uses the already
+  installed torch==2.13.0+cu130. An isolated build downloads a second torch
+  from PyPI (not the cu130 index) into /root/.cache/pip. SAM2_BUILD_CUDA=0
+  skips the CUDA extension (this image has no nvcc). --no-build-isolation
+  does not install build dependencies. wheel and setuptools>=70.1 are
+  installed first, the same pair as the cu124 line, so bdist_wheel exists.
+  The probe imports setuptools.command.bdist_wheel before the Impact
+  requirements install. After that install the build checks
+  metadata.version("torch") == 2.13.0+cu130 and imports sam2. The torch,
+  torchvision, and torchaudio pins are unchanged.
   install.py runs at build with baked_custom_nodes/skip_download_model so it
   does not download sam_vit_b_01ec64.pth. The sentinel is removed after the
   run. No SAM weight file is copied into the image.

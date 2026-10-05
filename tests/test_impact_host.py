@@ -161,29 +161,40 @@ class ImpactBakeContractTests(unittest.TestCase):
         self.assertIn("RES4LYF/images.py", script)
         self.assertIn("ComfyUI-Impact-Pack/modules/impact/utils.py", script)
 
-    def test_cu124_sam2_build_uses_the_installed_torch_pin(self):
-        cu124 = (ROOT / "Dockerfile.cu124").read_text(encoding="utf-8")
-        cu130 = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        pins = (ROOT / "docker" / "PINS.cu124.txt").read_text(encoding="utf-8")
-        section = cu124.split("python /opt/comfyfleet/impact_bake.py", 1)[1]
-        section = section.split("impact_bake.py --check-weights", 1)[0]
-        wheel_at = section.index(
-            "pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt wheel 'setuptools>=70.1'"
+    def test_both_lines_build_sam2_against_the_installed_torch(self):
+        cases = (
+            ("Dockerfile", "2.13.0+cu130", "docker/PINS.txt"),
+            ("Dockerfile.cu124", "2.6.0+cu124", "docker/PINS.cu124.txt"),
         )
-        probe_at = section.index("from setuptools.command.bdist_wheel import bdist_wheel")
-        sam_at = section.index(
-            "SAM2_BUILD_CUDA=0 pip install --no-cache-dir --no-build-isolation "
-            "-c /opt/comfyfleet/torch-constraints.txt -r /tmp/impact-requirements.txt"
-        )
-        self.assertLess(wheel_at, probe_at)
-        self.assertLess(probe_at, sam_at)
-        self.assertNotIn("wheel 'setuptools>=70.1'", cu130)
-        self.assertNotIn("--no-build-isolation", cu130)
-        self.assertIn("torch==2.6.0+cu124", pins)
-        self.assertIn("torchvision==0.21.0+cu124", pins)
-        self.assertIn("torchaudio==2.6.0+cu124", pins)
-        self.assertIn("setuptools>=70.1", pins)
-        self.assertIn("bdist_wheel", pins)
+        for name, torch_pin, pins_name in cases:
+            text = (ROOT / name).read_text(encoding="utf-8")
+            pins = (ROOT / pins_name).read_text(encoding="utf-8")
+            section = text.split("python /opt/comfyfleet/impact_bake.py", 1)[1]
+            section = section.split("impact_bake.py --check-weights", 1)[0]
+            wheel_at = section.index(
+                "pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt wheel 'setuptools>=70.1'"
+            )
+            probe_at = section.index("from setuptools.command.bdist_wheel import bdist_wheel")
+            sam_at = section.index(
+                "SAM2_BUILD_CUDA=0 pip install --no-cache-dir --no-build-isolation "
+                "-c /opt/comfyfleet/torch-constraints.txt -r /tmp/impact-requirements.txt"
+            )
+            torch_at = section.index(
+                'import importlib.metadata as metadata; assert metadata.version("torch") == '
+                f'"{torch_pin}"'
+            )
+            sam2_import = section.index("import sam2")
+            self.assertLess(wheel_at, probe_at, name)
+            self.assertLess(probe_at, sam_at, name)
+            self.assertLess(sam_at, torch_at, name)
+            self.assertLess(torch_at, sam2_import, name)
+            self.assertIn(f"torch=={torch_pin}", pins)
+            self.assertIn("setuptools>=70.1", pins)
+            self.assertIn("bdist_wheel", pins)
+            self.assertIn("--no-build-isolation", pins)
+        cu124_pins = (ROOT / "docker" / "PINS.cu124.txt").read_text(encoding="utf-8")
+        self.assertIn("torchvision==0.21.0+cu124", cu124_pins)
+        self.assertIn("torchaudio==2.6.0+cu124", cu124_pins)
 
     def test_requirement_filter_drops_headless_and_keeps_the_git_line(self):
         bake = _load(ROOT / "docker" / "impact_bake.py", "impact_bake")
