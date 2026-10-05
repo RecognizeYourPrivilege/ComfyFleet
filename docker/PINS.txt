@@ -205,7 +205,15 @@ ComfyUI-Impact-Pack
   Same commit on the cu124 line.
   requirements.txt names opencv-python-headless. That line is filtered out
   before pip install. opencv-python from RES4LYF stays. The constraint file
-  also contains opencv-python-headless<0.
+  pins opencv-python-headless==99.0.0. That distribution is the placeholder
+  wheel from docker/opencv_headless_shim.py (no cv2 files), installed from
+  /opt/comfyfleet/wheels. PIP_FIND_LINKS points at that directory. Version
+  99.0.0 satisfies albumentations' opencv-python-headless>=4.9.0.80, which
+  is what comfyui-reactor-node pulls in. The published headless wheel does
+  not match the pin, so a Manager git-URL or zip requirements install cannot
+  replace cv2. The previous pin opencv-python-headless<0 matched no
+  distribution and the resolver stopped on that name on this line and on
+  cu124.
   install.py runs at build with baked_custom_nodes/skip_download_model so it
   does not download sam_vit_b_01ec64.pth. The sentinel is removed after the
   run. No SAM weight file is copied into the image.
