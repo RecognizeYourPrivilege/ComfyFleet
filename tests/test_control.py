@@ -351,7 +351,8 @@ class ControlTests(unittest.TestCase):
         )
         self.assertEqual(result.instance.gpus, [0, 1])
         args = self.docker.containers["dual"]["args"]
-        self.assertEqual(args[args.index("--gpus") + 1], "device=0,1")
+        self.assertEqual(args[args.index("--gpus") + 1], '"device=0,1"')
+        self.assertIn("NVIDIA_VISIBLE_DEVICES=0,1", args)
 
     def test_multi_gpu_without_flag_does_not_create(self):
         with self.assertRaises(FleetError):
