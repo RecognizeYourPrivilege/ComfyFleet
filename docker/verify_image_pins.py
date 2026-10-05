@@ -30,6 +30,7 @@ means cu130, which is what the module-level pin constants describe.
 
 import ctypes
 import glob
+import importlib.util
 import os
 import subprocess
 import sys
@@ -78,12 +79,27 @@ MANAGER_PYTORCH_MISSING_LOG = "[ComfyUI-Manager] PyTorch is not installed"
 LLAMA_PIP_PIN = ("llama_cpp_python", "0.3.36")
 
 # RES4LYF images.py and Impact modules/impact/utils.py both import cv2.
-# The wheel must be opencv-python. opencv-python-headless replaces that module.
+# The wheel must be opencv-python. The published opencv-python-headless wheel
+# replaces that module. The image installs only the placeholder version from
+# docker/opencv_headless_shim.py, which has no cv2 files.
 CV2_SOURCES = (
     "RES4LYF/images.py",
     "ComfyUI-Impact-Pack/modules/impact/utils.py",
 )
 BAKED_ROOT = "/opt/comfyfleet/baked_custom_nodes"
+
+
+def _headless_shim_version() -> str:
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "opencv_headless_shim.py")
+    spec = importlib.util.spec_from_file_location("_comfyfleet_opencv_headless_shim", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"opencv headless shim missing: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.VERSION
+
+
+HEADLESS_SHIM_VERSION = _headless_shim_version()
 
 
 def parse_manager_pip_list(text: str) -> dict[str, str]:
@@ -174,16 +190,26 @@ def assert_llama_import() -> None:
 
 
 def opencv_distribution_errors(versions: Mapping[str, str]) -> list[str]:
-    """Fail when the headless wheel is installed or opencv-python is absent.
+    """Fail unless cv2 stays on opencv-python and headless is the placeholder.
 
     ``pip list`` names are already normalized (dashes become underscores).
+    The placeholder version satisfies ReActor's albumentations dependency.
+    Any other headless version is the published wheel and replaces ``cv2``.
     """
 
     errors: list[str] = []
-    if "opencv_python_headless" in versions:
+    headless = versions.get("opencv_python_headless")
+    if headless is None:
         errors.append(
-            "opencv-python-headless is installed. RES4LYF and Impact import cv2 "
-            "from opencv-python; the headless wheel must not replace it."
+            "opencv-python-headless placeholder is not installed. "
+            f"Only version {HEADLESS_SHIM_VERSION} is allowed, and it must be present "
+            "so a later requirements install can satisfy opencv-python-headless>=4.9.0.80."
+        )
+    elif headless != HEADLESS_SHIM_VERSION:
+        errors.append(
+            f"opencv-python-headless {headless!r} is installed. RES4LYF and Impact "
+            "import cv2 from opencv-python. Only the placeholder "
+            f"{HEADLESS_SHIM_VERSION} is allowed; the published headless wheel replaces cv2."
         )
     if "opencv_python" not in versions:
         errors.append("opencv-python is not installed")

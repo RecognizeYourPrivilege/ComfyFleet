@@ -118,8 +118,15 @@ class ImpactBakeContractTests(unittest.TestCase):
         for dockerfile in (cu130, cu124):
             self.assertIn("https://github.com/ltdrdata/ComfyUI-Impact-Pack.git", dockerfile)
             self.assertIn("https://github.com/ltdrdata/ComfyUI-Impact-Subpack.git", dockerfile)
-            self.assertIn("opencv-python-headless<0", dockerfile)
-            self.assertNotIn("pip install opencv-python-headless", dockerfile)
+            self.assertIn("opencv-python-headless==99.0.0", dockerfile)
+            self.assertNotIn("opencv-python-headless<0", dockerfile)
+            self.assertIn(
+                "pip install --no-cache-dir --no-index --find-links /opt/comfyfleet/wheels "
+                "'opencv-python-headless==99.0.0'",
+                dockerfile,
+            )
+            self.assertIn("PIP_FIND_LINKS=/opt/comfyfleet/wheels", dockerfile)
+            self.assertIn("opencv_headless_shim.py", dockerfile)
             self.assertNotIn("submodule update", dockerfile)
             self.assertIn("SAM2_BUILD_CUDA=0", dockerfile)
             self.assertIn("impact_bake.py", dockerfile)
@@ -200,13 +207,21 @@ class ImpactBakeContractTests(unittest.TestCase):
             (root / "sam_vit_b_01ec64.pth").unlink()
             bake.assert_no_weight_files([root])
 
-    def test_opencv_distribution_check_rejects_headless(self):
+    def test_opencv_distribution_check_allows_only_the_placeholder(self):
         verify = _load(ROOT / "docker" / "verify_image_pins.py", "verify_image_pins_impact")
-        self.assertEqual(verify.opencv_distribution_errors({"opencv_python": "5.0.0.93"}), [])
+        shim = verify.HEADLESS_SHIM_VERSION
+        self.assertEqual(
+            verify.opencv_distribution_errors(
+                {"opencv_python": "5.0.0.93", "opencv_python_headless": shim}
+            ),
+            [],
+        )
         errors = verify.opencv_distribution_errors(
             {"opencv_python": "5.0.0.93", "opencv_python_headless": "5.0.0.93"}
         )
         self.assertTrue(any("headless" in item for item in errors))
+        missing_shim = verify.opencv_distribution_errors({"opencv_python": "5.0.0.93"})
+        self.assertTrue(any("placeholder" in item for item in missing_shim))
         missing = verify.opencv_distribution_errors({})
         self.assertTrue(any("opencv-python is not installed" in item for item in missing))
 
