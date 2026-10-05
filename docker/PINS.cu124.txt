@@ -171,7 +171,12 @@ ComfyUI-Impact-Pack
   Same commit as docker/PINS.txt (the cu130 line).
   requirements.txt names opencv-python-headless. That line is filtered out
   before pip install. opencv-python from RES4LYF stays. The constraint file
-  also contains opencv-python-headless<0.
+  pins opencv-python-headless==99.0.0, the same placeholder wheel as
+  docker/PINS.txt (no cv2 files, /opt/comfyfleet/wheels, PIP_FIND_LINKS).
+  comfyui-reactor-node's albumentations dependency is
+  opencv-python-headless>=4.9.0.80. 99.0.0 satisfies it. The published
+  headless wheel does not match the pin. The previous pin
+  opencv-python-headless<0 matched no distribution on this Python either.
   The filtered requirements include git+https://github.com/facebookresearch/sam2.
   That project's build-system requires torch>=2.5.1. The image installs the
   filtered file with --no-build-isolation so the build uses the already
@@ -195,7 +200,7 @@ ComfyUI-Impact-Subpack
   branch main
   commit 50c7b71a6a224734cc9b21963c6d1926816a97f1
   Same commit as docker/PINS.txt.
-  opencv-python-headless is filtered out. install.py runs under the same
+  The opencv-python-headless line is filtered out. install.py runs under the same
   skip_download_model sentinel. The sentinel is removed afterward.
   The legacy Impact-Pack submodule named subpack is not initialized.
 
