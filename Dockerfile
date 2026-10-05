@@ -42,12 +42,17 @@
 
 FROM python:3.14.7-slim-bookworm
 
+# PIP_NO_CACHE_DIR applies to every pip invocation in this build, including
+# a build-isolation child. The command-line cache flag is not always enough:
+# an isolated sam2 build left a multi-gigabyte http-v2 cache in the layer.
+# Each RUN that installs Python packages also deletes /root/.cache/pip.
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
     CUDA_VERSION=13.0.3 \
     COMFYFLEET_CUDA_TAG=cu130 \
     NVIDIA_VISIBLE_DEVICES=all \
@@ -99,7 +104,8 @@ RUN mkdir -p /opt/comfyfleet \
     && printf '%s\n' 'torch==2.13.0+cu130' 'torchvision==0.28.0+cu130' 'torchaudio==2.11.0+cu130' 'numpy==2.3.2' > /opt/comfyfleet/torch-constraints.txt \
     && printf '%s\n' 'opencv-python-headless==99.0.0' >> /opt/comfyfleet/torch-constraints.txt \
     && printf '%s\n' 'llama-cpp-python==0.3.36' >> /opt/comfyfleet/torch-constraints.txt \
-    && mkdir -p /opt/comfyfleet/wheels
+    && mkdir -p /opt/comfyfleet/wheels \
+    && rm -rf /root/.cache/pip
 
 # Manager installs run `python -m pip install <pkg>` and do not pass -c
 # (pinned 14b5aaab does not pass -U either). PIP_CONSTRAINT is the same file,
@@ -120,11 +126,29 @@ ENV PIP_CONSTRAINT=/opt/comfyfleet/torch-constraints.txt \
 # line (and a second opencv-python pin) so RES4LYF's opencv-python wheel
 # stays. The placeholder pin above is what a later Manager install is
 # allowed to select. The published headless wheel does not match it.
+# sam2's pyproject build-system requires torch>=2.5.1. An isolated build
+# downloads a second torch (PyPI, not this image's cu130 index) and the
+# nvidia wheels into /root/.cache/pip. --no-build-isolation builds sam2
+# against the torch already in this venv. That flag does not install build
+# dependencies. The same wheel and setuptools>=70.1 pin as the cu124 line
+# is installed first so bdist_wheel exists (bookworm ensurepip setuptools
+# 66 has no such command; this image installs that pair either way).
+# SAM2_BUILD_CUDA=0 skips the CUDA extension. The torch pin is unchanged.
 COPY docker/impact_bake.py /opt/comfyfleet/impact_bake.py
 COPY docker/opencv_headless_shim.py /opt/comfyfleet/opencv_headless_shim.py
 
-# Full upstream checkouts. Pixaroma's workflow-browser examples stay inside that
-# custom node; the entrypoint never uses them as the instance default.
+# ComfyUI keeps its .git. Pinned Manager 14b5aaab reads that repo at startup
+# (iter_commits for the revision count, plus the commit hash and date). The
+# notice route prints "Your ComfyUI isn't git repo." when that date is still
+# the 1900 default. A depth-1 ComfyUI repo would report revision 1, so this
+# clone stays full and its .git is not removed. Baked custom nodes are
+# fetch --depth 1 of the pinned commit, and .git is deleted in this same RUN.
+# Manager's own version string is a constant in manager_core.py. It does not
+# need its .git to import, and a git pull of that tree would drop the
+# trusted-install patch applied later. git stays installed so Manager can
+# clone other nodes onto the host custom_nodes mount.
+# Pixaroma's workflow-browser examples stay inside that custom node; the
+# entrypoint never uses them as the instance default.
 # ComfyUI v0.37.4 requirements install comfy-kitchen==0.2.35. On CPython 3.14
 # pip selects the cp312-abi3 manylinux wheel (CUDA build). The image does not
 # override that with the pure-Python wheel, and it does not rewrite
@@ -132,21 +156,25 @@ COPY docker/opencv_headless_shim.py /opt/comfyfleet/opencv_headless_shim.py
 RUN git config --global --add safe.directory '*' \
     && git clone https://github.com/Comfy-Org/ComfyUI.git /opt/ComfyUI \
     && git -C /opt/ComfyUI checkout 8ff6dc384ba5c410266b40e137799e049459d4f2 \
-    && git clone https://github.com/Comfy-Org/ComfyUI-Manager.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Manager \
-    && git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Manager checkout 14b5aaab711ad1f1306d420732a923fb058c44d7 \
-    && git clone https://github.com/pixaroma/ComfyUI-Pixaroma.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Pixaroma \
-    && git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Pixaroma checkout 9259bc49557a92e3fc14796999468c723bd1ecdd \
-    && git clone https://github.com/RecognizeYourPrivilege/ComfyUI-ComfyDock.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-ComfyDock \
-    && git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-ComfyDock checkout 3a9ff9eba897bf2388d6c1943b01d819ba05a0c6 \
-    && git clone https://github.com/ClownsharkBatwing/RES4LYF.git /opt/comfyfleet/baked_custom_nodes/RES4LYF \
-    && git -C /opt/comfyfleet/baked_custom_nodes/RES4LYF checkout 3d1d69da69ee47f7647d59e1bd0967e472fccc41 \
-    && git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Pack \
-    && git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Pack checkout 429d0159ad429e64d2b3916e6e7be9c22d025c3c \
-    && git clone https://github.com/ltdrdata/ComfyUI-Impact-Subpack.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Subpack \
-    && git -C /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Subpack checkout 50c7b71a6a224734cc9b21963c6d1926816a97f1 \
+    && pin_git() { \
+        url="$1"; dest="$2"; rev="$3"; \
+        mkdir -p "$dest" \
+        && git -C "$dest" init -q \
+        && git -C "$dest" remote add origin "$url" \
+        && git -C "$dest" fetch --depth 1 origin "$rev" \
+        && git -C "$dest" checkout --detach FETCH_HEAD \
+        && rm -rf "$dest/.git"; \
+    } \
+    && pin_git https://github.com/Comfy-Org/ComfyUI-Manager.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Manager 14b5aaab711ad1f1306d420732a923fb058c44d7 \
+    && pin_git https://github.com/pixaroma/ComfyUI-Pixaroma.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Pixaroma 9259bc49557a92e3fc14796999468c723bd1ecdd \
+    && pin_git https://github.com/RecognizeYourPrivilege/ComfyUI-ComfyDock.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-ComfyDock 3a9ff9eba897bf2388d6c1943b01d819ba05a0c6 \
+    && pin_git https://github.com/ClownsharkBatwing/RES4LYF.git /opt/comfyfleet/baked_custom_nodes/RES4LYF 3d1d69da69ee47f7647d59e1bd0967e472fccc41 \
+    && pin_git https://github.com/ltdrdata/ComfyUI-Impact-Pack.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Pack 429d0159ad429e64d2b3916e6e7be9c22d025c3c \
+    && pin_git https://github.com/ltdrdata/ComfyUI-Impact-Subpack.git /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Subpack 50c7b71a6a224734cc9b21963c6d1926816a97f1 \
     && mkdir -p /opt/comfyfleet/stock_custom_nodes \
     && cp -a /opt/ComfyUI/custom_nodes/. /opt/comfyfleet/stock_custom_nodes/ \
-    && mkdir -p /opt/ComfyUI/models /opt/ComfyUI/input /opt/ComfyUI/output /opt/ComfyUI/temp /opt/comfyfleet/instance
+    && mkdir -p /opt/ComfyUI/models /opt/ComfyUI/input /opt/ComfyUI/output /opt/ComfyUI/temp /opt/comfyfleet/instance \
+    && find /opt/comfyfleet/baked_custom_nodes /opt/comfyfleet/stock_custom_nodes -depth -name .git -exec rm -rf {} +
 
 RUN pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt \
         -r /opt/ComfyUI/requirements.txt \
@@ -160,13 +188,18 @@ RUN pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt \
     && python /opt/comfyfleet/opencv_headless_shim.py --wheel-dir /opt/comfyfleet/wheels \
     && pip install --no-cache-dir --no-index --find-links /opt/comfyfleet/wheels 'opencv-python-headless==99.0.0' \
     && python /opt/comfyfleet/impact_bake.py \
-    && SAM2_BUILD_CUDA=0 pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt -r /tmp/impact-requirements.txt \
+    && pip install --no-cache-dir -c /opt/comfyfleet/torch-constraints.txt wheel 'setuptools>=70.1' \
+    && python -c 'from setuptools.command.bdist_wheel import bdist_wheel' \
+    && SAM2_BUILD_CUDA=0 pip install --no-cache-dir --no-build-isolation -c /opt/comfyfleet/torch-constraints.txt -r /tmp/impact-requirements.txt \
+    && python -c 'import importlib.metadata as metadata; assert metadata.version("torch") == "2.13.0+cu130", metadata.version("torch")' \
+    && python -c 'import sam2' \
     && python -c 'import importlib.metadata as metadata; assert metadata.version("opencv-python-headless")=="99.0.0", metadata.version("opencv-python-headless"); assert metadata.version("opencv-python"); import cv2' \
     && touch /opt/comfyfleet/baked_custom_nodes/skip_download_model \
     && COMFYUI_PATH=/opt/ComfyUI COMFYUI_MODEL_PATH=/opt/ComfyUI/models python /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Pack/install.py \
     && COMFYUI_PATH=/opt/ComfyUI COMFYUI_MODEL_PATH=/opt/ComfyUI/models python /opt/comfyfleet/baked_custom_nodes/ComfyUI-Impact-Subpack/install.py \
     && rm -f /opt/comfyfleet/baked_custom_nodes/skip_download_model \
-    && python /opt/comfyfleet/impact_bake.py --check-weights
+    && python /opt/comfyfleet/impact_bake.py --check-weights \
+    && rm -rf /root/.cache/pip
 
 # JoyCaption imports llama_cpp. PyPI 0.3.36 is an sdist, and this image has
 # no g++. The abetlen cu130 wheel is py3-none manylinux, so CPython 3.14.7
@@ -181,7 +214,8 @@ RUN unset CXX CC CMAKE_ARGS \
     && /opt/venv/bin/python -m pip install --no-cache-dir 'llama-cpp-python==0.3.36' \
         --only-binary=:all: \
         --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu130 \
-    && /opt/venv/bin/python /opt/comfyfleet/llama_import_smoke.py
+    && /opt/venv/bin/python /opt/comfyfleet/llama_import_smoke.py \
+    && rm -rf /root/.cache/pip
 
 COPY docker/PINS.txt /opt/comfyfleet/PINS.txt
 COPY docker/verify_image_pins.py /opt/comfyfleet/verify_image_pins.py
