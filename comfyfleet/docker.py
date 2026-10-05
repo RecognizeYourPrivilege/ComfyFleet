@@ -61,6 +61,13 @@ def build_create_args(
     """
 
     gpu_list = ",".join(str(index) for index in gpus)
+    # ``docker create --gpus`` is CSV (docker/cli opts/gpus.go). ``device=0``
+    # is one field. ``device=0,1`` is two fields: device id 0, and a bare
+    # count of 1. The engine then rejects the create with
+    # "cannot set both Count and DeviceIDs on device request", so a second
+    # GPU never attaches. Quoting the whole field is the same argv the shell
+    # form ``--gpus '"device=0,1"'`` passes through. One GPU stays unquoted.
+    gpu_flag = f'"device={gpu_list}"' if len(gpus) > 1 else f"device={gpu_list}"
     args = [
         "create",
         "--name",
@@ -70,7 +77,7 @@ def build_create_args(
         "--shm-size",
         INSTANCE_SHM_SIZE,
         "--gpus",
-        f"device={gpu_list}",
+        gpu_flag,
         "-p",
         f"{port}:{CONTAINER_PORT}",
         "-v",
