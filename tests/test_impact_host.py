@@ -4,6 +4,7 @@ import importlib.util
 import inspect
 import json
 import os
+import stat
 import subprocess
 import tempfile
 import threading
@@ -22,14 +23,17 @@ from comfyfleet.gpu import Gpu
 from comfyfleet.http_api import ApiContext, make_server
 from comfyfleet.ownership import (
     BAKED_CUSTOM_NODES,
+    DEFAULT_GROUP_NAME,
+    DEFAULT_OWNER_NAME,
     assert_allowlisted,
     chown_inode,
     chown_new_directory,
+    create_new_host_dirs,
     ensure_wildcards_dir,
     fix_owner,
     resolve_owner_ids,
 )
-from comfyfleet.paths import WILDCARDS_CONTAINER, FleetLayout
+from comfyfleet.paths import MODEL_SUBDIRS, WILDCARDS_CONTAINER, FleetLayout
 from comfyfleet.prune import (
     ContainerRecord,
     is_managed,
@@ -217,10 +221,10 @@ class WildcardsBindTests(unittest.TestCase):
             docker = _Docker()
             created = []
 
-            def spy(path):
-                created.append(Path(path))
+            def spy(paths):
+                created.extend(Path(path) for path in paths)
 
-            with mock.patch("comfyfleet.ownership.chown_new_directory", spy):
+            with mock.patch("comfyfleet.ownership.chown_new_directories", spy):
                 create_instance(
                     _workflow(sources, "Portrait.json"),
                     layout=layout,
@@ -234,12 +238,28 @@ class WildcardsBindTests(unittest.TestCase):
             self.assertEqual(WILDCARDS_CONTAINER, "/home/wildcards")
             self.assertTrue((root / "wildcards").is_dir())
             self.assertTrue((root / "models" / "sams").is_dir())
-            self.assertEqual(created, [root / "wildcards"])
+            self.assertEqual(
+                created,
+                [root / "wildcards", root / "models"]
+                + [root / "models" / sub for sub in MODEL_SUBDIRS]
+                + [
+                    root / "custom_nodes_portrait",
+                    root / "files",
+                    root / "files" / "portrait",
+                    root / "files" / "portrait" / "input",
+                    root / "files" / "portrait" / "output",
+                    root / "files" / "portrait" / "temp",
+                ],
+            )
+            self.assertNotIn(root, created)
 
             marker = root / "wildcards" / "kept.txt"
             marker.write_text("leave-me", encoding="utf-8")
             again = []
-            with mock.patch("comfyfleet.ownership.chown_new_directory", lambda path: again.append(path)):
+            with mock.patch(
+                "comfyfleet.ownership.chown_new_directories",
+                lambda paths: again.extend(Path(path) for path in paths),
+            ):
                 create_instance(
                     _workflow(sources, "Other.json"),
                     layout=layout,
@@ -248,10 +268,92 @@ class WildcardsBindTests(unittest.TestCase):
                     gpu="0",
                     port_in_use=lambda _port: False,
                 )
-            self.assertEqual(again, [])
+            self.assertEqual(
+                again,
+                [
+                    root / "custom_nodes_other",
+                    root / "files" / "other",
+                    root / "files" / "other" / "input",
+                    root / "files" / "other" / "output",
+                    root / "files" / "other" / "temp",
+                ],
+            )
+            self.assertNotIn(root / "wildcards", again)
+            self.assertNotIn(root / "models", again)
+            self.assertNotIn(root / "custom_nodes_portrait", again)
             self.assertEqual(marker.read_text(encoding="utf-8"), "leave-me")
             other = docker.containers["other"]["args"]
             self.assertIn(f"{root}/wildcards:{WILDCARDS_CONTAINER}", other)
+
+    def test_new_custom_nodes_directory_is_owned_by_comfyuser(self):
+        self.assertEqual(DEFAULT_OWNER_NAME, "comfyuser")
+        self.assertEqual(DEFAULT_GROUP_NAME, "comfyuser")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "home"
+            layout = FleetLayout(root)
+            sources = Path(tmp) / "src"
+            sources.mkdir()
+            docker = _Docker()
+            chowned = []
+
+            def spy(path, uid, gid, follow_symlinks=True):
+                chowned.append((Path(path), uid, gid, follow_symlinks))
+
+            with mock.patch.dict(os.environ, {"COMFYFLEET_MANAGER": "1"}):
+                with mock.patch(
+                    "comfyfleet.ownership.resolve_owner_ids",
+                    return_value=(4242, 4243),
+                ) as resolve:
+                    with mock.patch("comfyfleet.ownership.os.chown", spy):
+                        create_instance(
+                            _workflow(sources, "Portrait.json"),
+                            layout=layout,
+                            docker=docker,
+                            gpus=[Gpu(0, "GPU0", "8192 MiB")],
+                            gpu="0",
+                            port_in_use=lambda _port: False,
+                        )
+            nodes = root / "custom_nodes_portrait"
+            self.assertTrue(nodes.is_dir())
+            self.assertIn((nodes, 4242, 4243, False), chowned)
+            self.assertNotIn(root, [path for path, _uid, _gid, _follow in chowned])
+            self.assertTrue(nodes.stat().st_mode & stat.S_IWUSR)
+            for call in resolve.call_args_list:
+                self.assertEqual(call.args, (DEFAULT_OWNER_NAME, DEFAULT_GROUP_NAME))
+
+            kept = nodes / "kept.txt"
+            kept.write_text("leave-me", encoding="utf-8")
+            chowned.clear()
+            with mock.patch.dict(os.environ, {"COMFYFLEET_MANAGER": "1"}):
+                with mock.patch(
+                    "comfyfleet.ownership.resolve_owner_ids",
+                    return_value=(4242, 4243),
+                ):
+                    with mock.patch("comfyfleet.ownership.os.chown", spy):
+                        create_instance(
+                            _workflow(sources, "Other.json"),
+                            layout=layout,
+                            docker=docker,
+                            gpus=[Gpu(0, "GPU0", "8192 MiB")],
+                            gpu="0",
+                            port_in_use=lambda _port: False,
+                        )
+            self.assertNotIn(nodes, [path for path, _uid, _gid, _follow in chowned])
+            self.assertEqual(kept.read_text(encoding="utf-8"), "leave-me")
+            other = root / "custom_nodes_other"
+            self.assertIn((other, 4242, 4243, False), chowned)
+            self.assertTrue(other.is_dir())
+            self.assertTrue(other.stat().st_mode & stat.S_IWUSR)
+
+    def test_create_refuses_a_host_directory_outside_the_storage_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "home"
+            root.mkdir()
+            outside = Path(tmp) / "custom_nodes_portrait"
+            with self.assertRaises(FleetError) as ctx:
+                create_new_host_dirs(outside, root)
+            self.assertIn(str(root), str(ctx.exception))
+            self.assertFalse(outside.exists())
 
     def test_manager_process_refuses_a_missing_comfyuser_on_the_one_shot_chown(self):
         with tempfile.TemporaryDirectory() as tmp:

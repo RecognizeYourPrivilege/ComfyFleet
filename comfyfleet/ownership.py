@@ -7,9 +7,10 @@ is refused before it is chowned. A symlink whose target is the image
 directory ``/opt/comfyfleet/baked_custom_nodes`` (ComfyUI-Manager and the
 other baked custom nodes) is not followed and does not abort the walk.
 
-Instance create uses :func:`ensure_wildcards_dir`, which creates
-``/home/ComfyFleet/wildcards`` only when it is missing and chowns that new
-directory once. It does not walk an existing tree.
+Instance create uses :func:`ensure_wildcards_dir` and
+:func:`ensure_instance_host_dirs`. Each creates a missing directory under
+the fleet root and chowns that new directory to ``comfyuser:comfyuser``.
+An existing directory is left alone. The storage root is not chowned.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import grp
 import re
 import shutil
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -186,17 +188,90 @@ def ensure_wildcards_dir(layout: FleetLayout) -> bool:
     Returns True when this call created it and chowned that directory
     (not its children). An existing directory, including one that already
     has files, is left alone. A second create does not ``chown -R``.
+    The storage root is created when it is missing and is not chowned.
     """
 
     path = layout.wildcards
     if path.is_symlink() or path.exists():
         return False
-    try:
-        path.mkdir(parents=True, exist_ok=False)
-    except FileExistsError:
+    created = create_new_host_dirs(path, layout.root)
+    if not created:
         return False
-    chown_new_directory(path)
+    chown_new_directories(created)
     return True
+
+
+def ensure_instance_host_dirs(
+    layout: FleetLayout,
+    name: str,
+    model_subdirs: Sequence[str],
+) -> list[Path]:
+    """Create instance host directories and chown the ones this call made.
+
+    ``models`` and each model subdirectory, ``custom_nodes_<name>``, and
+    ``files/<name>/{input,output,temp}`` (including the ``files`` and
+    instance parents when those are missing). An existing directory is
+    left alone. The storage root is not chowned. Returns the directories
+    this call created.
+    """
+
+    created: list[Path] = []
+    for path in (
+        layout.models,
+        *[layout.models / sub for sub in model_subdirs],
+        layout.custom_nodes(name),
+        layout.input_dir(name),
+        layout.output_dir(name),
+        layout.temp_dir(name),
+    ):
+        created.extend(create_new_host_dirs(path, layout.root))
+    chown_new_directories(created)
+    return created
+
+
+def create_new_host_dirs(path: Path, root: Path) -> list[Path]:
+    """Create ``path`` and missing parents beneath ``root``.
+
+    Returns the directories this call created, nearest to ``root`` first.
+    ``root`` is created when it is missing so the child can be made, and
+    it is not included in the result. An existing ``path``, including a
+    symlink, is left alone and yields an empty list.
+    """
+
+    root_norm = _abs(root)
+    target = _abs(path)
+    if target == root_norm:
+        return []
+    if not _is_under(target, root_norm):
+        raise FleetError(f"refusing to create {path} outside {root_norm}")
+    if path.is_symlink() or path.exists():
+        return []
+
+    missing: list[Path] = []
+    current = target
+    while current != root_norm:
+        if current.exists() or current.is_symlink():
+            break
+        missing.append(current)
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    missing.reverse()
+
+    if not root_norm.exists() and not root_norm.is_symlink():
+        root_norm.mkdir(parents=True, exist_ok=True)
+
+    created: list[Path] = []
+    for directory in missing:
+        if directory.exists() or directory.is_symlink():
+            continue
+        try:
+            directory.mkdir(exist_ok=False)
+        except FileExistsError:
+            continue
+        created.append(directory)
+    return created
 
 
 def chown_new_directory(path: Path) -> None:
@@ -209,6 +284,18 @@ def chown_new_directory(path: Path) -> None:
     create or chown fails. ``fix_owner`` does not use this skip.
     """
 
+    chown_new_directories([path])
+
+
+def chown_new_directories(paths: Sequence[Path]) -> None:
+    """``chown comfyuser:comfyuser`` on each new directory. Not recursive.
+
+    The account is resolved once. See :func:`chown_new_directory` for the
+    manager-process error rule. An empty list does nothing.
+    """
+
+    if not paths:
+        return
     strict = os.environ.get("COMFYFLEET_MANAGER") == "1"
     owner, group_name = normalize_owner_names(None, None)
     try:
@@ -217,15 +304,16 @@ def chown_new_directory(path: Path) -> None:
         if strict:
             raise
         return
-    try:
-        os.chown(path, uid, gid, follow_symlinks=False)
-    except OSError as exc:
-        if not strict:
-            return
-        raise FleetError(
-            f"cannot chown {path} to {owner}:{group_name} ({uid}:{gid}): {exc}. "
-            "The manager image runs as root so it can set the owner of a directory it just created."
-        ) from exc
+    for path in paths:
+        try:
+            os.chown(path, uid, gid, follow_symlinks=False)
+        except OSError as exc:
+            if not strict:
+                return
+            raise FleetError(
+                f"cannot chown {path} to {owner}:{group_name} ({uid}:{gid}): {exc}. "
+                "The manager image runs as root so it can set the owner of a directory it just created."
+            ) from exc
 
 
 def fix_owner(
