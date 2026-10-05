@@ -27,7 +27,7 @@ from comfyfleet.errors import FleetError
 from comfyfleet.gpu import Gpu, select_gpus
 from comfyfleet.launch import LaunchConfig, launch_from_json, parse_launch
 from comfyfleet.naming import is_instance_name, resolve_instance_name
-from comfyfleet.ownership import ensure_wildcards_dir
+from comfyfleet.ownership import ensure_instance_host_dirs, ensure_wildcards_dir
 from comfyfleet.paths import (
     CUDA_TAGS,
     CU130_PUBLISHED_DIGEST,
@@ -799,23 +799,15 @@ def _prepare_dirs(layout: FleetLayout, name: str) -> None:
             f"cannot create {layout.wildcards}: {exc}. "
             "That directory is created only when it is missing; an existing directory is left alone."
         ) from exc
-    paths = [
-        layout.models,
-        *[layout.models / sub for sub in MODEL_SUBDIRS],
-        layout.custom_nodes(name),
-        layout.input_dir(name),
-        layout.output_dir(name),
-        layout.temp_dir(name),
-    ]
-    for path in paths:
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise FleetError(
-                f"cannot create {path}: {exc}. Required host paths: "
-                f"{layout.models}, {layout.custom_nodes(name)}, "
-                f"{layout.input_dir(name)}, {layout.output_dir(name)}, {layout.temp_dir(name)}."
-            ) from exc
+    try:
+        ensure_instance_host_dirs(layout, name, MODEL_SUBDIRS)
+    except OSError as exc:
+        failed = getattr(exc, "filename", None) or layout.root
+        raise FleetError(
+            f"cannot create {failed}: {exc}. Required host paths: "
+            f"{layout.models}, {layout.custom_nodes(name)}, "
+            f"{layout.input_dir(name)}, {layout.output_dir(name)}, {layout.temp_dir(name)}."
+        ) from exc
 
 
 def _copy_workflow(source: Path, dest: Path) -> None:
