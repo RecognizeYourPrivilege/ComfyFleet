@@ -231,7 +231,7 @@ class LlamaBakeContractTests(unittest.TestCase):
             self.assertNotIn(digest, readme)
             self.assertNotIn(digest, compose)
         self.assertIn("comfyfleet:cu130", install)
-        self.assertIn("comfyfleet-manager:latest", compose)
+        self.assertIn("comfyfleet-manager-legacy:latest", compose)
 
 
 if __name__ == "__main__":

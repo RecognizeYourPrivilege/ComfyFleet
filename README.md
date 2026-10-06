@@ -27,7 +27,7 @@ Primary tags are `cu130` and `cu124`. Aliases are the same published images, and
 
 | Image | Pull | Local tag from `install.sh` | Role |
 |---|---|---|---|
-| Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest` | `comfyfleet-manager:latest` | Control HTTP and web UI. No CUDA stack. Includes `git` and `unzip` for create-time node seeding. |
+| Manager | `ghcr.io/recognizeyourprivilege/comfyfleet-manager-legacy:latest` | `comfyfleet-manager:latest` | Control HTTP and web UI. No CUDA stack. Includes `git` and `unzip` for create-time node seeding. |
 | Instance cu130 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu130` | `comfyfleet:cu130`, `comfyfleet:latest` | ComfyUI v0.37.4. Python 3.14.7, CUDA 13.0 runtime, torch `2.13.0+cu130`. Host driver CUDA 13.0. |
 | Instance cu124 | `ghcr.io/recognizeyourprivilege/comfyfleet:cu124` | `comfyfleet:cu124`, `comfyfleet:phase1` | ComfyUI v0.38.0. CPython 3.11, CUDA 12.4 runtime, torch `2.6.0+cu124`. Host driver CUDA 12.4. |
 
@@ -136,6 +136,8 @@ The host does not need Debian or a local image rebuild. It does need a driver th
 
 ## Install
 
+The manager image moved to `ghcr.io/recognizeyourprivilege/comfyfleet-manager-legacy`. Re-run the install command to switch, and use `docker image prune -f` afterwards to clear the old copy.
+
 From a checkout, replace `192.168.1.20` with the address browsers on your LAN use:
 
 ```bash
@@ -174,10 +176,10 @@ Same start without the script, for the cu130 default. Pull the moving instance a
 
 ```bash
 docker pull ghcr.io/recognizeyourprivilege/comfyfleet:cu130
-docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest
+docker pull ghcr.io/recognizeyourprivilege/comfyfleet-manager-legacy:latest
 docker tag ghcr.io/recognizeyourprivilege/comfyfleet:cu130 comfyfleet:cu130
 docker tag ghcr.io/recognizeyourprivilege/comfyfleet:cu130 comfyfleet:latest
-docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest comfyfleet-manager:latest
+docker tag ghcr.io/recognizeyourprivilege/comfyfleet-manager-legacy:latest comfyfleet-manager:latest
 
 docker run -d --name comfyfleet-manager \
   --restart unless-stopped \
@@ -189,7 +191,7 @@ docker run -d --name comfyfleet-manager \
   -e COMFYFLEET_PUBLIC_HOST=192.168.1.20 \
   -e COMFYFLEET_CUDA_TAG=cu130 \
   -e COMFYFLEET_INSTANCE_IMAGE=ghcr.io/recognizeyourprivilege/comfyfleet:cu130 \
-  ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest
+  ghcr.io/recognizeyourprivilege/comfyfleet-manager-legacy:latest
 ```
 
 For a CUDA 12.4 host, pull `ghcr.io/recognizeyourprivilege/comfyfleet:cu124`, tag `comfyfleet:cu124` and `comfyfleet:phase1`, and set `COMFYFLEET_CUDA_TAG=cu124` with that ref as `COMFYFLEET_INSTANCE_IMAGE`. To mirror `--cuda-tag both`, pull and tag that image as well and leave `COMFYFLEET_CUDA_TAG=cu130`.
@@ -356,7 +358,7 @@ docker compose -f compose.yaml -f compose.build.yaml up -d --build
 | Image | Tags |
 |---|---|
 | `ghcr.io/recognizeyourprivilege/comfyfleet` | `cu130`, `cu124`, `latest` (alias of cu130), `phase1` (alias of cu124), `<git sha>`, `<git sha>-cu130`, `<git sha>-cu124` |
-| `ghcr.io/recognizeyourprivilege/comfyfleet-manager` | `latest`, `<git sha>` |
+| `ghcr.io/recognizeyourprivilege/comfyfleet-manager-legacy` | `latest`, `<git sha>` |
 
 The workflow logs in with `GITHUB_TOKEN` (`packages: write`). The job summary prints the manager digest and one instance-matrix digest. Those digests are not committed. `install.sh` pulls `:cu130`, `:cu124`, and the manager `:latest` tag, so the next install follows this publish without copying a digest into the repo. `COMFYFLEET_INSTANCE_DIGEST` and `COMFYFLEET_MANAGER_DIGEST` are the explicit pin.
 

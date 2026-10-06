@@ -32,8 +32,8 @@ Tags:
   ghcr.io/<owner>/comfyfleet:cu124
   ghcr.io/<owner>/comfyfleet:phase1          (alias of cu124)
   ghcr.io/<owner>/comfyfleet:<git sha>-cu124
-  ghcr.io/<owner>/comfyfleet-manager:latest
-  ghcr.io/<owner>/comfyfleet-manager:<git sha>
+  ghcr.io/<owner>/comfyfleet-manager-legacy:latest
+  ghcr.io/<owner>/comfyfleet-manager-legacy:<git sha>
 
 Prints digests after the push. install.sh follows the moving tags above.
 Those digests are an optional COMFYFLEET_INSTANCE_DIGEST / COMFYFLEET_MANAGER_DIGEST pin.
@@ -71,7 +71,7 @@ registry="${COMFYFLEET_REGISTRY:-ghcr.io}"
 sha="$(git rev-parse HEAD)"
 source_url="${COMFYFLEET_SOURCE_URL:-https://github.com/RecognizeYourPrivilege/ComfyFleet}"
 instance="${registry}/${owner}/comfyfleet"
-manager="${registry}/${owner}/comfyfleet-manager"
+manager="${registry}/${owner}/comfyfleet-manager-legacy"
 
 echo "comfyfleet-publish: linux/amd64, no GPU. Instance context is ${root}."
 echo "comfyfleet-publish: this can take a long time. Torch wheels and CUDA libraries need a lot of disk."

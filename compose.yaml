@@ -16,7 +16,7 @@
 
 services:
   manager:
-    image: ${COMFYFLEET_MANAGER_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest}
+    image: ${COMFYFLEET_MANAGER_IMAGE:-ghcr.io/recognizeyourprivilege/comfyfleet-manager-legacy:latest}
     container_name: comfyfleet-manager
     ports:
       - "9100:9100"
