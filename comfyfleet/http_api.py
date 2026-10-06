@@ -11,6 +11,7 @@ Contract: CONTROL_HTTP.md.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 import sys
@@ -21,7 +22,7 @@ from email.policy import compat32
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from comfyfleet import __version__
 from comfyfleet.auth import (
@@ -55,6 +56,14 @@ from comfyfleet.ownership import fix_owner
 from comfyfleet.prune import prune_dangling_containers
 from comfyfleet.terminal import accept_value, bridge_exec
 from comfyfleet.errors import FleetError
+from comfyfleet.gallery import (
+    GalleryFile,
+    GalleryMissing,
+    delete_gallery_file,
+    list_gallery,
+    open_gallery_file,
+    open_gallery_thumb,
+)
 from comfyfleet.gpu import Gpu
 from comfyfleet.launch import combine_extra_args, launch_from_json, parse_launch, split_flag_field
 from comfyfleet.paths import FleetLayout
@@ -236,6 +245,9 @@ class Response:
     body: bytes
     content_type: str
     headers: list[tuple[str, str]] = field(default_factory=list)
+    stream_fd: int | None = None
+    stream_start: int = 0
+    stream_length: int | None = None
 
 
 @dataclass
@@ -391,20 +403,22 @@ def make_server(host: str, port: int, context: ApiContext) -> ThreadingHTTPServe
             )
 
         def _respond(self, method: str) -> None:
+            response: Response | None = None
             try:
                 body = _read_body(self)
-                path = urlsplit(self.path).path
+                split = urlsplit(self.path)
                 header_map = {key: value for key, value in self.headers.items()}
                 client_ip = self.client_address[0] if self.client_address else ""
                 response = dispatch(
                     context,
                     method,
-                    path,
+                    split.path,
                     self.headers.get("Host"),
                     body,
                     self.headers.get("Content-Type"),
                     header_map,
                     client_ip,
+                    split.query,
                 )
             except HTTPStatusError as exc:
                 response = _json(exc.status, {"ok": False, "error": exc.message})
@@ -415,6 +429,37 @@ def make_server(host: str, port: int, context: ApiContext) -> ThreadingHTTPServe
             except Exception as exc:
                 print(f"comfyfleet: internal error: {exc}", file=sys.stderr)
                 response = _json(500, {"ok": False, "error": "internal error"})
+            try:
+                self._write_response(response)
+            finally:
+                if response is not None and response.stream_fd is not None:
+                    os.close(response.stream_fd)
+                    response.stream_fd = None
+
+        def _write_response(self, response: Response) -> None:
+            if response.stream_fd is not None:
+                length = 0 if response.stream_length is None else response.stream_length
+                self.send_response(response.status)
+                self.send_header("Content-Type", response.content_type)
+                self.send_header("Content-Length", str(length))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                if not any(key.lower() == "cache-control" for key, _value in response.headers):
+                    self.send_header("Cache-Control", "no-store")
+                for key, value in response.headers:
+                    self.send_header(key, value)
+                self.end_headers()
+                remaining = length
+                os.lseek(response.stream_fd, response.stream_start, os.SEEK_SET)
+                while remaining > 0:
+                    chunk = os.read(response.stream_fd, min(65536, remaining))
+                    if not chunk:
+                        break
+                    try:
+                        self.wfile.write(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        break
+                    remaining -= len(chunk)
+                return
             payload = response.body
             self.send_response(response.status)
             self.send_header("Content-Type", response.content_type)
@@ -493,6 +538,7 @@ def dispatch(
     content_type: str | None,
     headers: dict | None = None,
     client_ip: str | None = None,
+    query: str = "",
 ) -> Response:
     """Route one request. Control errors propagate as ``FleetError``."""
 
@@ -508,6 +554,7 @@ def dispatch(
                 content_type,
                 headers,
                 client_ip or "",
+                query,
             )
         except AuthError as exc:
             return _json(401, {"ok": False, "error": exc.message})
@@ -524,6 +571,7 @@ def _route(
     content_type: str | None,
     headers: dict | None,
     client_ip: str,
+    query: str = "",
 ) -> Response:
     if len(path) > 1 and path.endswith("/"):
         path = path[:-1]
@@ -539,7 +587,7 @@ def _route(
     if path.startswith("/api/"):
         _require_fleet_auth(context, method, path, headers)
         grant_http_request()
-        return _fleet(context, method, path, host_header, body, content_type)
+        return _fleet(context, method, path, host_header, body, content_type, query, headers)
     if path in {"/login", "/login.html"} or path in _PUBLIC_FILES:
         if _request_authenticated(context, headers) and path in {"/login", "/login.html"}:
             return _redirect("/")
@@ -567,8 +615,12 @@ def _fleet(
     host_header: str | None,
     body: bytes,
     content_type: str | None,
+    query: str = "",
+    headers: dict | None = None,
 ) -> Response:
     del host_header  # Open Comfy does not use the request host or a pinned public host.
+    if path == "/api/gallery" or path.startswith("/api/gallery/"):
+        return _gallery(context, method, path, query, headers, body, content_type)
     if path == "/api/host/fix-owner":
         _require_method(method, "POST")
         return _fix_owner(context, body, content_type)
@@ -611,6 +663,183 @@ def _fleet(
     raise HTTPStatusError(404, "not found")
 
 
+def _gallery(
+    context: ApiContext,
+    method: str,
+    path: str,
+    query: str,
+    headers: dict | None,
+    body: bytes,
+    content_type: str | None,
+) -> Response:
+    try:
+        if path == "/api/gallery":
+            _require_method(method, "GET")
+            return _gallery_list(context, query)
+        if path == "/api/gallery/media":
+            _require_method(method, "GET")
+            return _gallery_media(context, query, headers)
+        if path == "/api/gallery/thumb":
+            _require_method(method, "GET")
+            return _gallery_thumb(context, query)
+        if path == "/api/gallery/delete":
+            _require_method(method, "POST")
+            return _gallery_delete(context, body, content_type)
+    except GalleryMissing as exc:
+        return _json(404, {"ok": False, "error": str(exc)})
+    raise HTTPStatusError(404, "not found")
+
+
+def _gallery_list(context: ApiContext, query: str) -> Response:
+    offset = _gallery_int(query, "offset", 0)
+    limit = _gallery_int(query, "limit", 48)
+    payload = list_gallery(
+        context.layout,
+        context.docker,
+        instance=_gallery_query_value(query, "instance"),
+        offset=offset,
+        limit=limit,
+    )
+    return _json(200, payload)
+
+
+def _gallery_media(context: ApiContext, query: str, headers: dict | None) -> Response:
+    instance, relative = _gallery_target(query)
+    opened = open_gallery_file(context.layout, instance, relative)
+    try:
+        status, start, length = _byte_range(_header(headers, "Range"), opened.size)
+    except Exception:
+        os.close(opened.fd)
+        raise
+    attachment = _gallery_query_value(query, "download") == "1"
+    mode = "attachment" if attachment else "inline"
+    response = _file_response(opened, status, start, length, mode)
+    return response
+
+
+def _gallery_thumb(context: ApiContext, query: str) -> Response:
+    instance, relative = _gallery_target(query)
+    opened = open_gallery_thumb(context.layout, instance, relative)
+    if isinstance(opened, GalleryFile):
+        return _file_response(opened, 200, 0, opened.size, "inline")
+    data, content_type = opened
+    return Response(200, data, content_type)
+
+
+def _gallery_delete(context: ApiContext, body: bytes, content_type: str | None) -> Response:
+    instance, relative = _gallery_delete_body(body, content_type)
+    payload = delete_gallery_file(context.layout, instance, relative)
+    return _json(200, payload)
+
+
+def _file_response(opened: GalleryFile, status: int, start: int, length: int, mode: str) -> Response:
+    headers = [
+        ("Accept-Ranges", "bytes"),
+        ("Content-Disposition", _content_disposition(mode, opened.filename)),
+        ("Cache-Control", "private, max-age=300"),
+    ]
+    if status == 206:
+        end = start + length - 1 if length else start
+        headers.append(("Content-Range", f"bytes {start}-{end}/{opened.size}"))
+    return Response(
+        status,
+        b"",
+        opened.content_type,
+        headers=headers,
+        stream_fd=opened.fd,
+        stream_start=start,
+        stream_length=length,
+    )
+
+
+def _gallery_target(query: str) -> tuple[str, str]:
+    instance = _gallery_query_value(query, "instance")
+    relative = _gallery_query_value(query, "path")
+    if not instance or relative is None or relative == "":
+        raise FleetError("gallery instance and path are required")
+    return instance, relative
+
+
+def _gallery_delete_body(body: bytes, content_type: str | None) -> tuple[str, str]:
+    media = (content_type or "").split(";", 1)[0].strip().lower()
+    if media != "application/json":
+        raise FleetError("gallery delete requires application/json")
+    try:
+        payload = json.loads(body.decode("utf-8")) if body else None
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise FleetError("gallery delete is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise FleetError("gallery delete requires a JSON object")
+    instance = payload.get("instance")
+    relative = payload.get("path")
+    if not isinstance(instance, str) or not isinstance(relative, str):
+        raise FleetError("gallery delete requires instance and path strings")
+    return instance, relative
+
+
+def _gallery_query_value(query: str, key: str) -> str | None:
+    parsed = parse_qs(query, keep_blank_values=True)
+    values = parsed.get(key)
+    if not values:
+        return None
+    if len(values) != 1 or not isinstance(values[0], str):
+        raise FleetError(f"invalid gallery {key}")
+    return values[0]
+
+
+def _gallery_int(query: str, key: str, default: int) -> int:
+    text = _gallery_query_value(query, key)
+    if text is None or text == "":
+        return default
+    try:
+        return int(text)
+    except ValueError as exc:
+        raise FleetError(f"invalid gallery {key}") from exc
+
+
+def _byte_range(header: str | None, size: int) -> tuple[int, int, int]:
+    """Status, start, and length for a single byte range."""
+
+    if size < 0:
+        size = 0
+    if header is None or not str(header).strip():
+        return 200, 0, size
+    text = str(header).strip()
+    if not text.lower().startswith("bytes=") or "," in text:
+        raise HTTPStatusError(416, "range not satisfiable")
+    spec = text.split("=", 1)[1].strip()
+    if "-" not in spec:
+        raise HTTPStatusError(416, "range not satisfiable")
+    start_s, end_s = spec.split("-", 1)
+    try:
+        if start_s == "":
+            suffix = int(end_s)
+            if suffix <= 0 or size == 0:
+                raise HTTPStatusError(416, "range not satisfiable")
+            if suffix > size:
+                suffix = size
+            start = size - suffix
+            end = size - 1
+        else:
+            start = int(start_s)
+            end = int(end_s) if end_s else size - 1
+    except ValueError as exc:
+        raise HTTPStatusError(416, "range not satisfiable") from exc
+    if size == 0 or start < 0 or start >= size or end < start:
+        raise HTTPStatusError(416, "range not satisfiable")
+    end = min(end, size - 1)
+    return 206, start, end - start + 1
+
+
+def _content_disposition(mode: str, filename: str) -> str:
+    base = filename.replace("\\", "/").split("/")[-1]
+    base = "".join(ch for ch in base if ch not in {'"', "\r", "\n", "\x00"})
+    if not base or base in {".", ".."}:
+        base = "download"
+    ascii_name = "".join(ch if 32 <= ord(ch) < 127 else "_" for ch in base) or "download"
+    return f"{mode}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(base, safe='')}"
+
+
 def _health() -> Response:
     return _json(
         200,
@@ -648,6 +877,8 @@ def _protected_action(method: str, path: str) -> str | None:
         return "prune-dangling" if method == "POST" else None
     if path == "/api/gpus":
         return "list"
+    if path == "/api/gallery" or path.startswith("/api/gallery/"):
+        return "gallery"
     if path == "/api/instances":
         if method == "POST":
             return "create"

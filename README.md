@@ -259,6 +259,14 @@ The container name is the workflow filename stem when the name field is blank (`
 
 To move an instance onto a newer publish of the **same** CUDA line, re-run `install.sh` with the same `COMFYFLEET_CUDA_TAG`. That pull follows the moving tag. Then stop, `create --force`, and start. Pass `COMFYFLEET_INSTANCE_DIGEST` only when that pull should stay on one digest. A floating tag does not move a digest-pinned install. To change cu130 versus cu124, pass the other `--cuda-tag` on that recreate. `start` or `restart` alone keeps the old layers and the old line.
 
+## Gallery
+
+The manager page has a **Gallery** tab next to **Fleet**. It finds each instance output directory at `/home/ComfyFleet/files/<name>/output` (the folder mounted into the instance as `/opt/ComfyUI/output`). There is no extra path to configure. The grid lists images (`png`, `jpg`, `jpeg`, and still `webp`) and videos (`mp4`, `webm`, `mov`, `gif`, and animated `webp`), newest first. Chips are **All** and one chip per instance that has an output directory. While the tab is open the page polls, so a new file shows up without a reload.
+
+A tile opens a preview with the file name, instance, and modified time. Next and previous are the side buttons, the arrow keys, and a horizontal swipe. **Download** saves that file. **Open in ComfyUI** opens that instance in a new tab while it is running, using `window.location.hostname` and the instance port, the same way **Open Comfy** does. The manager does not send the image's embedded graph into ComfyUI. Doing that would mean changing the instance image. **Delete** asks for confirmation, then removes that one file from the output directory. It does not stop the instance or remove the container.
+
+Gallery routes use the same session cookie or `Authorization: Bearer` as the rest of the fleet API. Listing, preview, and delete only follow regular files inside those output directories. A `..` segment, a symlink, or a file whose opened descriptor sits outside that directory is refused. Image tiles lazy-load the file. Video and animated tiles use a poster: a gif poster is the first frame, and `mp4` / `webm` / `mov` / animated `webp` posters are one frame from `ffmpeg` when that program is on the manager's PATH. The manager image does not install `ffmpeg`. Without it those tiles use a small play poster, and the full video loads only in the preview.
+
 ## API
 
 Same-origin. No CORS headers. Pages call `/api/...` with `credentials: "same-origin"`.
@@ -276,6 +284,10 @@ Same-origin. No CORS headers. Pages call `/api/...` with `credentials: "same-ori
 | `POST` | `/api/instances/{name}/start` | yes | Start |
 | `POST` | `/api/instances/{name}/stop` | yes | Stop |
 | `POST` | `/api/instances/{name}/delete` | yes | Remove that container. Host mounts stay |
+| `GET` | `/api/gallery` | yes | Output files, newest first. Optional `instance`, `offset`, `limit` |
+| `GET` | `/api/gallery/media` | yes | One output file. `instance` and `path`. `download=1` sets attachment |
+| `GET` | `/api/gallery/thumb` | yes | Lazy image, or a poster for video and animated files |
+| `POST` | `/api/gallery/delete` | yes | JSON `instance` and `path`. Deletes that output file after the UI confirms |
 
 Protected routes accept the session cookie or `Authorization: Bearer`. A missing credential is **401**.
 
