@@ -117,12 +117,22 @@ Delete is `POST /api/instances/{name}/delete`. It removes that container and the
 | `POST` | `/api/instances/{name}/force-stop` | yes | `force_stop_instance` | Hard stop (`docker kill`) of that instance only |
 | `POST` | `/api/instances/{name}/delete` | yes | `delete_instance` | Container removed and fleet record dropped |
 | `GET` | `/api/instances/{name}/terminal` | yes | websocket `docker exec` | Shell proxy. Upgrade required. The Docker socket is not sent to the browser |
+| `GET` | `/api/gallery` | yes | `comfyfleet.gallery.list_gallery` | Output media, newest first |
+| `GET` | `/api/gallery/media` | yes | `open_gallery_file` | One file inside an instance output directory |
+| `GET` | `/api/gallery/thumb` | yes | `open_gallery_thumb` | Image bytes or a poster. Not the full video |
+| `POST` | `/api/gallery/delete` | yes | `delete_gallery_file` | Unlink that one output file |
 | `GET` | `/login` | no | `ui/login.html` | Sign-in page |
 | `GET` | `/` and other non-API paths | yes, except login assets | static files under `ui/` | Fleet UI. If `ui/` is missing, an authenticated `/` is a short placeholder |
 
 `{name}` is the instance name from create. A blank create name is the sanitized workflow filename stem. A typed create name wins and is sanitized the same way. It is URL-safe: lowercase `[a-z0-9_-]`, at most 63 characters.
 
-Query strings are ignored. Send create options in the body so a workflow path is not written into the request line.
+Create and instance lifecycle routes ignore query strings. Send create options in the body so a workflow path is not written into the request line. Gallery list, media, and thumbnail routes take `instance`, `path`, `offset`, `limit`, and `download` on the query string. Gallery delete is a JSON body, not a query string.
+
+### Gallery
+
+`GET /api/gallery` lists media under `/home/ComfyFleet/files/<name>/output`. `path` is relative to that output directory. `offset` defaults to 0 and `limit` defaults to 48 (at most 240). The response `instances` array is every discovered output, including when `instance` filters the `items`. `port` and `status` come from the fleet record when it exists.
+
+`GET /api/gallery/media` and `GET /api/gallery/thumb` serve one file. `download=1` on media sets `Content-Disposition: attachment`. Thumbnails of `mp4`, `webm`, `mov`, `gif`, and animated `webp` are images, not the source video. `POST /api/gallery/delete` with `{"instance","path"}` unlinks that file. A path with `..`, a symlink, or a target outside that output directory is **400** and the other file stays. A missing file is **404**. These routes are **401** without a session cookie or Bearer token.
 
 ### `GET /api/health`
 

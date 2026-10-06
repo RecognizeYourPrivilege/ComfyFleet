@@ -110,6 +110,7 @@ def authorize(action: str) -> None:
         "update",
         "fix-owner",
         "prune-dangling",
+        "gallery",
     }:
         raise FleetError(f"unknown control action {action!r}")
     if http_auth_state() is False:
