@@ -3,6 +3,7 @@
 
 const state = {
   busy: false,
+  tab: "fleet",
   gpus: [],
   gpuError: "",
   selected: new Set(),
@@ -10,6 +11,16 @@ const state = {
   openEditors: new Set(),
   listSignature: "",
   timer: 0,
+  galleryTimer: 0,
+  gallery: {
+    instance: "",
+    items: [],
+    instances: [],
+    total: 0,
+    signature: "",
+    seq: 0,
+    openKey: "",
+  },
 };
 
 const banner = document.querySelector("#banner");
@@ -79,18 +90,42 @@ sheet.addEventListener("click", (event) => {
   if (event.target.closest("[data-close]")) closeSheet();
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  if (!hostMenu.hidden) setHostMenu(false);
-  if (!sheet.hidden) closeSheet();
+  const confirmSheet = document.querySelector("#confirm");
+  const lightbox = document.querySelector("#lightbox");
+  if (event.key === "Escape") {
+    if (!hostMenu.hidden) setHostMenu(false);
+    if (confirmSheet && !confirmSheet.hidden) return;
+    if (lightbox && !lightbox.hidden) {
+      closeLightbox();
+      return;
+    }
+    if (!sheet.hidden) closeSheet();
+    return;
+  }
+  if (!lightbox || lightbox.hidden || (confirmSheet && !confirmSheet.hidden)) return;
+  if (event.target && event.target.closest && event.target.closest("input, textarea, select")) return;
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    moveLightbox(-1);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    moveLightbox(1);
+  }
 });
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) refresh();
+  if (document.hidden) return;
+  refresh();
+  if (state.tab === "gallery") refreshGallery();
 });
 
 refresh();
 state.timer = window.setInterval(() => {
   if (!state.busy && sheet.hidden && !document.hidden) refresh();
 }, 10000);
+state.galleryTimer = window.setInterval(() => {
+  if (state.tab === "gallery" && !state.busy && !document.hidden) refreshGallery();
+}, 5000);
+bindLightbox();
 
 async function refresh() {
   if (state.busy) return;
@@ -320,6 +355,8 @@ function askConfirm(text, options) {
   title.textContent = opts.title || "Delete instance";
   yes.textContent = opts.yes || "Delete";
   message.textContent = text;
+  const lightbox = document.querySelector("#lightbox");
+  sheet.classList.toggle("over-lightbox", Boolean(lightbox && !lightbox.hidden));
   const showFields = Boolean(opts.fields);
   fields.hidden = !showFields;
   if (showFields) {
@@ -330,6 +367,7 @@ function askConfirm(text, options) {
   return new Promise((resolve) => {
     function finish(value) {
       sheet.hidden = true;
+      sheet.classList.remove("over-lightbox");
       fields.hidden = true;
       sheet.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKey);
@@ -1100,4 +1138,345 @@ function el(tag, attrs) {
   if (attrs.role) node.setAttribute("role", attrs.role);
   if (attrs.text) node.textContent = attrs.text;
   return node;
+}
+
+const GALLERY_PAGE = 48;
+
+function bindLightbox() {
+  const stage = document.querySelector("#lb-stage");
+  let startX = 0;
+  stage.addEventListener("touchstart", (event) => {
+    if (!event.changedTouches || !event.changedTouches.length) return;
+    startX = event.changedTouches[0].clientX;
+  }, { passive: true });
+  stage.addEventListener("touchend", (event) => {
+    if (document.querySelector("#lightbox").hidden) return;
+    if (!event.changedTouches || !event.changedTouches.length) return;
+    const dx = event.changedTouches[0].clientX - startX;
+    if (Math.abs(dx) < 48) return;
+    moveLightbox(dx < 0 ? 1 : -1);
+  }, { passive: true });
+  document.querySelector("#lb-close").addEventListener("click", closeLightbox);
+  document.querySelector("#lb-scrim").addEventListener("click", closeLightbox);
+  document.querySelector("#lb-prev").addEventListener("click", () => moveLightbox(-1));
+  document.querySelector("#lb-next").addEventListener("click", () => moveLightbox(1));
+  document.querySelector("#gallery-more").addEventListener("click", () => loadMoreGallery());
+  document.querySelector("#tab-fleet").addEventListener("click", () => setTab("fleet"));
+  document.querySelector("#tab-gallery").addEventListener("click", () => setTab("gallery"));
+}
+
+function setTab(tab) {
+  state.tab = tab === "gallery" ? "gallery" : "fleet";
+  document.body.dataset.tab = state.tab;
+  const gallery = state.tab === "gallery";
+  document.querySelector("#tab-fleet").setAttribute("aria-selected", gallery ? "false" : "true");
+  document.querySelector("#tab-gallery").setAttribute("aria-selected", gallery ? "true" : "false");
+  document.querySelector("#gallery").hidden = !gallery;
+  document.querySelector("#list").hidden = gallery;
+  document.querySelector(".dock").hidden = gallery;
+  if (gallery) refreshGallery();
+}
+
+function galleryItemKey(item) {
+  return item.instance + "\n" + item.path;
+}
+
+function galleryListUrl(offset, limit) {
+  const params = new URLSearchParams();
+  if (state.gallery.instance) params.set("instance", state.gallery.instance);
+  params.set("offset", String(offset));
+  params.set("limit", String(limit));
+  return "/api/gallery?" + params.toString();
+}
+
+function mediaUrl(item, download) {
+  const params = new URLSearchParams();
+  params.set("instance", item.instance);
+  params.set("path", item.path);
+  if (item.mtime_ms != null) params.set("v", String(item.mtime_ms));
+  if (download) params.set("download", "1");
+  return "/api/gallery/media?" + params.toString();
+}
+
+function thumbUrl(item) {
+  const params = new URLSearchParams();
+  params.set("instance", item.instance);
+  params.set("path", item.path);
+  if (item.mtime_ms != null) params.set("v", String(item.mtime_ms));
+  return "/api/gallery/thumb?" + params.toString();
+}
+
+async function refreshGallery() {
+  const seq = ++state.gallery.seq;
+  const limit = Math.min(240, Math.max(GALLERY_PAGE, state.gallery.items.length || GALLERY_PAGE));
+  const result = await call(galleryListUrl(0, limit));
+  if (seq !== state.gallery.seq) return;
+  if (result.sessionExpired || isAuthFailure(result)) return;
+  if (!result.ok) {
+    showBanner(result.error || "Gallery failed.");
+    return;
+  }
+  hide(banner);
+  applyGallery(result.payload, false);
+}
+
+async function loadMoreGallery() {
+  if (state.gallery.items.length >= state.gallery.total) return;
+  const seq = state.gallery.seq;
+  const result = await call(galleryListUrl(state.gallery.items.length, GALLERY_PAGE));
+  if (seq !== state.gallery.seq) return;
+  if (result.sessionExpired || isAuthFailure(result)) return;
+  if (!result.ok) {
+    showBanner(result.error || "Gallery failed.");
+    return;
+  }
+  applyGallery(result.payload, true);
+}
+
+function applyGallery(payload, append) {
+  const incoming = Array.isArray(payload.items) ? payload.items : [];
+  state.gallery.instances = Array.isArray(payload.instances) ? payload.instances : [];
+  state.gallery.total = Number(payload.total) || 0;
+  if (append) {
+    const seen = new Set(state.gallery.items.map(galleryItemKey));
+    for (const item of incoming) {
+      const key = galleryItemKey(item);
+      if (!seen.has(key)) {
+        seen.add(key);
+        state.gallery.items.push(item);
+      }
+    }
+    state.gallery.signature = JSON.stringify(state.gallery.items);
+  } else {
+    const signature = JSON.stringify(incoming);
+    if (signature === state.gallery.signature) {
+      renderGalleryChrome();
+      syncLightbox();
+      return;
+    }
+    state.gallery.signature = signature;
+    state.gallery.items = incoming.slice();
+  }
+  renderGalleryChrome();
+  renderGalleryGrid();
+  syncLightbox();
+}
+
+function renderGalleryChrome() {
+  const filters = document.querySelector("#gallery-filters");
+  const current = state.gallery.instance;
+  filters.replaceChildren();
+  filters.append(galleryFilterChip("", "All", current === ""));
+  for (const instance of state.gallery.instances) {
+    filters.append(galleryFilterChip(instance.name, instance.name, current === instance.name));
+  }
+  const noun = state.gallery.total === 1 ? "file" : "files";
+  const status = document.querySelector("#gallery-status");
+  status.textContent = state.gallery.instances.length
+    ? state.gallery.total + " " + noun
+    : "No instance output folders yet.";
+  document.querySelector("#gallery-more").hidden = state.gallery.items.length >= state.gallery.total;
+  const empty = document.querySelector("#gallery-empty");
+  empty.hidden = state.gallery.total !== 0;
+  const copy = empty.querySelector("p");
+  if (!state.gallery.instances.length) {
+    copy.textContent = "No instance output folders under /home/ComfyFleet/files yet.";
+  } else if (current) {
+    copy.textContent = "No images or videos in this output folder yet.";
+  } else {
+    copy.textContent = "No images or videos in the instance output folders yet.";
+  }
+}
+
+function galleryFilterChip(value, label, on) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = on ? "chip on" : "chip";
+  button.textContent = label;
+  button.setAttribute("aria-pressed", on ? "true" : "false");
+  button.addEventListener("click", () => {
+    if (state.gallery.instance === value) return;
+    state.gallery.instance = value;
+    state.gallery.items = [];
+    state.gallery.signature = "";
+    refreshGallery();
+  });
+  return button;
+}
+
+function renderGalleryGrid() {
+  const grid = document.querySelector("#gallery-grid");
+  const scrollX = window.scrollX;
+  const scrollY = window.scrollY;
+  grid.replaceChildren();
+  for (const item of state.gallery.items) grid.append(galleryTile(item));
+  window.scrollTo(scrollX, scrollY);
+}
+
+function galleryTile(item) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = item.kind === "image" ? "gallery-tile" : "gallery-tile is-playable";
+  button.setAttribute("aria-label", item.name + ", " + item.instance);
+  const img = document.createElement("img");
+  img.alt = "";
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.src = thumbUrl(item);
+  const fallback = document.createElement("span");
+  fallback.className = "gallery-fallback";
+  fallback.textContent = item.name;
+  fallback.hidden = true;
+  img.addEventListener("error", () => {
+    img.hidden = true;
+    fallback.hidden = false;
+  });
+  button.append(img, fallback);
+  if (item.kind !== "image") {
+    const badge = document.createElement("span");
+    badge.className = "play-badge";
+    badge.setAttribute("aria-hidden", "true");
+    badge.append(playIcon());
+    button.append(badge);
+  }
+  button.addEventListener("click", () => openLightbox(item));
+  return button;
+}
+
+function openLightbox(item) {
+  state.gallery.openKey = galleryItemKey(item);
+  document.querySelector("#lightbox").hidden = false;
+  document.body.style.overflow = "hidden";
+  paintLightbox(item);
+  document.querySelector("#lb-close").focus();
+}
+
+function paintLightbox(item) {
+  document.querySelector("#lb-name").textContent = item.name;
+  const place = item.path.indexOf("/") === -1 ? item.instance : item.instance + " / " + item.path;
+  document.querySelector("#lb-meta").textContent = place + " · " + formatWhen(item.mtime_ms) + " · " + formatSize(item.size);
+  const image = document.querySelector("#lb-image");
+  const video = document.querySelector("#lb-video");
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+  image.removeAttribute("src");
+  if (item.kind === "video") {
+    image.hidden = true;
+    video.hidden = false;
+    video.src = mediaUrl(item, false);
+  } else {
+    video.hidden = true;
+    image.hidden = false;
+    image.alt = item.name;
+    image.src = mediaUrl(item, false);
+  }
+  const open = document.querySelector("#lb-open");
+  const url = openTarget(item);
+  open.disabled = !url;
+  open.title = url ? "Opens this instance in a new tab." : "Start the instance to open ComfyUI.";
+  open.onclick = () => openInstance(url);
+  document.querySelector("#lb-download").onclick = () => downloadGalleryItem(item);
+  document.querySelector("#lb-delete").onclick = () => deleteGalleryItem(item);
+  updateLightboxNav(item);
+}
+
+function updateLightboxNav(item) {
+  const index = state.gallery.items.findIndex((row) => galleryItemKey(row) === galleryItemKey(item));
+  document.querySelector("#lb-prev").disabled = index <= 0;
+  const hasNext = index >= 0 && (index < state.gallery.items.length - 1 || state.gallery.items.length < state.gallery.total);
+  document.querySelector("#lb-next").disabled = !hasNext;
+}
+
+function syncLightbox() {
+  const box = document.querySelector("#lightbox");
+  if (box.hidden || !state.gallery.openKey) return;
+  const item = state.gallery.items.find((row) => galleryItemKey(row) === state.gallery.openKey);
+  if (!item) {
+    closeLightbox();
+    showToast("That file is no longer in the gallery.");
+    return;
+  }
+  updateLightboxNav(item);
+}
+
+function closeLightbox() {
+  document.querySelector("#lightbox").hidden = true;
+  const video = document.querySelector("#lb-video");
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+  document.querySelector("#lb-image").removeAttribute("src");
+  state.gallery.openKey = "";
+  if (document.querySelector("#confirm").hidden && sheet.hidden) document.body.style.overflow = "";
+}
+
+async function moveLightbox(delta) {
+  const index = state.gallery.items.findIndex((row) => galleryItemKey(row) === state.gallery.openKey);
+  if (index < 0) return;
+  const next = index + delta;
+  if (next < 0) return;
+  if (next >= state.gallery.items.length) {
+    if (delta > 0 && state.gallery.items.length < state.gallery.total) await loadMoreGallery();
+    if (next >= state.gallery.items.length) return;
+  }
+  openLightbox(state.gallery.items[next]);
+}
+
+function downloadGalleryItem(item) {
+  const link = document.createElement("a");
+  link.href = mediaUrl(item, true);
+  link.download = item.name;
+  link.rel = "noopener";
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
+async function deleteGalleryItem(item) {
+  const yes = await askConfirm(
+    "Delete " + item.name + " from " + item.instance + "? This removes the file from that instance's output folder on disk.",
+    { title: "Delete file", yes: "Delete file" }
+  );
+  if (!yes) return;
+  state.busy = true;
+  const result = await call("/api/gallery/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instance: item.instance, path: item.path }),
+  });
+  state.busy = false;
+  if (result.sessionExpired || isAuthFailure(result)) return;
+  if (!result.ok) {
+    showBanner(result.error || "Delete failed.");
+    return;
+  }
+  const key = galleryItemKey(item);
+  const index = state.gallery.items.findIndex((row) => galleryItemKey(row) === key);
+  state.gallery.items = state.gallery.items.filter((row) => galleryItemKey(row) !== key);
+  state.gallery.total = Math.max(0, state.gallery.total - 1);
+  state.gallery.signature = "";
+  renderGalleryChrome();
+  renderGalleryGrid();
+  showToast("Deleted " + item.name + ".");
+  hide(banner);
+  if (document.querySelector("#lightbox").hidden) return;
+  if (!state.gallery.items.length) {
+    closeLightbox();
+    return;
+  }
+  openLightbox(state.gallery.items[Math.min(Math.max(index, 0), state.gallery.items.length - 1)]);
+}
+
+function formatWhen(mtimeMs) {
+  const date = new Date(Number(mtimeMs));
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString();
+}
+
+function formatSize(bytes) {
+  const size = Number(bytes) || 0;
+  if (size < 1024) return size + " B";
+  if (size < 1048576) return (size / 1024).toFixed(1) + " KB";
+  return (size / 1048576).toFixed(1) + " MB";
 }
