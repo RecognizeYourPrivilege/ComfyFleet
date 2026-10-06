@@ -267,6 +267,18 @@ A tile opens a preview with the file name, instance, and modified time. Next and
 
 Gallery routes use the same session cookie or `Authorization: Bearer` as the rest of the fleet API. Listing, preview, and delete only follow regular files inside those output directories. A `..` segment, a symlink, or a file whose opened descriptor sits outside that directory is refused. Image tiles lazy-load the file. Video and animated tiles use a poster: a gif poster is the first frame, and `mp4` / `webm` / `mov` / animated `webp` posters are one frame from `ffmpeg` when that program is on the manager's PATH. The manager image does not install `ffmpeg`. Without it those tiles use a small play poster, and the full video loads only in the preview.
 
+## Import container
+
+The **Host** menu has **Import container**, **Duplicates**, and **Import logs**. Import reads an existing container with `docker inspect` (mounts, published ports, GPU device ids, and env) and shows an editable plan. The new name and port start from the old container. New directories are owned by `comfyuser:comfyuser`, the same default as Fix ownership. **Copy** leaves the source files. **Move** deletes a source file only after the destination hash matches. The old container is not stopped or removed until **Remove old**, and that action refuses a running container and a fleet instance.
+
+Models always go to `/home/ComfyFleet/models`, in the same subfolder (`checkpoints`, `loras`, `vae`, and the rest). Hashing runs first and the plan shows skip, duplicate, rename, and transfer counts plus the bytes that will not be copied. A file that is already there with the same name and SHA-256 is skipped. The same bytes under a different name are skipped and appended to the duplicates list. The same name with a different hash is saved as `name (imported).ext` and the original is left alone. A new file is copied, then hashed again. Hashes are cached under `/home/ComfyFleet/.import`, so a second run does not read unchanged files.
+
+The duplicates list is append-only and read-only. Each row has the incoming name, the existing name and path, size, SHA-256, import id, and date. The same line is written into that import's log. **Duplicates** opens the list from the Host menu. There is no edit or delete.
+
+The transfer is a job on the manager. Closing the window or refreshing the page does not stop it. On load the manager asks for the active job and reopens the progress overlay. Hiding the overlay leaves a progress pill. The overlay shows the current file, file and overall progress, current and average speed, elapsed time and ETA, the phase (hashing, copying, verifying, cleanup), the running counts, free space with a low-space warning, and a scrolling log. Pause, Resume, and Cancel are on the overlay. Cancel removes an unfinished partial file. Finished logs can be viewed or downloaded from **Import logs**.
+
+Import only reads and writes under `/home/ComfyFleet` and the source container's own mount paths. When a mount path is visible inside the manager, files are read from that path. When it is not (the manager image bind-mounts `/home/ComfyFleet` and the Docker socket), the file bytes are read with `docker cp` from the container path and Copy is the only mode, because Move has to delete the host file after the destination hash matches. The same session cookie or Bearer token as the rest of the fleet API is required.
+
 ## API
 
 Same-origin. No CORS headers. Pages call `/api/...` with `credentials: "same-origin"`.
@@ -288,6 +300,12 @@ Same-origin. No CORS headers. Pages call `/api/...` with `credentials: "same-ori
 | `GET` | `/api/gallery/media` | yes | One output file. `instance` and `path`. `download=1` sets attachment |
 | `GET` | `/api/gallery/thumb` | yes | Lazy image, or a poster for video and animated files |
 | `POST` | `/api/gallery/delete` | yes | JSON `instance` and `path`. Deletes that output file after the UI confirms |
+| `GET` | `/api/import/containers` | yes | Containers on the host engine |
+| `POST` | `/api/import/inspect` | yes | Mounts, ports, GPUs, env, and the folder plan |
+| `POST` | `/api/import/jobs` | yes | Start hashing. The job stays on the server |
+| `GET` | `/api/import/active` | yes | Job to reopen after a refresh, or `job: null` |
+| `GET` | `/api/import/jobs/{id}/log` | yes | Download the saved log |
+| `GET` | `/api/import/duplicates` | yes | Read-only duplicates list. Other methods are refused |
 
 Protected routes accept the session cookie or `Authorization: Bearer`. A missing credential is **401**.
 

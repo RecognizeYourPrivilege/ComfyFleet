@@ -94,6 +94,7 @@ document.addEventListener("keydown", (event) => {
   const lightbox = document.querySelector("#lightbox");
   if (event.key === "Escape") {
     if (!hostMenu.hidden) setHostMenu(false);
+    if (typeof closeImportSurfaces === "function" && closeImportSurfaces()) return;
     if (confirmSheet && !confirmSheet.hidden) return;
     if (lightbox && !lightbox.hidden) {
       closeLightbox();
@@ -119,6 +120,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 refresh();
+resumeImportOverlay();
 state.timer = window.setInterval(() => {
   if (!state.busy && sheet.hidden && !document.hidden) refresh();
 }, 10000);
@@ -1479,4 +1481,618 @@ function formatSize(bytes) {
   if (size < 1024) return size + " B";
   if (size < 1048576) return (size / 1024).toFixed(1) + " KB";
   return (size / 1048576).toFixed(1) + " MB";
+}
+
+const importState = {
+  draft: null,
+  job: null,
+  timer: 0,
+  gpus: new Set(),
+};
+
+document.querySelector("#import-open").addEventListener("click", () => {
+  setHostMenu(false);
+  openImportPlan();
+});
+document.querySelector("#import-dupes-open").addEventListener("click", () => {
+  setHostMenu(false);
+  openDuplicates();
+});
+document.querySelector("#import-logs-open").addEventListener("click", () => {
+  setHostMenu(false);
+  openImportLogs();
+});
+document.querySelector("#import-plan").addEventListener("click", (event) => {
+  if (event.target.closest("[data-plan-close]")) closeImportPlan();
+});
+document.querySelector("#import-overlay").addEventListener("click", (event) => {
+  if (event.target.closest("[data-overlay-hide]")) hideImportOverlay();
+});
+document.querySelector("#import-dupes").addEventListener("click", (event) => {
+  if (event.target.closest("[data-dupes-close]")) closeDialog("#import-dupes");
+});
+document.querySelector("#import-logs").addEventListener("click", (event) => {
+  if (event.target.closest("[data-logs-close]")) closeDialog("#import-logs");
+});
+document.querySelector("#import-pill").addEventListener("click", () => reopenImport());
+document.querySelector("#import-scan").addEventListener("click", () => scanImport());
+document.querySelector("#import-start").addEventListener("click", () => beginImport());
+document.querySelector("#import-overlay-start").addEventListener("click", () => beginImport());
+document.querySelector("#import-pause").addEventListener("click", () => postImport("pause"));
+document.querySelector("#import-resume").addEventListener("click", () => postImport("resume"));
+document.querySelector("#import-cancel").addEventListener("click", () => postImport("cancel"));
+document.querySelector("#import-dismiss").addEventListener("click", () => postImport("dismiss"));
+document.querySelector("#import-remove-old").addEventListener("click", () => removeOldContainer());
+
+function closeImportSurfaces() {
+  const names = ["#import-logs", "#import-dupes", "#import-overlay", "#import-plan"];
+  for (const name of names) {
+    const node = document.querySelector(name);
+    if (node && !node.hidden) {
+      if (name === "#import-overlay") hideImportOverlay();
+      else if (name === "#import-plan") closeImportPlan();
+      else closeDialog(name);
+      return true;
+    }
+  }
+  return false;
+}
+
+function lockPage(locked) {
+  const open = ["#sheet", "#confirm", "#lightbox", "#import-plan", "#import-overlay", "#import-dupes", "#import-logs"]
+    .some((name) => {
+      const node = document.querySelector(name);
+      return node && !node.hidden;
+    });
+  document.body.style.overflow = locked || open ? "hidden" : "";
+}
+
+function closeDialog(selector) {
+  const node = document.querySelector(selector);
+  if (node) node.hidden = true;
+  lockPage(false);
+}
+
+async function resumeImportOverlay() {
+  const result = await call("/api/import/active");
+  if (!result.ok || !result.payload || !result.payload.job) return;
+  importState.job = result.payload.job;
+  const status = importState.job.status;
+  if (status === "running" || status === "paused" || status === "hashing" || status === "completed" || status === "cancelled" || status === "failed") {
+    openImportOverlay();
+  } else if (status === "awaiting_confirm") {
+    showPlanForJob(importState.job);
+  }
+  startImportPoll();
+}
+
+function startImportPoll() {
+  if (importState.timer) return;
+  importState.timer = window.setInterval(pollImportJob, 700);
+}
+
+async function pollImportJob() {
+  const job = importState.job;
+  if (!job || job.dismissed) return;
+  const result = await call("/api/import/jobs/" + encodeURIComponent(job.id));
+  if (!result.ok || !result.payload) return;
+  importState.job = result.payload.job;
+  renderImportJob();
+}
+
+async function openImportPlan() {
+  importState.draft = null;
+  document.querySelector("#import-form").hidden = true;
+  document.querySelector("#import-containers").hidden = false;
+  document.querySelector("#import-plan-title").textContent = "Import container";
+  hide(document.querySelector("#import-plan-banner"));
+  document.querySelector("#import-plan").hidden = false;
+  lockPage(true);
+  const result = await call("/api/import/containers");
+  const list = document.querySelector("#import-containers");
+  list.replaceChildren();
+  if (!result.ok) {
+    showPlanError(result.error || "Could not list containers.");
+    return;
+  }
+  const rows = (result.payload && result.payload.containers) || [];
+  if (!rows.length) {
+    list.append(el("p", { className: "hint", text: "No containers on this engine." }));
+    return;
+  }
+  for (const row of rows) {
+    const button = el("button", { className: "import-choice", type: "button" });
+    button.innerHTML = "";
+    const title = document.createElement("strong");
+    title.textContent = row.name;
+    const detail = document.createElement("small");
+    detail.textContent = row.status + (row.managed ? " · fleet instance" : "");
+    button.append(title, detail);
+    button.addEventListener("click", () => inspectContainer(row.name));
+    list.append(button);
+  }
+}
+
+async function inspectContainer(name) {
+  hide(document.querySelector("#import-plan-banner"));
+  const result = await call("/api/import/inspect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ container: name }),
+  });
+  if (!result.ok) {
+    showPlanError(result.error || "Could not read that container.");
+    return;
+  }
+  importState.draft = result.payload;
+  importState.gpus = new Set((result.payload.container.gpus || []).map((index) => String(index)));
+  fillImportForm(result.payload);
+  document.querySelector("#import-containers").hidden = true;
+  document.querySelector("#import-form").hidden = false;
+  document.querySelector("#import-counts").hidden = true;
+  document.querySelector("#import-start").hidden = true;
+  document.querySelector("#import-scan").hidden = false;
+}
+
+function fillImportForm(draft) {
+  const container = draft.container;
+  document.querySelector("#import-plan-title").textContent = "Import " + container.name;
+  document.querySelector("#import-source").textContent =
+    container.image + " · " + container.status + " · owner comfyuser";
+  document.querySelector("#import-name").value = draft.suggested_name || "";
+  document.querySelector("#import-port").value = String(draft.suggested_port || 8188);
+  const move = document.querySelector("#import-mode-move");
+  const running = container.status === "running";
+  const unseen = (container.mounts || []).some((mount) => mount.visible === false);
+  move.disabled = running || unseen;
+  document.querySelector("#import-move-note").hidden = !running;
+  document.querySelector("#import-unseen-note").hidden = !unseen;
+  if (running || unseen) document.querySelector('input[name="import-mode"][value="copy"]').checked = true;
+  document.querySelector('input[name="import-nodes"][value="as-is"]').checked = true;
+  const workflow = document.querySelector("#import-workflow");
+  workflow.replaceChildren();
+  const flows = draft.workflows || [];
+  if (!flows.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No workflow JSON found";
+    workflow.append(option);
+  }
+  for (const item of flows) {
+    const option = document.createElement("option");
+    option.value = item.path;
+    option.textContent = item.name;
+    workflow.append(option);
+  }
+  const mounts = document.querySelector("#import-mounts");
+  mounts.replaceChildren();
+  for (const mount of container.mounts || []) {
+    const row = document.createElement("div");
+    row.className = "import-mount";
+    const label = document.createElement("p");
+    label.textContent = mount.source + " → " + mount.destination + (mount.visible === false ? " · docker cp" : "");
+    const select = document.createElement("select");
+    select.className = "text-input";
+    select.dataset.source = mount.source;
+    for (const role of ["models", "input", "output", "temp", "custom_nodes", "workflows", "wildcards", "user", "skip"]) {
+      const option = document.createElement("option");
+      option.value = role;
+      option.textContent = role;
+      if (role === mount.role) option.selected = true;
+      select.append(option);
+    }
+    row.append(label, select);
+    mounts.append(row);
+  }
+  const env = document.querySelector("#import-env");
+  env.replaceChildren();
+  const rows = container.env || [];
+  if (!rows.length) env.append(el("div", { text: "No environment variables." }));
+  for (const item of rows) {
+    env.append(el("div", { text: item.key + "=" + item.value }));
+  }
+  const gpus = document.querySelector("#import-gpus");
+  gpus.replaceChildren();
+  const known = state.gpus.length ? state.gpus : (container.gpus || []).map((index) => ({ index, name: "GPU " + index }));
+  if (!known.length) {
+    gpus.append(el("p", { className: "hint", text: "No GPUs reported yet." }));
+  }
+  for (const gpu of known) {
+    const id = "import-gpu-" + gpu.index;
+    const label = document.createElement("label");
+    label.className = "choice";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.id = id;
+    input.value = String(gpu.index);
+    input.checked = importState.gpus.has(String(gpu.index));
+    input.addEventListener("change", () => {
+      if (input.checked) importState.gpus.add(input.value);
+      else importState.gpus.delete(input.value);
+    });
+    const text = document.createElement("span");
+    text.textContent = gpu.name ? gpu.index + " " + gpu.name : "GPU " + gpu.index;
+    label.append(input, text);
+    gpus.append(label);
+  }
+}
+
+function importRequestBody() {
+  const draft = importState.draft;
+  const mounts = [];
+  for (const select of document.querySelectorAll("#import-mounts select")) {
+    mounts.push({ source: select.dataset.source, role: select.value });
+  }
+  const mode = document.querySelector('input[name="import-mode"]:checked');
+  const nodes = document.querySelector('input[name="import-nodes"]:checked');
+  return {
+    container: draft.container.name,
+    name: document.querySelector("#import-name").value,
+    port: Number(document.querySelector("#import-port").value),
+    mode: mode ? mode.value : "copy",
+    custom_nodes: nodes ? nodes.value : "as-is",
+    cuda_tag: document.querySelector("#import-cuda").value,
+    gpus: Array.from(importState.gpus).map((value) => Number(value)),
+    workflow: document.querySelector("#import-workflow").value,
+    mounts,
+  };
+}
+
+async function scanImport() {
+  const body = importRequestBody();
+  if (!body.gpus.length) {
+    showPlanError("Select at least one GPU.");
+    return;
+  }
+  if (!body.workflow) {
+    showPlanError("A workflow JSON is required.");
+    return;
+  }
+  const result = await call("/api/import/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!result.ok) {
+    showPlanError(result.error || "Could not start hashing.");
+    return;
+  }
+  importState.job = result.payload.job;
+  closeImportPlan(false);
+  openImportOverlay();
+  startImportPoll();
+}
+
+function showPlanForJob(job) {
+  document.querySelector("#import-plan").hidden = false;
+  document.querySelector("#import-containers").hidden = true;
+  document.querySelector("#import-form").hidden = false;
+  document.querySelector("#import-plan-title").textContent = "Review " + job.container;
+  document.querySelector("#import-source").textContent = job.container + " → " + job.name + " · owner comfyuser";
+  document.querySelector("#import-name").value = job.name || "";
+  document.querySelector("#import-port").value = String(job.port || "");
+  const mode = document.querySelector('input[name="import-mode"][value="' + job.mode + '"]');
+  if (mode) mode.checked = true;
+  const nodes = document.querySelector('input[name="import-nodes"][value="' + job.custom_nodes + '"]');
+  if (nodes) nodes.checked = true;
+  renderCounts(job.summary);
+  document.querySelector("#import-scan").hidden = true;
+  document.querySelector("#import-start").hidden = false;
+  lockPage(true);
+}
+
+function renderCounts(summary) {
+  const box = document.querySelector("#import-counts");
+  if (!summary) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  box.textContent =
+    "Skip " + summary.skip +
+    " · duplicates " + summary.duplicates +
+    " · rename " + summary.conflicts +
+    " · transfer " + summary.transfer +
+    " · space saved " + formatSize(summary.bytes_saved);
+}
+
+async function beginImport() {
+  const job = importState.job;
+  if (!job) return;
+  const mode = document.querySelector('input[name="import-mode"]:checked');
+  const result = await call("/api/import/jobs/" + encodeURIComponent(job.id) + "/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode: mode ? mode.value : job.mode }),
+  });
+  if (!result.ok) {
+    showPlanError(result.error || "Could not start the import.");
+    showToast(result.error || "Could not start the import.");
+    return;
+  }
+  importState.job = result.payload.job;
+  closeImportPlan(false);
+  openImportOverlay();
+  startImportPoll();
+}
+
+function openImportOverlay() {
+  document.querySelector("#import-overlay").hidden = false;
+  document.querySelector("#import-pill").hidden = true;
+  lockPage(true);
+  renderImportJob();
+}
+
+function hideImportOverlay() {
+  document.querySelector("#import-overlay").hidden = true;
+  const job = importState.job;
+  const pill = document.querySelector("#import-pill");
+  if (job && !job.dismissed && job.status !== "dismissed") {
+    pill.hidden = false;
+    document.querySelector("#import-pill-label").textContent = pillText(job);
+  } else {
+    pill.hidden = true;
+  }
+  lockPage(false);
+}
+
+function closeImportPlan(showPill) {
+  document.querySelector("#import-plan").hidden = true;
+  lockPage(false);
+  if (showPill !== false && importState.job && !importState.job.dismissed) {
+    const pill = document.querySelector("#import-pill");
+    pill.hidden = false;
+    document.querySelector("#import-pill-label").textContent = pillText(importState.job);
+  }
+}
+
+function reopenImport() {
+  const job = importState.job;
+  if (!job) return;
+  document.querySelector("#import-pill").hidden = true;
+  if (job.status === "awaiting_confirm") showPlanForJob(job);
+  else openImportOverlay();
+}
+
+function renderImportJob() {
+  const job = importState.job;
+  if (!job) return;
+  const overlay = document.querySelector("#import-overlay");
+  if (!overlay.hidden) paintOverlay(job);
+  else if (!document.querySelector("#import-pill").hidden) {
+    document.querySelector("#import-pill-label").textContent = pillText(job);
+  }
+  if (job.status === "awaiting_confirm" && !document.querySelector("#import-plan").hidden) {
+    renderCounts(job.summary);
+    document.querySelector("#import-start").hidden = false;
+    document.querySelector("#import-scan").hidden = true;
+  }
+  if (job.status === "awaiting_confirm" && overlay.hidden && document.querySelector("#import-plan").hidden && document.querySelector("#import-pill").hidden) {
+    showPlanForJob(job);
+  }
+}
+
+function paintOverlay(job) {
+  document.querySelector("#import-overlay-title").textContent = "Import " + (job.name || "");
+  document.querySelector("#import-phase").textContent = phaseLabel(job);
+  const fileTotal = Number(job.current_size) || 0;
+  const fileDone = Number(job.current_bytes) || 0;
+  document.querySelector("#import-current").textContent = job.current_file
+    ? job.current_file
+    : (job.status === "completed" ? "Finished" : "Waiting");
+  document.querySelector("#import-file-label").textContent = fileTotal
+    ? formatSize(fileDone) + " / " + formatSize(fileTotal)
+    : "";
+  setBar("#import-file-bar", fileTotal ? fileDone / fileTotal : 0);
+  const filesTotal = Number(job.files_total) || 0;
+  const filesDone = Number(job.files_done) || 0;
+  const bytesTotal = Number(job.bytes_total) || 0;
+  const bytesDone = Number(job.bytes_done) || 0;
+  document.querySelector("#import-overall-label").textContent =
+    filesDone + " / " + filesTotal + " files · " + formatSize(bytesDone) + " / " + formatSize(bytesTotal);
+  const byFiles = filesTotal ? filesDone / filesTotal : 0;
+  const byBytes = bytesTotal ? bytesDone / bytesTotal : 0;
+  setBar("#import-overall-bar", Math.max(byFiles, byBytes));
+  const counts = job.counts || {};
+  const stats = document.querySelector("#import-stats");
+  stats.replaceChildren();
+  addStat(stats, "Speed", formatRate(job.speed_current));
+  addStat(stats, "Average", formatRate(job.speed_average));
+  addStat(stats, "Elapsed", formatDuration(job.elapsed_s));
+  addStat(stats, "ETA", job.eta_s == null ? "—" : formatDuration(job.eta_s));
+  addStat(stats, "Moved", String(counts.moved || 0));
+  addStat(stats, "Skipped", String(counts.skipped || 0));
+  addStat(stats, "Duplicates", String(counts.renamed_dupes || 0));
+  addStat(stats, "Conflicts", String(counts.conflicts || 0));
+  addStat(stats, "Errors", String(counts.errors || 0));
+  addStat(stats, "Free space", formatSize(job.free_bytes));
+  const warn = document.querySelector("#import-space");
+  warn.hidden = !job.low_space;
+  const log = document.querySelector("#import-log");
+  log.textContent = (job.log_tail || []).join("\n");
+  log.scrollTop = log.scrollHeight;
+  const terminal = job.status === "completed" || job.status === "cancelled" || job.status === "failed";
+  const running = job.status === "running" || job.status === "hashing";
+  document.querySelector("#import-pause").hidden = !running;
+  document.querySelector("#import-resume").hidden = job.status !== "paused";
+  document.querySelector("#import-cancel").hidden = terminal;
+  document.querySelector("#import-dismiss").hidden = !terminal;
+  document.querySelector("#import-overlay-start").hidden = job.status !== "awaiting_confirm";
+  document.querySelector("#import-remove-old").hidden = !terminal || job.old_removed;
+  if (job.summary && job.status === "awaiting_confirm") {
+    document.querySelector("#import-current").textContent =
+      "Skip " + job.summary.skip +
+      ", duplicates " + job.summary.duplicates +
+      ", rename " + job.summary.conflicts +
+      ", transfer " + job.summary.transfer +
+      ", space saved " + formatSize(job.summary.bytes_saved);
+  }
+  if (job.error) document.querySelector("#import-current").textContent = job.error;
+}
+
+function addStat(parent, label, value) {
+  const wrap = document.createElement("div");
+  const dt = document.createElement("dt");
+  dt.textContent = label;
+  const dd = document.createElement("dd");
+  dd.textContent = value;
+  wrap.append(dt, dd);
+  parent.append(wrap);
+}
+
+function setBar(selector, ratio) {
+  const width = Math.max(0, Math.min(1, ratio)) * 100;
+  document.querySelector(selector).style.width = width.toFixed(1) + "%";
+}
+
+function phaseLabel(job) {
+  if (job.status === "paused") return "Paused · " + (job.phase || "");
+  if (job.status === "awaiting_confirm") return "Review";
+  if (job.status === "completed") return "Completed";
+  if (job.status === "cancelled") return "Cancelled";
+  if (job.status === "failed") return "Failed";
+  const phase = job.phase || job.status || "";
+  if (phase === "hashing") return "Hashing";
+  if (phase === "copying") return "Copying";
+  if (phase === "verifying") return "Verifying";
+  if (phase === "cleanup") return "Cleanup";
+  return phase;
+}
+
+function pillText(job) {
+  const total = Number(job.files_total) || 0;
+  const done = Number(job.files_done) || 0;
+  const pct = total ? Math.round((100 * done) / total) : 0;
+  if (job.status === "awaiting_confirm") return "Review import";
+  if (job.status === "completed") return "Import finished";
+  if (job.status === "paused") return "Import paused " + pct + "%";
+  return "Import " + pct + "%";
+}
+
+function formatRate(bytesPerSecond) {
+  const rate = Number(bytesPerSecond) || 0;
+  if (rate <= 0) return "—";
+  return formatSize(rate) + "/s";
+}
+
+function formatDuration(seconds) {
+  const value = Math.max(0, Math.round(Number(seconds) || 0));
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  const secs = value % 60;
+  if (hours) return hours + "h " + minutes + "m";
+  if (minutes) return minutes + "m " + secs + "s";
+  return secs + "s";
+}
+
+async function postImport(verb) {
+  const job = importState.job;
+  if (!job) return;
+  const result = await call("/api/import/jobs/" + encodeURIComponent(job.id) + "/" + verb, { method: "POST" });
+  if (!result.ok) {
+    showToast(result.error || "Import request failed.");
+    return;
+  }
+  importState.job = result.payload.job;
+  if (verb === "dismiss") {
+    document.querySelector("#import-overlay").hidden = true;
+    document.querySelector("#import-pill").hidden = true;
+    lockPage(false);
+    return;
+  }
+  renderImportJob();
+}
+
+async function removeOldContainer() {
+  const job = importState.job;
+  if (!job) return;
+  const yes = await askConfirm(
+    "Remove the old container " + job.container + "? It must already be stopped. Host files are not deleted.",
+    { title: "Remove old container", yes: "Remove old" }
+  );
+  if (!yes) return;
+  await postImport("remove-old");
+}
+
+async function openDuplicates() {
+  const dialog = document.querySelector("#import-dupes");
+  dialog.hidden = false;
+  lockPage(true);
+  const list = document.querySelector("#import-dupe-list");
+  list.replaceChildren();
+  const result = await call("/api/import/duplicates");
+  if (!result.ok) {
+    list.append(el("p", { className: "hint", text: result.error || "Could not load duplicates." }));
+    return;
+  }
+  const rows = (result.payload && result.payload.duplicates) || [];
+  if (!rows.length) {
+    list.append(el("p", { className: "hint", text: "No duplicates yet." }));
+    return;
+  }
+  for (const row of rows) {
+    const card = document.createElement("article");
+    card.className = "import-dupe";
+    card.append(el("p", { text: row.incoming_name + " → " + row.existing_name }));
+    card.append(el("p", { text: row.existing_path }));
+    card.append(el("p", { text: formatSize(row.size) + " · " + row.hash }));
+    card.append(el("p", { text: row.import_id + " · " + row.date }));
+    list.append(card);
+  }
+}
+
+async function openImportLogs() {
+  const dialog = document.querySelector("#import-logs");
+  dialog.hidden = false;
+  lockPage(true);
+  const view = document.querySelector("#import-log-view");
+  view.hidden = true;
+  view.textContent = "";
+  const list = document.querySelector("#import-log-list");
+  list.replaceChildren();
+  const result = await call("/api/import/jobs");
+  if (!result.ok) {
+    list.append(el("p", { className: "hint", text: result.error || "Could not load logs." }));
+    return;
+  }
+  const rows = (result.payload && result.payload.jobs) || [];
+  if (!rows.length) {
+    list.append(el("p", { className: "hint", text: "No imports yet." }));
+    return;
+  }
+  for (const row of rows) {
+    const wrap = document.createElement("div");
+    wrap.className = "import-choice";
+    const title = document.createElement("strong");
+    title.textContent = row.container + " → " + row.name;
+    const detail = document.createElement("small");
+    detail.textContent = row.status + " · " + row.created_at;
+    const actions = document.createElement("div");
+    actions.className = "sheet-actions";
+    const viewButton = el("button", { className: "btn secondary", type: "button", text: "View" });
+    viewButton.addEventListener("click", () => showImportLog(row.id));
+    const download = document.createElement("a");
+    download.className = "btn secondary";
+    download.href = "/api/import/jobs/" + encodeURIComponent(row.id) + "/log";
+    download.textContent = "Download";
+    actions.append(viewButton, download);
+    wrap.append(title, detail, actions);
+    list.append(wrap);
+  }
+}
+
+async function showImportLog(jobId) {
+  const view = document.querySelector("#import-log-view");
+  view.hidden = false;
+  const response = await fetch("/api/import/jobs/" + encodeURIComponent(jobId) + "/log", {
+    credentials: "same-origin",
+    headers: { Accept: "text/plain" },
+  });
+  view.textContent = await response.text();
+}
+
+function showPlanError(text) {
+  const banner = document.querySelector("#import-plan-banner");
+  banner.hidden = false;
+  banner.textContent = text;
 }
