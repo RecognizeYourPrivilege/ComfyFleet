@@ -65,6 +65,7 @@ from comfyfleet.gallery import (
     open_gallery_thumb,
 )
 from comfyfleet.gpu import Gpu
+from comfyfleet.import_container import ImportService
 from comfyfleet.launch import combine_extra_args, launch_from_json, parse_launch, split_flag_field
 from comfyfleet.paths import FleetLayout
 from comfyfleet.public_host import PUBLIC_HOST_ENV
@@ -237,6 +238,7 @@ class ApiContext:
     node_installer: Callable | None = None
     node_map: dict | None = None
     git_run: Callable | None = None
+    importer: object | None = None
 
 
 @dataclass
@@ -621,6 +623,8 @@ def _fleet(
     del host_header  # Open Comfy does not use the request host or a pinned public host.
     if path == "/api/gallery" or path.startswith("/api/gallery/"):
         return _gallery(context, method, path, query, headers, body, content_type)
+    if path == "/api/import" or path.startswith("/api/import/"):
+        return _import_route(context, method, path, body, content_type)
     if path == "/api/host/fix-owner":
         _require_method(method, "POST")
         return _fix_owner(context, body, content_type)
@@ -661,6 +665,99 @@ def _fleet(
             return _update_launch(context, name, body, content_type)
         raise HTTPStatusError(404, "not found")
     raise HTTPStatusError(404, "not found")
+
+
+def _import_service(context: ApiContext) -> ImportService:
+    if context.importer is None:
+        context.importer = ImportService(context.layout, port_in_use=context.port_in_use)
+    return context.importer  # type: ignore[return-value]
+
+
+def _import_route(
+    context: ApiContext,
+    method: str,
+    path: str,
+    body: bytes,
+    content_type: str | None,
+) -> Response:
+    service = _import_service(context)
+    if path == "/api/import/containers":
+        _require_method(method, "GET")
+        return _json(200, {"ok": True, "containers": service.list_containers(context.docker)})
+    if path == "/api/import/inspect":
+        _require_method(method, "POST")
+        payload = _import_body(body, content_type)
+        return _json(200, service.inspect(context.docker, str(payload.get("container") or "")))
+    if path == "/api/import/jobs":
+        if method == "GET":
+            return _json(200, {"ok": True, "jobs": service.list_jobs()})
+        if method == "POST":
+            payload = _import_body(body, content_type)
+            job = service.create_job(context.docker, context.detect_gpus(), payload)
+            return _json(200, {"ok": True, "job": service.public_job(job)})
+        raise HTTPStatusError(405, "method not allowed")
+    if path == "/api/import/active":
+        _require_method(method, "GET")
+        return _json(200, {"ok": True, "job": service.active_job()})
+    if path == "/api/import/duplicates":
+        if method != "GET":
+            raise HTTPStatusError(405, "duplicates list is read-only")
+        return _json(200, {"ok": True, "duplicates": service.duplicates.read()})
+    prefix = "/api/import/jobs/"
+    if path.startswith(prefix):
+        job_id, _, verb = path[len(prefix) :].partition("/")
+        if not _import_job_id(job_id):
+            raise HTTPStatusError(404, "not found")
+        if not verb:
+            _require_method(method, "GET")
+            return _json(200, {"ok": True, "job": service.public_job(service.get_job(job_id))})
+        if verb == "log" and method == "GET":
+            text = service.log_text(job_id)
+            filename = f"{job_id}.log"
+            return Response(
+                200,
+                text.encode("utf-8"),
+                "text/plain; charset=utf-8",
+                [("Content-Disposition", f'attachment; filename="{filename}"')],
+            )
+        _require_method(method, "POST")
+        if verb == "start":
+            payload = _import_body(body, content_type) if body.strip() else {}
+            job = service.start_transfer(job_id, mode=payload.get("mode"))
+            return _json(200, {"ok": True, "job": service.public_job(job)})
+        if verb == "pause":
+            return _json(200, {"ok": True, "job": service.public_job(service.pause(job_id))})
+        if verb == "resume":
+            job = service.resume(job_id, context.docker, context.detect_gpus())
+            return _json(200, {"ok": True, "job": service.public_job(job)})
+        if verb == "cancel":
+            return _json(200, {"ok": True, "job": service.public_job(service.cancel(job_id))})
+        if verb == "dismiss":
+            return _json(200, {"ok": True, "job": service.public_job(service.dismiss(job_id))})
+        if verb == "remove-old":
+            return _json(200, {"ok": True, "job": service.public_job(service.remove_old(job_id, context.docker))})
+    raise HTTPStatusError(404, "not found")
+
+
+def _import_body(body: bytes, content_type: str | None) -> dict:
+    if not body or not body.strip():
+        return {}
+    media = (content_type or "").split(";", 1)[0].strip().lower()
+    if media not in {"", "application/json"}:
+        raise FleetError("import body must be a JSON object")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise FleetError(f"import body is not valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise FleetError("import body must be a JSON object")
+    return payload
+
+
+def _import_job_id(job_id: str) -> bool:
+    return len(job_id) == 16 and job_id.startswith("imp-") and all(
+        char in "0123456789abcdef" for char in job_id[4:]
+    )
 
 
 def _gallery(
@@ -879,6 +976,8 @@ def _protected_action(method: str, path: str) -> str | None:
         return "list"
     if path == "/api/gallery" or path.startswith("/api/gallery/"):
         return "gallery"
+    if path == "/api/import" or path.startswith("/api/import/"):
+        return "import"
     if path == "/api/instances":
         if method == "POST":
             return "create"
