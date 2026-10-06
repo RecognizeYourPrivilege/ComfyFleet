@@ -13,7 +13,7 @@ set -euo pipefail
 REGISTRY="${COMFYFLEET_REGISTRY:-ghcr.io}"
 OWNER="$(printf '%s' "${COMFYFLEET_GHCR_OWNER:-recognizeyourprivilege}" | tr '[:upper:]' '[:lower:]')"
 INSTANCE_REPO="${REGISTRY}/${OWNER}/comfyfleet"
-MANAGER_REPO="${REGISTRY}/${OWNER}/comfyfleet-manager"
+MANAGER_REPO="${REGISTRY}/${OWNER}/comfyfleet-manager-legacy"
 LOCAL_MANAGER_TAG="comfyfleet-manager:latest"
 # Default pulls are the moving GHCR tags. The next publish of those tags is
 # what the next install gets. Do not pin a digest here. An operator who wants

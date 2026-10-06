@@ -11,7 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 INSTANCE = "ghcr.io/recognizeyourprivilege/comfyfleet:cu130"
 INSTANCE_CU124 = "ghcr.io/recognizeyourprivilege/comfyfleet:cu124"
-MANAGER = "ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest"
+MANAGER = "ghcr.io/recognizeyourprivilege/comfyfleet-manager-legacy:latest"
+OLD_MANAGER = "ghcr.io/recognizeyourprivilege/comfyfleet-manager:latest"
 
 
 class InstallScriptTests(unittest.TestCase):
@@ -27,6 +28,8 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("CUDA 13.0", text)
         self.assertIn("CUDA 12.4", text)
         self.assertIn("comfyfleet-manager", text)
+        self.assertIn("/comfyfleet-manager-legacy", text)
+        self.assertNotRegex(text, r"/comfyfleet-manager(?!-legacy)")
         self.assertIn("COMFYFLEET_INSTANCE_IMAGE", text)
         self.assertIn("COMFYFLEET_PASSWORD", text)
         self.assertIn("COMFYFLEET_PUBLIC_HOST", text)
@@ -349,7 +352,7 @@ class InstallScriptTests(unittest.TestCase):
         instance_digest = "sha256:" + ("ab" * 32)
         manager_digest = "sha256:" + ("cd" * 32)
         instance_pin = f"ghcr.io/recognizeyourprivilege/comfyfleet@{instance_digest}"
-        manager_pin = f"ghcr.io/recognizeyourprivilege/comfyfleet-manager@{manager_digest}"
+        manager_pin = f"ghcr.io/recognizeyourprivilege/comfyfleet-manager-legacy@{manager_digest}"
 
         with tempfile.TemporaryDirectory() as tmp:
             bin_dir = Path(tmp) / "bin"
@@ -408,6 +411,59 @@ class InstallScriptTests(unittest.TestCase):
             self.assertTrue(pinned_log.rstrip().endswith(manager_pin))
             self.assertNotIn("not-printed", cu124_pinned.stdout + cu124_pinned.stderr)
 
+    def test_rerun_replaces_a_container_on_the_old_manager_image(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            log = Path(tmp) / "docker.log"
+            fake = bin_dir / "docker"
+            fake.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' \"$*\" >> \"$DOCKER_LOG\"\n"
+                "if [ \"$1\" = container ] && [ \"$2\" = inspect ]; then\n"
+                f"  printf '%s\\n' '{OLD_MANAGER}'\n"
+                "  exit 0\n"
+                "fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+            started = subprocess.run(
+                ["bash", str(ROOT / "install.sh")],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    "PATH": f"{bin_dir}{os.pathsep}/usr/bin:/bin",
+                    "DOCKER_LOG": str(log),
+                    "COMFYFLEET_PASSWORD": "not-printed",
+                    "COMFYFLEET_PUBLIC_HOST": "192.168.1.20",
+                },
+            )
+            self.assertEqual(started.returncode, 0, started.stderr)
+            self.assertIn("replacing container comfyfleet-manager", started.stdout)
+            recorded = log.read_text(encoding="utf-8").splitlines()
+            self.assertIn(f"pull {MANAGER}", recorded)
+            self.assertNotIn(f"pull {OLD_MANAGER}", recorded)
+            self.assertIn("container inspect comfyfleet-manager", recorded)
+            self.assertIn("rm -f comfyfleet-manager", recorded)
+            run_lines = [line for line in recorded if line.startswith("run -d --name ")]
+            self.assertEqual(len(run_lines), 1, recorded)
+            run = run_lines[0]
+            self.assertIn("run -d --name comfyfleet-manager ", run)
+            self.assertIn("--restart unless-stopped", run)
+            self.assertIn("--gpus all", run)
+            self.assertIn("-p 9100:9100", run)
+            self.assertIn("-v /var/run/docker.sock:/var/run/docker.sock", run)
+            self.assertIn("-v /home/ComfyFleet:/home/ComfyFleet", run)
+            self.assertTrue(run.endswith(MANAGER))
+            self.assertNotIn(OLD_MANAGER, run)
+            self.assertLess(
+                recorded.index("rm -f comfyfleet-manager"),
+                recorded.index(run),
+            )
+            self.assertNotIn("not-printed", started.stdout + started.stderr)
+
     def test_publish_script_pushes_both_dockerfiles(self):
         script = ROOT / "scripts" / "publish-images.sh"
         text = script.read_text(encoding="utf-8")
@@ -421,6 +477,8 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn(":latest", text)
         self.assertIn("comfy_kitchen", text)
         self.assertIn("write:packages", text)
+        self.assertIn("/comfyfleet-manager-legacy", text)
+        self.assertNotRegex(text, r"/comfyfleet-manager(?!-legacy)")
         checked = subprocess.run(
             ["bash", "-n", str(script)],
             check=False,
@@ -438,7 +496,8 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("cu130", help_run.stdout)
         self.assertIn("cu124", help_run.stdout)
         self.assertIn("phase1", help_run.stdout)
-        self.assertIn("comfyfleet-manager", help_run.stdout)
+        self.assertIn("comfyfleet-manager-legacy", help_run.stdout)
+        self.assertNotRegex(help_run.stdout, r"comfyfleet-manager(?!-legacy)")
 
     def test_workflow_builds_both_images_and_records_digests(self):
         text = (ROOT / ".github" / "workflows" / "publish-images.yml").read_text(encoding="utf-8")
@@ -454,6 +513,11 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn(":cu130", text)
         self.assertIn(":cu124", text)
         self.assertIn("github.sha", text)
+        self.assertIn('echo "image=ghcr.io/${owner}/comfyfleet-manager-legacy"', text)
+        self.assertIn("${{ steps.names.outputs.image }}:latest", text)
+        self.assertIn("${{ steps.names.outputs.image }}:${{ github.sha }}", text)
+        self.assertNotRegex(text, r"comfyfleet-manager(?!-legacy)")
+        self.assertIn('echo "image=ghcr.io/${owner}/comfyfleet"', text)
         self.assertIn("provenance: false", text)
         self.assertIn("needs.instance.outputs.digest", text)
         self.assertIn("needs.manager.outputs.digest", text)
@@ -483,6 +547,12 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn(INSTANCE, head)
         self.assertIn(INSTANCE_CU124, head)
         self.assertIn(MANAGER, head)
+        self.assertIn(
+            "The manager image moved to `ghcr.io/recognizeyourprivilege/comfyfleet-manager-legacy`. "
+            "Re-run the install command to switch, and use `docker image prune -f` afterwards to clear the old copy.",
+            head,
+        )
+        self.assertNotRegex(head, r"docker pull ghcr\.io/recognizeyourprivilege/comfyfleet-manager(?!-legacy)")
         self.assertIn("COMFYFLEET_INSTANCE_IMAGE", head)
         self.assertIn("--shm-size 8g", head)
         self.assertIn("shm_size: '8g'", head)

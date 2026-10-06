@@ -166,7 +166,7 @@ class ManagerImageContractTests(unittest.TestCase):
 
     def test_compose_and_readme_lead_with_the_manager(self):
         compose = (ROOT / "compose.yaml").read_text(encoding="utf-8")
-        self.assertIn("comfyfleet-manager:latest", compose)
+        self.assertIn("comfyfleet-manager-legacy:latest", compose)
         self.assertIn("/var/run/docker.sock:/var/run/docker.sock", compose)
         self.assertIn('"9100:9100"', compose)
         self.assertIn("/home/ComfyFleet:/home/ComfyFleet", compose)
