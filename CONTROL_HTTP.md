@@ -121,6 +121,20 @@ Delete is `POST /api/instances/{name}/delete`. It removes that container and the
 | `GET` | `/api/gallery/media` | yes | `open_gallery_file` | One file inside an instance output directory |
 | `GET` | `/api/gallery/thumb` | yes | `open_gallery_thumb` | Image bytes or a poster. Not the full video |
 | `POST` | `/api/gallery/delete` | yes | `delete_gallery_file` | Unlink that one output file |
+| `GET` | `/api/import/containers` | yes | `ImportService.list_containers` | Containers on the host engine |
+| `POST` | `/api/import/inspect` | yes | `ImportService.inspect` | Mounts, ports, GPUs, env, and a folder plan |
+| `POST` | `/api/import/jobs` | yes | `ImportService.create_job` | Starts hashing. The job keeps running after the response |
+| `GET` | `/api/import/active` | yes | `ImportService.active_job` | The job the UI reopens, or `job: null` |
+| `GET` | `/api/import/jobs` | yes | `ImportService.list_jobs` | Saved imports |
+| `GET` | `/api/import/jobs/{id}` | yes | `ImportService.get_job` | Live progress |
+| `GET` | `/api/import/jobs/{id}/log` | yes | `ImportService.log_text` | Plain-text log download |
+| `POST` | `/api/import/jobs/{id}/start` | yes | `ImportService.start_transfer` | Copy or move after the hash plan |
+| `POST` | `/api/import/jobs/{id}/pause` | yes | `ImportService.pause` | Pause the worker |
+| `POST` | `/api/import/jobs/{id}/resume` | yes | `ImportService.resume` | Resume the worker |
+| `POST` | `/api/import/jobs/{id}/cancel` | yes | `ImportService.cancel` | Stop and delete a partial file |
+| `POST` | `/api/import/jobs/{id}/dismiss` | yes | `ImportService.dismiss` | Hide a finished summary |
+| `POST` | `/api/import/jobs/{id}/remove-old` | yes | `ImportService.remove_old` | Remove the stopped source container |
+| `GET` | `/api/import/duplicates` | yes | `DuplicatesStore.read` | Append-only duplicate list |
 | `GET` | `/login` | no | `ui/login.html` | Sign-in page |
 | `GET` | `/` and other non-API paths | yes, except login assets | static files under `ui/` | Fleet UI. If `ui/` is missing, an authenticated `/` is a short placeholder |
 
@@ -133,6 +147,10 @@ Create and instance lifecycle routes ignore query strings. Send create options i
 `GET /api/gallery` lists media under `/home/ComfyFleet/files/<name>/output`. `path` is relative to that output directory. `offset` defaults to 0 and `limit` defaults to 48 (at most 240). The response `instances` array is every discovered output, including when `instance` filters the `items`. `port` and `status` come from the fleet record when it exists.
 
 `GET /api/gallery/media` and `GET /api/gallery/thumb` serve one file. `download=1` on media sets `Content-Disposition: attachment`. Thumbnails of `mp4`, `webm`, `mov`, `gif`, and animated `webp` are images, not the source video. `POST /api/gallery/delete` with `{"instance","path"}` unlinks that file. A path with `..`, a symlink, or a target outside that output directory is **400** and the other file stays. A missing file is **404**. These routes are **401** without a session cookie or Bearer token.
+
+### Import container
+
+`POST /api/import/inspect` with `{"container"}` reads `docker inspect` and returns mounts, published ports, GPU device ids, and env. Values whose names contain `PASSWORD`, `SECRET`, `TOKEN`, or `CREDENTIAL` are redacted. `POST /api/import/jobs` starts a server-side hash, then waits in `awaiting_confirm` until `POST /api/import/jobs/{id}/start`. The body picks `name`, `port`, `gpus`, `mode` (`copy` or `move`), `custom_nodes` (`as-is` or `fresh`), `cuda_tag`, `workflow`, and optional mount `role` overrides. Models are classified by name, size, and SHA-256 before anything is written. `GET /api/import/active` is what the page calls on load to reopen the overlay. Pause, resume, and cancel are POST. Cancel deletes a `*.comfyfleet-partial` file and does not publish it. `GET /api/import/duplicates` is read-only: POST, PUT, and DELETE are **405**. `POST .../remove-old` removes a stopped source container that is not a fleet instance. These routes are **401** without a session cookie or Bearer token.
 
 ### `GET /api/health`
 

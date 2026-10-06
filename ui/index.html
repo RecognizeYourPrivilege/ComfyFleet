@@ -21,20 +21,23 @@
         <h1>ComfyFleet</h1>
       </div>
       <div class="top-actions">
-        <div class="host-menu">
-          <button id="host-menu-button" class="btn secondary" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="host-menu">Host</button>
-          <div id="host-menu" class="host-menu-panel glass" role="menu" hidden>
-            <button id="fix-owner" class="host-menu-item" type="button" role="menuitem">Fix ownership</button>
-            <button id="prune-dangling" class="host-menu-item" type="button" role="menuitem">Prune dangling containers</button>
-            <button id="logout" class="host-menu-item" type="button" role="menuitem">Log out</button>
-          </div>
-        </div>
         <button id="refresh" class="icon-btn" type="button" aria-label="Refresh fleet">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M20 12a8 8 0 1 1-2.3-5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
           <path d="M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         </button>
+        <div class="host-menu">
+          <button id="host-menu-button" class="btn secondary" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="host-menu">Host</button>
+          <div id="host-menu" class="host-menu-panel glass" role="menu" hidden>
+            <button id="import-open" class="host-menu-item" type="button" role="menuitem">Import container</button>
+            <button id="import-dupes-open" class="host-menu-item" type="button" role="menuitem">Duplicates</button>
+            <button id="import-logs-open" class="host-menu-item" type="button" role="menuitem">Import logs</button>
+            <button id="fix-owner" class="host-menu-item" type="button" role="menuitem">Fix ownership</button>
+            <button id="prune-dangling" class="host-menu-item" type="button" role="menuitem">Prune dangling containers</button>
+            <button id="logout" class="host-menu-item" type="button" role="menuitem">Log out</button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -333,6 +336,120 @@
         <button id="lb-open" class="btn secondary" type="button">Open in ComfyUI</button>
         <button id="lb-delete" class="btn danger" type="button">Delete</button>
       </div>
+    </div>
+  </div>
+
+  <button id="import-pill" class="import-pill glass" type="button" hidden>
+    <span id="import-pill-label">Import</span>
+  </button>
+
+  <div id="import-plan" class="sheet" hidden>
+    <button class="scrim" type="button" data-plan-close aria-label="Close"></button>
+    <div class="sheet-card glass" role="dialog" aria-modal="true" aria-labelledby="import-plan-title">
+      <div class="sheet-head">
+        <h2 id="import-plan-title">Import container</h2>
+        <button class="icon-btn" type="button" data-plan-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <p class="sheet-lead">Copy or move an existing container into this fleet. Models go to the shared models folder. The old container stays until you choose Remove old.</p>
+      <div id="import-plan-banner" class="banner" role="alert" hidden></div>
+      <div id="import-containers" class="import-list"></div>
+      <div id="import-form" hidden>
+        <p id="import-source" class="meta"></p>
+        <label class="field-label" for="import-name">New name</label>
+        <input id="import-name" class="text-input" type="text" autocomplete="off" spellcheck="false">
+        <label class="field-label" for="import-port">Port</label>
+        <input id="import-port" class="text-input" type="number" min="1" max="65535" inputmode="numeric">
+        <p class="field-label" id="import-mode-label">Transfer</p>
+        <div class="choice-col" role="radiogroup" aria-labelledby="import-mode-label">
+          <label class="choice"><input type="radio" name="import-mode" value="copy" checked><span>Copy<small>Leave every source file in place.</small></span></label>
+          <label class="choice"><input id="import-mode-move" type="radio" name="import-mode" value="move"><span>Move<small>Delete each source file only after the destination hash matches.</small></span></label>
+        </div>
+        <p id="import-move-note" class="hint" hidden>This container is running. Stop it before Move. Import will not stop it.</p>
+        <p id="import-unseen-note" class="hint" hidden>A mount is not visible inside the manager. Those files are read with docker cp. Move stays off because the source file cannot be deleted from here.</p>
+        <p class="field-label" id="import-nodes-label">Custom nodes</p>
+        <div class="choice-col" role="radiogroup" aria-labelledby="import-nodes-label">
+          <label class="choice"><input type="radio" name="import-nodes" value="as-is" checked><span>Bring over as-is<small>Default. The folder is copied onto this instance.</small></span></label>
+          <label class="choice"><input type="radio" name="import-nodes" value="fresh"><span>Reinstall fresh<small>Skip the old custom nodes. This image's baked nodes are used.</small></span></label>
+        </div>
+        <label class="field-label" for="import-cuda">CUDA line</label>
+        <select id="import-cuda" class="text-input">
+          <option value="cu130">cu130</option>
+          <option value="cu124">cu124</option>
+        </select>
+        <p class="field-label" id="import-gpu-label">GPUs</p>
+        <div id="import-gpus" class="gpu-row" role="group" aria-labelledby="import-gpu-label"></div>
+        <label class="field-label" for="import-workflow">Workflow</label>
+        <select id="import-workflow" class="text-input"></select>
+        <p class="hint">New directories are owned by comfyuser:comfyuser, the same default as Fix ownership.</p>
+        <p class="field-label">Folder map</p>
+        <div id="import-mounts" class="import-mounts"></div>
+        <p class="field-label">Environment</p>
+        <div id="import-env" class="import-env" aria-readonly="true"></div>
+        <div id="import-counts" class="import-counts" hidden></div>
+        <div class="sheet-actions">
+          <button id="import-scan" class="btn secondary" type="button">Hash and review</button>
+          <button id="import-start" class="btn primary" type="button" hidden>Start import</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="import-overlay" class="sheet" hidden>
+    <button class="scrim" type="button" data-overlay-hide aria-label="Hide progress"></button>
+    <div class="sheet-card glass" role="dialog" aria-modal="true" aria-labelledby="import-overlay-title">
+      <div class="sheet-head">
+        <h2 id="import-overlay-title">Import</h2>
+        <button class="icon-btn" type="button" data-overlay-hide aria-label="Hide progress">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <p id="import-phase" class="sheet-lead">Hashing</p>
+      <p id="import-current" class="import-current"></p>
+      <div class="meter"><div id="import-file-bar"></div></div>
+      <p id="import-file-label" class="hint"></p>
+      <div class="meter"><div id="import-overall-bar"></div></div>
+      <p id="import-overall-label" class="hint"></p>
+      <dl id="import-stats" class="import-stats"></dl>
+      <p id="import-space" class="import-warn" hidden>Low disk space at the destination.</p>
+      <pre id="import-log" class="import-log"></pre>
+      <div class="sheet-actions">
+        <button id="import-pause" class="btn secondary" type="button">Pause</button>
+        <button id="import-resume" class="btn secondary" type="button" hidden>Resume</button>
+        <button id="import-cancel" class="btn danger" type="button">Cancel</button>
+        <button id="import-overlay-start" class="btn primary" type="button" hidden>Start transfer</button>
+        <button id="import-remove-old" class="btn danger" type="button" hidden>Remove old</button>
+        <button id="import-dismiss" class="btn secondary" type="button" hidden>Dismiss</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="import-dupes" class="sheet" hidden>
+    <button class="scrim" type="button" data-dupes-close aria-label="Close"></button>
+    <div class="sheet-card glass" role="dialog" aria-modal="true" aria-labelledby="import-dupes-title">
+      <div class="sheet-head">
+        <h2 id="import-dupes-title">Duplicates</h2>
+        <button class="icon-btn" type="button" data-dupes-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <p class="sheet-lead">Read-only. A renamed copy whose hash already exists is listed here and in that import's log. This list only grows.</p>
+      <div id="import-dupe-list" class="import-dupe-list" aria-readonly="true"></div>
+    </div>
+  </div>
+
+  <div id="import-logs" class="sheet" hidden>
+    <button class="scrim" type="button" data-logs-close aria-label="Close"></button>
+    <div class="sheet-card glass" role="dialog" aria-modal="true" aria-labelledby="import-logs-title">
+      <div class="sheet-head">
+        <h2 id="import-logs-title">Import logs</h2>
+        <button class="icon-btn" type="button" data-logs-close aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div id="import-log-list" class="import-list"></div>
+      <pre id="import-log-view" class="import-log" hidden></pre>
     </div>
   </div>
 

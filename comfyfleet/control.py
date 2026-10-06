@@ -111,6 +111,7 @@ def authorize(action: str) -> None:
         "fix-owner",
         "prune-dangling",
         "gallery",
+        "import",
     }:
         raise FleetError(f"unknown control action {action!r}")
     if http_auth_state() is False:
@@ -145,6 +146,7 @@ def create_instance(
     node_map: dict[str, str] | None = None,
     git_run: Callable | None = None,
     name: str | None = None,
+    requested_port: int | None = None,
 ) -> ActionResult:
     authorize("create")
     launch = _canonicalize_launch(launch)
@@ -185,7 +187,13 @@ def create_instance(
         docker.remove(name)
     reserved = _reserved_ports(layout, exclude=name)
     in_use = _port_in_use(port_in_use, docker)
-    port = choose_port(reserved, in_use=in_use)
+    if requested_port is not None and (requested_port < 1 or requested_port > 65535):
+        raise FleetError(f"port must be 1..65535, got {requested_port}")
+    port = choose_port(reserved, preferred=requested_port, in_use=in_use)
+    if requested_port is not None and port != requested_port:
+        raise FleetError(
+            f"port {requested_port} is already in use. Pick another port."
+        )
     _prepare_dirs(layout, name)
     dest = layout.workflow_file(name)
     _copy_workflow(source, dest)
