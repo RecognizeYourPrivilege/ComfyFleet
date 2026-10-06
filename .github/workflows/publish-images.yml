@@ -156,7 +156,7 @@ jobs:
         id: names
         run: |
           owner="$(printf '%s' "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
-          echo "image=ghcr.io/${owner}/comfyfleet-manager" >> "${GITHUB_OUTPUT}"
+          echo "image=ghcr.io/${owner}/comfyfleet-manager-legacy" >> "${GITHUB_OUTPUT}"
 
       - name: Build and push manager
         id: build
