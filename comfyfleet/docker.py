@@ -7,6 +7,7 @@ engine. This module does not start a daemon inside the manager.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -199,6 +200,49 @@ class DockerCLI:
         except FileNotFoundError as exc:
             raise FleetError(_missing_docker_message()) from exc
         return completed
+
+    def inspect_container(self, name: str) -> dict:
+        """One ``docker inspect`` object: mounts, ports, env, and GPU requests."""
+
+        completed = self._check(["inspect", name])
+        try:
+            payload = json.loads(completed.stdout or "")
+        except json.JSONDecodeError as exc:
+            raise FleetError(f"docker inspect {name} returned invalid JSON") from exc
+        if isinstance(payload, list):
+            if not payload:
+                raise FleetError(f"no such container {name}")
+            payload = payload[0]
+        if not isinstance(payload, dict):
+            raise FleetError(f"docker inspect {name} returned unexpected data")
+        return payload
+
+    def open_container_tar(self, container: str, container_path: str) -> subprocess.Popen:
+        """Stream ``docker cp container:path -`` (a tar of one file).
+
+        The caller reads stdout and must wait on the process. This is how the
+        manager reads a host mount that is not bind-mounted into the manager
+        itself. The path is the container path from inspect, not a shell string.
+        """
+
+        if not container or "\x00" in container or container.startswith("-"):
+            raise FleetError(f"refusing container name {container!r}")
+        if (
+            not container_path
+            or "\x00" in container_path
+            or not container_path.startswith("/")
+            or ".." in Path(container_path).parts
+        ):
+            raise FleetError(f"refusing container path {container_path!r}")
+        self._raise_if_engine_unreachable()
+        try:
+            return subprocess.Popen(
+                ["docker", "cp", f"{container}:{container_path}", "-"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise FleetError(_missing_docker_message()) from exc
 
     def status(self, name: str) -> str | None:
         self._raise_if_engine_unreachable()
